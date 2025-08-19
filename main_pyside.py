@@ -3,7 +3,7 @@ import numpy as np
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QGroupBox, QLabel, QLineEdit, 
                              QPushButton, QTextEdit, QStatusBar, QGridLayout, 
-                             QMessageBox)
+                             QMessageBox,QCheckBox)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QFont, QCloseEvent
 import socket
@@ -219,6 +219,12 @@ class RobotControlWindow(QMainWindow):
         """根据用户图片创建 UR 控制模块"""
         group = QGroupBox("E05-L Pro设备控制")
         group_layout = QVBoxLayout(group)
+        # 新增的“示教功能”复选框，并连接其信号
+        self.teach_mode_checkbox = QCheckBox("示教功能")
+        group_layout.addWidget(self.teach_mode_checkbox)
+        
+        # 连接信号：当复选框状态改变时，调用 handle_teach_mode_state_change 方法
+        self.teach_mode_checkbox.stateChanged.connect(self.handle_teach_mode_state_change)
 
         # 顶部的状态显示
         status_layout = QHBoxLayout()
@@ -261,6 +267,19 @@ class RobotControlWindow(QMainWindow):
 
         group_layout.addLayout(button_layout)
         layout.addWidget(group)
+
+    def handle_teach_mode_state_change(self, state):
+        """处理示教功能复选框状态变化，并发送相应的TCP指令"""
+        if state == Qt.Checked:
+            # 勾选上时，发送开启示教功能指令
+            command = "GrpOpenFreeDriver,0;"
+            self.send_ur_command(command)
+            self.status_bar.showMessage("状态: 示教功能已开启。")
+        else:
+            # 去掉勾选时，发送关闭示教功能指令
+            command = "GrpCloseFreeDriver,0;"
+            self.send_ur_command(command)
+            self.status_bar.showMessage("状态: 示教功能已关闭。")
 
     def create_tcp_group(self, layout):
         """创建TCP连接和消息收发模块"""
@@ -412,16 +431,16 @@ class RobotControlWindow(QMainWindow):
             self.disconnect_tcp()
 
     def send_ur_power_up_command(self):
-        self.send_ur_command("CONNECT_UR") # 占位符，请替换为实际指令
+        self.send_ur_command("Electrify;") # 占位符，请替换为实际指令
 
     def send_ur_power_down_command(self):
-        self.send_ur_command("DISCONNECT_UR") # 占位符，请替换为实际指令
+        self.send_ur_command("OSCmd,1;") # 占位符，请替换为实际指令
 
     def send_ur_enable_command(self):
-        self.send_ur_command("ENABLE_UR") # 占位符，请替换为实际指令
+        self.send_ur_command("GrpEnable,0;") # 占位符，请替换为实际指令
 
     def send_ur_disable_command(self):
-        self.send_ur_command("DISABLE_UR") # 占位符，请替换为实际指令
+        self.send_ur_command("GrpDisable,0;") # 占位符，请替换为实际指令
     
     # --- 以下为原有代码，保持不变 ---
     def log_message(self, message):
