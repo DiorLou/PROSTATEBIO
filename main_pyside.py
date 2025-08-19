@@ -61,7 +61,7 @@ class RobotControlWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("RRRRRR 机器人高级控制界面 (PyQt5版)")
-        self.setGeometry(100, 100, 900, 550)
+        self.setGeometry(100, 100, 900, 700) # 调整窗口大小以容纳新模块
 
         # --- 1. 定义新的6关节机器人DH模型 ---
         self.create_robot()
@@ -115,6 +115,7 @@ class RobotControlWindow(QMainWindow):
 
         # 右侧面板
         right_panel_layout = QVBoxLayout()
+        self.create_ur_control_group(right_panel_layout) # 新增 UR 控制模块
         self.create_tcp_group(right_panel_layout)
         main_layout.addLayout(right_panel_layout, 1)
 
@@ -214,6 +215,53 @@ class RobotControlWindow(QMainWindow):
         group_layout.setRowStretch(3, 1) # 撑开底部空间
         layout.addWidget(group)
 
+    def create_ur_control_group(self, layout):
+        """根据用户图片创建 UR 控制模块"""
+        group = QGroupBox("E05-L Pro设备控制")
+        group_layout = QVBoxLayout(group)
+
+        # 顶部的状态显示
+        status_layout = QHBoxLayout()
+        self.ur_status_display1 = QLineEdit("2.76")
+        self.ur_status_display1.setReadOnly(True)
+        self.ur_status_display2 = QLineEdit("-246.01")
+        self.ur_status_display2.setReadOnly(True)
+        self.ur_status_display3 = QLineEdit("60.63")
+        self.ur_status_display3.setReadOnly(True)
+        self.ur_status_display_tcp = QLineEdit("TCP")
+        self.ur_status_display_tcp.setReadOnly(True)
+        status_layout.addWidget(self.ur_status_display1)
+        status_layout.addWidget(self.ur_status_display2)
+        status_layout.addWidget(self.ur_status_display3)
+        status_layout.addWidget(self.ur_status_display_tcp)
+        group_layout.addLayout(status_layout)
+
+        # 四个按钮
+        button_layout = QGridLayout()
+
+        # 按钮1: 电源开启并初始化控制器
+        self.ur_power_up_btn = QPushButton("电源开启并初始化控制器")
+        self.ur_power_up_btn.clicked.connect(self.send_ur_power_up_command)
+        button_layout.addWidget(self.ur_power_up_btn, 0, 0)
+        
+        # 按钮2: 断电
+        self.ur_power_down_btn = QPushButton("断电")
+        self.ur_power_down_btn.clicked.connect(self.send_ur_power_down_command)
+        button_layout.addWidget(self.ur_power_down_btn, 0, 1)
+
+        # 按钮3: 使能
+        self.ur_enable_btn = QPushButton("使能")
+        self.ur_enable_btn.clicked.connect(self.send_ur_enable_command)
+        button_layout.addWidget(self.ur_enable_btn, 1, 0)
+
+        # 按钮4: 去使能
+        self.ur_disable_btn = QPushButton("去使能")
+        self.ur_disable_btn.clicked.connect(self.send_ur_disable_command)
+        button_layout.addWidget(self.ur_disable_btn, 1, 1)
+
+        group_layout.addLayout(button_layout)
+        layout.addWidget(group)
+
     def create_tcp_group(self, layout):
         """创建TCP连接和消息收发模块"""
         group = QGroupBox("TCP通信模块")
@@ -221,12 +269,12 @@ class RobotControlWindow(QMainWindow):
         
         ip_port_layout = QHBoxLayout()
         ip_port_layout.addWidget(QLabel("远程IP:"))
-        self.ip_entry = QLineEdit("127.0.0.1")
-        self.ip_entry.setFixedWidth(100)
+        self.ip_entry = QLineEdit("192.168.10.10")
+        self.ip_entry.setFixedWidth(200)
         ip_port_layout.addWidget(self.ip_entry)
         ip_port_layout.addWidget(QLabel("端口:"))
-        self.port_entry = QLineEdit("12345")
-        self.port_entry.setFixedWidth(60)
+        self.port_entry = QLineEdit("10003")
+        self.port_entry.setFixedWidth(80)
         ip_port_layout.addWidget(self.port_entry)
         ip_port_layout.addStretch()
         group_layout.addLayout(ip_port_layout)
@@ -349,6 +397,33 @@ class RobotControlWindow(QMainWindow):
             self.log_message(f"错误: 发送失败 - {e}")
             self.disconnect_tcp()
 
+    # --- 新增的 UR 控制功能函数 ---
+    def send_ur_command(self, command):
+        """发送 UR 控制指令"""
+        if not self.is_connected:
+            self.log_message("UR控制失败: 未建立TCP连接。")
+            QMessageBox.warning(self, "操作失败", "请先建立TCP连接。")
+            return
+        try:
+            self.client_socket.sendall(command.encode('utf-8'))
+            self.log_message(f"发送 UR 指令: {command}")
+        except Exception as e:
+            self.log_message(f"UR指令发送失败: {e}")
+            self.disconnect_tcp()
+
+    def send_ur_power_up_command(self):
+        self.send_ur_command("CONNECT_UR") # 占位符，请替换为实际指令
+
+    def send_ur_power_down_command(self):
+        self.send_ur_command("DISCONNECT_UR") # 占位符，请替换为实际指令
+
+    def send_ur_enable_command(self):
+        self.send_ur_command("ENABLE_UR") # 占位符，请替换为实际指令
+
+    def send_ur_disable_command(self):
+        self.send_ur_command("DISABLE_UR") # 占位符，请替换为实际指令
+    
+    # --- 以下为原有代码，保持不变 ---
     def log_message(self, message):
         """向接收文本框中添加消息"""
         self.recv_text.append(message)
