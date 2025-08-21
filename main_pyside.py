@@ -3,7 +3,7 @@ import numpy as np
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QGroupBox, QLabel, QLineEdit, 
                              QPushButton, QTextEdit, QStatusBar, QGridLayout, 
-                             QMessageBox,QCheckBox)
+                             QMessageBox, QCheckBox)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QFont, QCloseEvent
 import socket
@@ -77,6 +77,10 @@ class RobotControlWindow(QMainWindow):
         self.is_connected = False
         self.client_socket = None
         self.receive_thread = None
+        self.power_state = 0 # 0: 未上电, 1: 已上电
+        self.enable_state = 0 # 0: 未使能, 1: 已使能
+        self.state_check_timer = QTimer(self)
+        self.state_check_timer.timeout.connect(self.check_power_state)
 
         # --- 4. 初始化UI ---
         self.init_ui()
@@ -245,28 +249,49 @@ class RobotControlWindow(QMainWindow):
         # 四个按钮
         button_layout = QGridLayout()
 
-        # 按钮1: 电源开启并初始化控制器
-        self.ur_power_up_btn = QPushButton("电源开启并初始化控制器")
-        self.ur_power_up_btn.clicked.connect(self.send_ur_power_up_command)
-        button_layout.addWidget(self.ur_power_up_btn, 0, 0)
-        
-        # 按钮2: 断电
-        self.ur_power_down_btn = QPushButton("断电")
-        self.ur_power_down_btn.clicked.connect(self.send_ur_power_down_command)
-        button_layout.addWidget(self.ur_power_down_btn, 0, 1)
+        # 合并后的电源按钮
+        self.ur_power_btn = QPushButton("电源开启")
+        self.ur_power_btn.clicked.connect(self.toggle_power)
+        button_layout.addWidget(self.ur_power_btn, 0, 0)
 
-        # 按钮3: 使能
+        # 合并后的使能按钮
         self.ur_enable_btn = QPushButton("使能")
-        self.ur_enable_btn.clicked.connect(self.send_ur_enable_command)
-        button_layout.addWidget(self.ur_enable_btn, 1, 0)
+        self.ur_enable_btn.clicked.connect(self.toggle_enable)
+        button_layout.addWidget(self.ur_enable_btn, 0, 1)
 
-        # 按钮4: 去使能
-        self.ur_disable_btn = QPushButton("去使能")
-        self.ur_disable_btn.clicked.connect(self.send_ur_disable_command)
-        button_layout.addWidget(self.ur_disable_btn, 1, 1)
+        # 新增的“初始化”按钮，位于第1行，第0列
+        self.ur_init_btn = QPushButton("初始化控制器")
+        self.ur_init_btn.clicked.connect(self.send_ur_init_controller_command)
+        button_layout.addWidget(self.ur_init_btn, 1, 0, 1, 2) # 跨越两列
 
         group_layout.addLayout(button_layout)
         layout.addWidget(group)
+
+    def toggle_power(self):
+        """根据当前电源状态切换电源开关"""
+        if self.power_state == 0:
+            # 未上电，发送上电指令
+            self.send_ur_command("Electrify;")
+            self.ur_power_btn.setText("电源开启中...")
+            self.ur_power_btn.setEnabled(False)
+        else:
+            # 已上电，发送断电指令
+            self.send_ur_command("OSCmd,1;")
+            self.ur_power_btn.setText("断电中...")
+            self.ur_power_btn.setEnabled(False)
+
+    def toggle_enable(self):
+        """根据当前使能状态切换使能/去使能"""
+        if self.enable_state == 0:
+            # 未使能，发送使能指令
+            self.send_ur_command("GrpEnable,0;")
+            self.ur_enable_btn.setText("使能中...")
+            self.ur_enable_btn.setEnabled(False)
+        else:
+            # 已使能，发送去使能指令
+            self.send_ur_command("GrpDisable,0;")
+            self.ur_enable_btn.setText("去使能中...")
+            self.ur_enable_btn.setEnabled(False)
 
     def handle_teach_mode_state_change(self, state):
         """处理示教功能复选框状态变化，并发送相应的TCP指令"""
@@ -356,9 +381,13 @@ class RobotControlWindow(QMainWindow):
             self.log_message("系统: 连接成功！")
 
             self.receive_thread = ReceiveThread(self.client_socket)
-            self.receive_thread.message_received.connect(self.log_message)
+            self.receive_thread.message_received.connect(self.handle_incoming_message)
             self.receive_thread.connection_lost.connect(self.handle_connection_lost)
             self.receive_thread.start()
+            
+            # 连接成功后，启动定时器，每秒检查一次机器人状态
+            self.state_check_timer.start(1000)
+            self.check_power_state() # 立即检查一次
 
         except socket.timeout:
             self.tcp_status_label.setText("TCP状态: 连接失败 (连接超时)")
@@ -380,6 +409,7 @@ class RobotControlWindow(QMainWindow):
         """断开TCP连接"""
         if self.is_connected:
             self.is_connected = False
+            self.state_check_timer.stop() # 停止定时器
             if self.receive_thread and self.receive_thread.isRunning():
                 self.receive_thread.stop()
             try:
@@ -415,6 +445,50 @@ class RobotControlWindow(QMainWindow):
         except Exception as e:
             self.log_message(f"错误: 发送失败 - {e}")
             self.disconnect_tcp()
+    
+    def handle_incoming_message(self, message):
+        """分发接收到的消息"""
+        self.log_message(message)
+        if message.startswith("ReadRobotState"):
+            self.handle_robot_state_message(message)
+
+    def check_power_state(self):
+        """发送指令以获取机器人实时状态"""
+        self.send_ur_command("ReadRobotState,0;")
+
+    def handle_robot_state_message(self, message):
+        """解析 ReadRobotState 消息并更新UI"""
+        parts = message.split(',')
+        if len(parts) >= 14:
+            try:
+                nElectrify = int(parts[10])
+                nEnableState = int(parts[2])
+                self.update_power_button(nElectrify)
+                self.update_enable_button(nEnableState)
+            except (ValueError, IndexError):
+                self.log_message("警告: 无法解析机器人状态消息中的上电/使能状态。")
+
+    def update_power_button(self, nElectrify):
+        """根据上电状态更新电源按钮的文本和使能状态"""
+        self.power_state = nElectrify
+        self.ur_power_btn.setEnabled(True)
+        if nElectrify == 1:
+            self.ur_power_btn.setText("电源断开")
+            self.ur_power_btn.setStyleSheet("background-color: lightgreen;")
+        else:
+            self.ur_power_btn.setText("电源开启")
+            self.ur_power_btn.setStyleSheet("background-color: salmon;")
+
+    def update_enable_button(self, nEnableState):
+        """根据使能状态更新使能按钮的文本和使能状态"""
+        self.enable_state = nEnableState
+        self.ur_enable_btn.setEnabled(True)
+        if nEnableState == 1:
+            self.ur_enable_btn.setText("去使能")
+            self.ur_enable_btn.setStyleSheet("background-color: lightgreen;")
+        else:
+            self.ur_enable_btn.setText("使能")
+            self.ur_enable_btn.setStyleSheet("background-color: salmon;")
 
     # --- 新增的 UR 控制功能函数 ---
     def send_ur_command(self, command):
@@ -430,17 +504,8 @@ class RobotControlWindow(QMainWindow):
             self.log_message(f"UR指令发送失败: {e}")
             self.disconnect_tcp()
 
-    def send_ur_power_up_command(self):
-        self.send_ur_command("Electrify;") # 占位符，请替换为实际指令
-
-    def send_ur_power_down_command(self):
-        self.send_ur_command("OSCmd,1;") # 占位符，请替换为实际指令
-
-    def send_ur_enable_command(self):
-        self.send_ur_command("GrpEnable,0;") # 占位符，请替换为实际指令
-
-    def send_ur_disable_command(self):
-        self.send_ur_command("GrpDisable,0;") # 占位符，请替换为实际指令
+    def send_ur_init_controller_command(self):
+        self.send_ur_command("StartMaster;")
     
     # --- 以下为原有代码，保持不变 ---
     def log_message(self, message):
