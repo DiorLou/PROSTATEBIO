@@ -80,8 +80,8 @@ class RobotControlWindow(QMainWindow):
         self.receive_thread = None
         self.power_state = 0 # 0: 未上电, 1: 已上电
         self.enable_state = 0 # 0: 未使能, 1: 已使能
-        self.state_check_timer = QTimer(self)
-        self.state_check_timer.timeout.connect(self.check_robot_state)
+        self.real_time_update_timer = QTimer(self)
+        self.real_time_update_timer.timeout.connect(self.request_real_time_data)
 
         # --- 4. 初始化UI ---
         self.init_ui()
@@ -116,6 +116,7 @@ class RobotControlWindow(QMainWindow):
         self.create_motor_group(left_panel_layout)
         self.create_action_group(left_panel_layout)
         self.create_state_display_group(left_panel_layout)
+        self.create_tool_state_group(left_panel_layout) # 新增：机器人工具端实时状态
         main_layout.addLayout(left_panel_layout, 1)
 
         # 右侧面板
@@ -173,7 +174,7 @@ class RobotControlWindow(QMainWindow):
         grid_layout = QGridLayout()
         self.ik_input_entries = []
         labels = ["X (mm)", "Y (mm)", "Z (mm)", "Roll (°)", "Pitch (°)", "Yaw (°)"]
-        initial_values = ["15", "0", "15", "0", "0", "0"]
+        initial_values = ["0", "0", "0", "0", "0", "0"]
         for i, label_text in enumerate(labels):
             row, col = i // 3, (i % 3) * 2
             label = QLabel(label_text)
@@ -200,26 +201,59 @@ class RobotControlWindow(QMainWindow):
         group_layout = QGridLayout(group)
 
         self.pose_labels = {}
+        # 调整布局以匹配图片
         pose_info = [
             ("X (mm)", "X"), ("Y (mm)", "Y"), ("Z (mm)", "Z"),
             ("Roll (°)", "Roll"), ("Pitch (°)", "Pitch"), ("Yaw (°)", "Yaw")
         ]
-
+        
+        # 将X,Y,Z放在第一行，Roll,Pitch,Yaw放在第二行
         for i, (label_text, var_key) in enumerate(pose_info):
-            row, col = i % 3, (i // 3) * 2
+            row = 0 if i < 3 else 1
+            col = i % 3 * 2
+            
             label = QLabel(label_text)
             value_label = QLabel("0.00")
             value_label.setFixedWidth(70)
             value_label.setAlignment(Qt.AlignRight)
             value_label.setStyleSheet("background-color: lightgrey; border: 1px inset grey;")
             self.pose_labels[var_key] = value_label
-
+            
             group_layout.addWidget(label, row, col)
             group_layout.addWidget(value_label, row, col + 1)
-
-        group_layout.setRowStretch(3, 1) # 撑开底部空间
+        
+        group_layout.setRowStretch(2, 1) # 撑开底部空间
         layout.addWidget(group)
 
+    def create_tool_state_group(self, layout):
+        """新增：创建用于显示机器人工具端实时状态的模块"""
+        group = QGroupBox("机器人工具端实时状态")
+        group_layout = QGridLayout(group)
+
+        self.tool_pose_labels = {}
+        tool_pose_info = [
+            ("Tcp_X", "Tcp_X"), ("Tcp_Y", "Tcp_Y"), ("Tcp_Z", "Tcp_Z"),
+            ("Tcp_Rx", "Tcp_Rx"), ("Tcp_Ry", "Tcp_Ry"), ("Tcp_Rz", "Tcp_Rz")
+        ]
+
+        # 将X,Y,Z放在第一行，Rx,Ry,Rz放在第二行
+        for i, (label_text, var_key) in enumerate(tool_pose_info):
+            row = 0 if i < 3 else 1
+            col = i % 3 * 2
+            
+            label = QLabel(label_text)
+            value_label = QLabel("0.00")
+            value_label.setFixedWidth(70)
+            value_label.setAlignment(Qt.AlignRight)
+            value_label.setStyleSheet("background-color: lightgrey; border: 1px inset grey;")
+            self.tool_pose_labels[var_key] = value_label
+            
+            group_layout.addWidget(label, row, col)
+            group_layout.addWidget(value_label, row, col + 1)
+            
+        group_layout.setRowStretch(2, 1) # 撑开底部空间
+        layout.addWidget(group)
+        
     def create_ur_control_group(self, layout):
         """根据用户图片创建 UR 控制模块"""
         ur_control_group = QGroupBox("E05-L Pro设备控制")
@@ -408,9 +442,9 @@ class RobotControlWindow(QMainWindow):
             self.receive_thread.connection_lost.connect(self.handle_connection_lost)
             self.receive_thread.start()
 
-            # 连接成功后，启动定时器，每秒检查机器人状态和TCP参数
-            self.state_check_timer.start(1000)
-            self.check_robot_state() # 立即检查一次
+            # 连接成功后，启动新的实时更新定时器
+            self.real_time_update_timer.start(100)
+            self.request_real_time_data() # 立即请求一次
 
         except socket.timeout:
             self.tcp_status_label.setText("TCP状态: 连接失败 (连接超时)")
@@ -432,7 +466,7 @@ class RobotControlWindow(QMainWindow):
         """断开TCP连接"""
         if self.is_connected:
             self.is_connected = False
-            self.state_check_timer.stop() # 停止定时器
+            self.real_time_update_timer.stop() # 停止定时器
             if self.receive_thread and self.receive_thread.isRunning():
                 self.receive_thread.stop()
             try:
@@ -472,10 +506,61 @@ class RobotControlWindow(QMainWindow):
     def handle_incoming_message(self, message):
         """分发接收到的消息"""
         self.log_message(message)
-        if message.startswith("ReadRobotState"):
+        if message.startswith("ReadActPos"):
+            self.handle_real_time_message(message)
+        elif message.startswith("ReadRobotState"):
             self.handle_robot_state_message(message)
         elif message.startswith("ReadCurTCP"):
             self.handle_read_tcp_message(message)
+
+    def request_real_time_data(self):
+        """发送指令以获取机器人实时关节和末端坐标"""
+        self.send_ur_command("ReadActPos,0;")
+        # 发送第二条指令，获取电源和使能状态
+        self.send_ur_command("ReadRobotState,0;")
+
+
+    def handle_real_time_message(self, message):
+        """解析 ReadActPos 消息并更新关节和末端坐标显示"""
+        parts = message.strip(';').split(',')
+        if len(parts) >= 25 and parts[1] == 'OK':
+            try:
+                # 更新关节值
+                joint_params = [float(p) for p in parts[2:8]]
+                for i in range(len(joint_params)):
+                    if i < len(self.joint_vars):
+                        # 如果是旋转关节，转换为度；如果是平移关节，保持不变
+                        if not self.robot.links[i].isprismatic:
+                            self.joint_vars[i].setText(f"{np.rad2deg(joint_params[i]):.2f}")
+                        else:
+                            self.joint_vars[i].setText(f"{joint_params[i]:.2f}")
+                
+                # 更新机器人末端姿态
+                pose_params = [float(p) for p in parts[8:14]]
+                self.pose_labels["X"].setText(f"{pose_params[0]:.2f}")
+                self.pose_labels["Y"].setText(f"{pose_params[1]:.2f}")
+                self.pose_labels["Z"].setText(f"{pose_params[2]:.2f}")
+                self.pose_labels["Roll"].setText(f"{pose_params[3]:.2f}")
+                self.pose_labels["Pitch"].setText(f"{pose_params[4]:.2f}")
+                self.pose_labels["Yaw"].setText(f"{pose_params[5]:.2f}")
+
+                # 更新机器人工具端姿态
+                tool_pose_params = [float(p) for p in parts[14:20]]
+                self.tool_pose_labels["Tcp_X"].setText(f"{tool_pose_params[0]:.2f}")
+                self.tool_pose_labels["Tcp_Y"].setText(f"{tool_pose_params[1]:.2f}")
+                self.tool_pose_labels["Tcp_Z"].setText(f"{tool_pose_params[2]:.2f}")
+                self.tool_pose_labels["Tcp_Rx"].setText(f"{tool_pose_params[3]:.2f}")
+                self.tool_pose_labels["Tcp_Ry"].setText(f"{tool_pose_params[4]:.2f}")
+                self.tool_pose_labels["Tcp_Rz"].setText(f"{tool_pose_params[5]:.2f}")
+
+
+                self.status_bar.showMessage("状态: 关节、末端和工具端坐标已实时同步。")
+
+            except (ValueError, IndexError):
+                self.log_message("警告: 无法解析 ReadActPos 消息。")
+        else:
+            self.log_message(f"警告: 接收到无效的 ReadActPos 消息: {message}")
+
 
     def handle_read_tcp_message(self, message):
         """解析 ReadCurTCP 消息并更新TCP参数输入框"""
@@ -491,12 +576,6 @@ class RobotControlWindow(QMainWindow):
                 self.log_message("警告: 无法解析 ReadCurTCP 消息。")
         else:
             self.log_message(f"警告: 接收到无效的 ReadCurTCP 消息: {message}")
-            
-    def check_robot_state(self):
-        """发送指令以获取机器人实时状态和TCP参数"""
-        self.send_ur_command("ReadRobotState,0;")
-        # 延迟一下再发送下一条指令，避免频繁发送导致设备处理不过来
-        QTimer.singleShot(500, lambda: self.send_ur_command("ReadCurTCP,0;"))
 
     def handle_robot_state_message(self, message):
         """解析 ReadRobotState 消息并更新UI"""
@@ -540,6 +619,9 @@ class RobotControlWindow(QMainWindow):
             QMessageBox.warning(self, "操作失败", "请先建立TCP连接。")
             return
         try:
+            # 确保命令以分号结尾
+            if not command.endswith(';'):
+                command += ';'
             self.client_socket.sendall(command.encode('utf-8'))
             self.log_message(f"发送 UR 指令: {command}")
         except Exception as e:
