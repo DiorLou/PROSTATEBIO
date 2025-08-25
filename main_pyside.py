@@ -3,7 +3,7 @@ import numpy as np
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QGroupBox, QLabel, QLineEdit,
                              QPushButton, QTextEdit, QStatusBar, QGridLayout,
-                             QMessageBox, QCheckBox)
+                             QMessageBox, QCheckBox, QSlider)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QFont, QCloseEvent
 import socket
@@ -133,7 +133,8 @@ class RobotControlWindow(QMainWindow):
     def create_motor_group(self, layout):
         """创建左侧的电机控制模块"""
         group = QGroupBox("电机微调模块 (正运动学)")
-        group_layout = QVBoxLayout(group)
+        group_layout = QHBoxLayout(group)
+        left_rows_layout = QVBoxLayout()
 
         self.joint_vars = []
         for i in range(self.robot.n):
@@ -162,7 +163,33 @@ class RobotControlWindow(QMainWindow):
             row_layout.addWidget(btn_minus)
             row_layout.addWidget(btn_plus)
             row_layout.addStretch()
-            group_layout.addLayout(row_layout)
+            left_rows_layout.addLayout(row_layout)
+
+        left_rows_layout.addStretch()
+
+        # 在右侧预留区域添加运动速率滑条（对应图片中红框）
+        slider_container = QVBoxLayout()
+
+        self.override_label = QLabel("运动速率: 0.01")
+        self.override_label.setAlignment(Qt.AlignCenter)
+
+        self.override_slider = QSlider(Qt.Vertical)
+        self.override_slider.setMinimum(1)      # 0.01
+        self.override_slider.setMaximum(100)    # 1.00
+        self.override_slider.setSingleStep(1)
+        self.override_slider.setPageStep(5)
+        self.override_slider.setValue(1)
+        self.override_slider.setTickPosition(QSlider.TicksBothSides)
+        self.override_slider.setTickInterval(10)
+        self.override_slider.valueChanged.connect(self._on_override_slider_changed)
+        self.override_slider.sliderReleased.connect(self._on_override_slider_released)
+
+        slider_container.addWidget(self.override_label)
+        slider_container.addWidget(self.override_slider)
+        slider_container.addStretch()
+
+        group_layout.addLayout(left_rows_layout, 1)
+        group_layout.addLayout(slider_container)
 
         layout.addWidget(group)
 
@@ -194,6 +221,22 @@ class RobotControlWindow(QMainWindow):
         group_layout.addWidget(self.ik_result_label)
 
         layout.addWidget(group)
+
+    def _on_override_slider_changed(self, value):
+        """滑条数值改变时，仅更新标签显示，不立即发指令。"""
+        override_value = value / 100.0
+        self.override_label.setText(f"运动速率: {override_value:.2f}")
+
+    def _on_override_slider_released(self):
+        """滑条释放时发送运动速率指令: SetOverride,nRbtID,dOverride;"""
+        d_override = self.override_slider.value() / 100.0
+        # 约定使用 0 号机器人ID
+        command = f"SetOverride,0,{d_override:.2f};"
+        try:
+            self.send_ur_command(command)
+            self.status_bar.showMessage(f"状态: 已设置运动速率为 {d_override:.2f}")
+        except Exception:
+            pass
 
     def create_state_display_group(self, layout):
         """创建底部用于显示实时状态的模块"""
