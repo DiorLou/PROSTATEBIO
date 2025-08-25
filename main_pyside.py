@@ -81,7 +81,7 @@ class RobotControlWindow(QMainWindow):
         self.power_state = 0 # 0: 未上电, 1: 已上电
         self.enable_state = 0 # 0: 未使能, 1: 已使能
         self.state_check_timer = QTimer(self)
-        self.state_check_timer.timeout.connect(self.check_power_state)
+        self.state_check_timer.timeout.connect(self.check_robot_state)
 
         # --- 4. 初始化UI ---
         self.init_ui()
@@ -259,7 +259,7 @@ class RobotControlWindow(QMainWindow):
 
         self.set_tcp_btn = QPushButton("设置TCP")
         self.set_tcp_btn.clicked.connect(self.send_set_tcp_command)
-        tcp_grid_layout.addWidget(self.set_tcp_btn, 2, 0, 1, 4)
+        tcp_grid_layout.addWidget(self.set_tcp_btn, 2, 0, 1, 2)
 
         ur_control_layout.addWidget(tcp_group)
         layout.addWidget(ur_control_group)
@@ -408,9 +408,9 @@ class RobotControlWindow(QMainWindow):
             self.receive_thread.connection_lost.connect(self.handle_connection_lost)
             self.receive_thread.start()
 
-            # 连接成功后，启动定时器，每秒检查一次机器人状态
+            # 连接成功后，启动定时器，每秒检查机器人状态和TCP参数
             self.state_check_timer.start(1000)
-            self.check_power_state() # 立即检查一次
+            self.check_robot_state() # 立即检查一次
 
         except socket.timeout:
             self.tcp_status_label.setText("TCP状态: 连接失败 (连接超时)")
@@ -474,10 +474,29 @@ class RobotControlWindow(QMainWindow):
         self.log_message(message)
         if message.startswith("ReadRobotState"):
             self.handle_robot_state_message(message)
+        elif message.startswith("ReadCurTCP"):
+            self.handle_read_tcp_message(message)
 
-    def check_power_state(self):
-        """发送指令以获取机器人实时状态"""
+    def handle_read_tcp_message(self, message):
+        """解析 ReadCurTCP 消息并更新TCP参数输入框"""
+        parts = message.strip(';').split(',')
+        if len(parts) == 8 and parts[1] == 'OK':
+            try:
+                tcp_params = [f"{float(p):.2f}" for p in parts[2:]]
+                for i in range(len(tcp_params)):
+                    if i < len(self.tcp_input_entries):
+                        self.tcp_input_entries[i].setText(tcp_params[i])
+                self.status_bar.showMessage("状态: TCP参数已从设备同步。")
+            except (ValueError, IndexError):
+                self.log_message("警告: 无法解析 ReadCurTCP 消息。")
+        else:
+            self.log_message(f"警告: 接收到无效的 ReadCurTCP 消息: {message}")
+            
+    def check_robot_state(self):
+        """发送指令以获取机器人实时状态和TCP参数"""
         self.send_ur_command("ReadRobotState,0;")
+        # 延迟一下再发送下一条指令，避免频繁发送导致设备处理不过来
+        QTimer.singleShot(500, lambda: self.send_ur_command("ReadCurTCP,0;"))
 
     def handle_robot_state_message(self, message):
         """解析 ReadRobotState 消息并更新UI"""
