@@ -113,13 +113,11 @@ class RobotControlWindow(QMainWindow):
 
             btn_minus = QPushButton("-")
             btn_minus.setFixedWidth(30)
-            btn_minus.pressed.connect(lambda j=i: self.start_move(j, -1))
-            btn_minus.released.connect(self.stop_move)
-
+            btn_minus.clicked.connect(lambda _, j=i: self.send_joint_command(j, 0)) # 负方向
+            
             btn_plus = QPushButton("+")
             btn_plus.setFixedWidth(30)
-            btn_plus.pressed.connect(lambda j=i: self.start_move(j, 1))
-            btn_plus.released.connect(self.stop_move)
+            btn_plus.clicked.connect(lambda _, j=i: self.send_joint_command(j, 1)) # 正方向
 
             row_layout.addWidget(label)
             row_layout.addWidget(value_label)
@@ -279,6 +277,17 @@ class RobotControlWindow(QMainWindow):
         ur_control_layout.addWidget(tcp_group)
         layout.addWidget(ur_control_group)
 
+    def send_joint_command(self, joint_index, direction):
+        """发送关节增量运动指令"""
+        # nAxisId: 0-5 for joints 1-6
+        # nDirection: 1 for positive, 0 for negative
+        # 1: represents a single step, based on your request
+        nAxisId = joint_index
+        nDirection = direction
+        
+        command = f"MoveRelJ,0,{nAxisId},{nDirection},1;"
+        self.send_ur_command(command)
+        self.status_bar.showMessage(f"状态: 已发送关节 {joint_index + 1} 增量命令 ({'正向' if direction else '负向'})")
 
     def send_set_tcp_command(self):
         """
