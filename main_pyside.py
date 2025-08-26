@@ -10,20 +10,6 @@ import socket
 import threading
 import time
 
-# --- 机器人工具箱导入 ---
-try:
-    from roboticstoolbox import DHRobot, PrismaticMDH, RevoluteMDH
-    from spatialmath import SE3
-
-except ImportError as e:
-    app = QApplication(sys.argv)
-    QMessageBox.critical(
-        None,
-        "库导入失败",
-        f"无法导入核心库，请检查安装。\n\n具体错误: {e}"
-    )
-    sys.exit()
-
 # --- TCP 消息接收线程 ---
 class ReceiveThread(QThread):
     message_received = pyqtSignal(str)
@@ -63,18 +49,16 @@ class RobotControlWindow(QMainWindow):
         self.setWindowTitle("RRRRRR 机器人高级控制界面 (PyQt5版)")
         self.setGeometry(100, 100, 900, 700) # 调整窗口大小以容纳新模块
 
-        # --- 1. 定义新的6关节机器人DH模型 ---
-        self.create_robot()
-
-        # --- 2. 初始化机器人状态，关节数改为6 ---
-        self.current_q = np.zeros(self.robot.n)
+        # --- 1. 初始化GUI所需的关节显示变量 ---
+        self.num_joints = 6
+        self.joint_vars = [None] * self.num_joints
         self._moving_joint_index = -1
         self._moving_direction = 0
         self.continuous_move_timer = QTimer(self)
         self.continuous_move_timer.timeout.connect(self.continuous_move)
         self.tcp_input_entries = [] # 新增：用于存储TCP设置的输入框
 
-        # --- 3. 初始化 TCP 变量 ---
+        # --- 2. 初始化 TCP 变量 ---
         self.is_connected = False
         self.client_socket = None
         self.receive_thread = None
@@ -83,26 +67,8 @@ class RobotControlWindow(QMainWindow):
         self.real_time_update_timer = QTimer(self)
         self.real_time_update_timer.timeout.connect(self.request_real_time_data)
 
-        # --- 4. 初始化UI ---
+        # --- 3. 初始化UI ---
         self.init_ui()
-
-        # --- 5. 首次更新显示 ---
-        self.update_state_display()
-
-    def create_robot(self):
-        """创建新的6关节RRRRRR机器人DH模型"""
-        # 使用一个简化的6关节机器人模型
-        L1_d, L2_a, L3_a, L4_d, L6_d = 10, 15, 15, 10, 5
-
-        L1 = RevoluteMDH(alpha=np.pi/2, d=L1_d, a=0, qlim=[-np.pi, np.pi])
-        L2 = RevoluteMDH(alpha=0, d=0, a=L2_a, qlim=[-np.pi, np.pi])
-        L3 = RevoluteMDH(alpha=np.pi/2, d=0, a=L3_a, qlim=[-np.pi, np.pi])
-        L4 = RevoluteMDH(alpha=-np.pi/2, d=L4_d, a=0, qlim=[-np.pi, np.pi])
-        L5 = RevoluteMDH(alpha=np.pi/2, d=0, a=0, qlim=[-np.pi, np.pi])
-        L6 = RevoluteMDH(alpha=0, d=L6_d, a=0, qlim=[-np.pi, np.pi])
-
-        self.robot = DHRobot([L1, L2, L3, L4, L5, L6], name="RRRRRR_Arm")
-        print("机器人模型已更新为6关节RRRRRR:\n", self.robot)
 
     def init_ui(self):
         """创建所有UI组件和布局"""
@@ -114,7 +80,7 @@ class RobotControlWindow(QMainWindow):
         # 左侧面板
         left_panel_layout = QVBoxLayout()
         self.create_motor_group(left_panel_layout)
-        self.create_action_group(left_panel_layout)
+        # 逆运动学模块已移除
         self.create_state_display_group(left_panel_layout)
         self.create_tool_state_group(left_panel_layout) # 新增：机器人工具端实时状态
         main_layout.addLayout(left_panel_layout, 1)
@@ -136,16 +102,14 @@ class RobotControlWindow(QMainWindow):
         group_layout = QHBoxLayout(group)
         left_rows_layout = QVBoxLayout()
 
-        self.joint_vars = []
-        for i in range(self.robot.n):
+        for i in range(self.num_joints):
             row_layout = QHBoxLayout()
-            joint_type = "d" if self.robot.links[i].isprismatic else "q"
-            label = QLabel(f"关节 {i+1} ({joint_type}{i+1}):")
+            label = QLabel(f"关节 {i+1} (q{i+1}):")
 
             value_label = QLabel("0.00")
             value_label.setFixedWidth(50)
             value_label.setAlignment(Qt.AlignRight)
-            self.joint_vars.append(value_label)
+            self.joint_vars[i] = value_label
 
             btn_minus = QPushButton("-")
             btn_minus.setFixedWidth(30)
@@ -169,6 +133,7 @@ class RobotControlWindow(QMainWindow):
 
         # 在右侧预留区域添加运动速率滑条（对应图片中红框）
         slider_container = QVBoxLayout()
+        slider_container.addStretch()
 
         self.override_label = QLabel("运动速率: 0.01")
         self.override_label.setAlignment(Qt.AlignCenter)
@@ -193,34 +158,7 @@ class RobotControlWindow(QMainWindow):
 
         layout.addWidget(group)
 
-    def create_action_group(self, layout):
-        """创建逆解功能区"""
-        group = QGroupBox("逆运动学解算模块")
-        group_layout = QVBoxLayout(group)
-
-        grid_layout = QGridLayout()
-        self.ik_input_entries = []
-        labels = ["X (mm)", "Y (mm)", "Z (mm)", "Roll (°)", "Pitch (°)", "Yaw (°)"]
-        initial_values = ["0", "0", "0", "0", "0", "0"]
-        for i, label_text in enumerate(labels):
-            row, col = i // 3, (i % 3) * 2
-            label = QLabel(label_text)
-            entry = QLineEdit(initial_values[i])
-            self.ik_input_entries.append(entry)
-            grid_layout.addWidget(label, row, col)
-            grid_layout.addWidget(entry, row, col + 1)
-
-        group_layout.addLayout(grid_layout)
-
-        calc_button = QPushButton("执行逆解")
-        calc_button.clicked.connect(self.run_inverse_kinematics)
-        group_layout.addWidget(calc_button)
-
-        self.ik_result_label = QLabel("逆解结果将显示在这里。")
-        self.ik_result_label.setAlignment(Qt.AlignCenter)
-        group_layout.addWidget(self.ik_result_label)
-
-        layout.addWidget(group)
+    # 逆运动学模块已移除
 
     def _on_override_slider_changed(self, value):
         """滑条数值改变时，仅更新标签显示，不立即发指令。"""
@@ -249,22 +187,22 @@ class RobotControlWindow(QMainWindow):
             ("X (mm)", "X"), ("Y (mm)", "Y"), ("Z (mm)", "Z"),
             ("Roll (°)", "Roll"), ("Pitch (°)", "Pitch"), ("Yaw (°)", "Yaw")
         ]
-        
+
         # 将X,Y,Z放在第一行，Roll,Pitch,Yaw放在第二行
         for i, (label_text, var_key) in enumerate(pose_info):
             row = 0 if i < 3 else 1
             col = i % 3 * 2
-            
+
             label = QLabel(label_text)
             value_label = QLabel("0.00")
             value_label.setFixedWidth(70)
             value_label.setAlignment(Qt.AlignRight)
             value_label.setStyleSheet("background-color: lightgrey; border: 1px inset grey;")
             self.pose_labels[var_key] = value_label
-            
+
             group_layout.addWidget(label, row, col)
             group_layout.addWidget(value_label, row, col + 1)
-        
+
         group_layout.setRowStretch(2, 1) # 撑开底部空间
         layout.addWidget(group)
 
@@ -283,20 +221,20 @@ class RobotControlWindow(QMainWindow):
         for i, (label_text, var_key) in enumerate(tool_pose_info):
             row = 0 if i < 3 else 1
             col = i % 3 * 2
-            
+
             label = QLabel(label_text)
             value_label = QLabel("0.00")
             value_label.setFixedWidth(70)
             value_label.setAlignment(Qt.AlignRight)
             value_label.setStyleSheet("background-color: lightgrey; border: 1px inset grey;")
             self.tool_pose_labels[var_key] = value_label
-            
+
             group_layout.addWidget(label, row, col)
             group_layout.addWidget(value_label, row, col + 1)
-            
+
         group_layout.setRowStretch(2, 1) # 撑开底部空间
         layout.addWidget(group)
-        
+
     def create_ur_control_group(self, layout):
         """根据用户图片创建 UR 控制模块"""
         ur_control_group = QGroupBox("E05-L Pro设备控制")
@@ -572,12 +510,8 @@ class RobotControlWindow(QMainWindow):
                 joint_params = [float(p) for p in parts[2:8]]
                 for i in range(len(joint_params)):
                     if i < len(self.joint_vars):
-                        # 如果是旋转关节，转换为度；如果是平移关节，保持不变
-                        if not self.robot.links[i].isprismatic:
-                            self.joint_vars[i].setText(f"{np.rad2deg(joint_params[i]):.2f}")
-                        else:
-                            self.joint_vars[i].setText(f"{joint_params[i]:.2f}")
-                
+                        self.joint_vars[i].setText(f"{np.rad2deg(joint_params[i]):.2f}")
+
                 # 更新机器人末端姿态
                 pose_params = [float(p) for p in parts[8:14]]
                 self.pose_labels["X"].setText(f"{pose_params[0]:.2f}")
@@ -680,46 +614,20 @@ class RobotControlWindow(QMainWindow):
         self.recv_text.append(message)
         self.recv_text.verticalScrollBar().setValue(self.recv_text.verticalScrollBar().maximum())
 
-    def update_state_display(self):
-        """更新GUI上的关节值和末端姿态显示"""
-        for i, q_val in enumerate(self.current_q):
-            if self.robot.links[i].isprismatic:
-                self.joint_vars[i].setText(f"{q_val:.2f}")
-            else:
-                self.joint_vars[i].setText(f"{np.rad2deg(q_val):.2f}")
-
-        T = self.robot.fkine(self.current_q)
-        x, y, z = T.t
-        rpy_rad = T.rpy('zyx')
-        roll = np.rad2deg(rpy_rad[0])
-        pitch = np.rad2deg(rpy_rad[1])
-        yaw = np.rad2deg(rpy_rad[2])
-
-        self.pose_labels["X"].setText(f"{x:.2f}")
-        self.pose_labels["Y"].setText(f"{y:.2f}")
-        self.pose_labels["Z"].setText(f"{z:.2f}")
-        self.pose_labels["Roll"].setText(f"{roll:.2f}")
-        self.pose_labels["Pitch"].setText(f"{pitch:.2f}")
-        self.pose_labels["Yaw"].setText(f"{yaw:.2f}")
-
+    # Forward kinematics and inverse kinematics related functions are removed.
     def motor_adjust(self, joint_index, direction):
-        """微调单个关节角度，并更新显示"""
-        step = 0.5 if self.robot.links[joint_index].isprismatic else np.deg2rad(1.0)
-        q_new = self.current_q[joint_index] + direction * step
-
-        if self.robot.links[joint_index].qlim:
-            q_min, q_max = self.robot.links[joint_index].qlim
-            q_new = np.clip(q_new, q_min, q_max)
-
-        self.current_q[joint_index] = q_new
-        self.update_state_display()
+        """微调单个关节角度，并发送命令"""
+        # Note: This function now sends a command to the robot instead of updating a local model.
+        step_rad = np.deg2rad(1.0)
+        command = f"JOG,0,{joint_index+1},{direction*step_rad:.4f};"
+        self.send_ur_command(command)
         self.status_bar.showMessage(f"状态: 关节{joint_index+1} 微调中...")
 
     def start_move(self, joint_index, direction):
         """开始连续微调"""
         self._moving_joint_index = joint_index
         self._moving_direction = direction
-        self.continuous_move()
+        self.motor_adjust(joint_index, direction)
         self.continuous_move_timer.start(50)
 
     def stop_move(self):
@@ -727,6 +635,7 @@ class RobotControlWindow(QMainWindow):
         self.continuous_move_timer.stop()
         self._moving_joint_index = -1
         self._moving_direction = 0
+        self.send_ur_command("StopJOG;")
         self.status_bar.showMessage("状态: 微调停止")
 
     def continuous_move(self):
@@ -734,39 +643,7 @@ class RobotControlWindow(QMainWindow):
         if self._moving_joint_index != -1:
             self.motor_adjust(self._moving_joint_index, self._moving_direction)
 
-    def run_inverse_kinematics(self):
-        """执行逆运动学解算"""
-        try:
-            x = float(self.ik_input_entries[0].text())
-            y = float(self.ik_input_entries[1].text())
-            z = float(self.ik_input_entries[2].text())
-            roll = np.deg2rad(float(self.ik_input_entries[3].text()))
-            pitch = np.deg2rad(float(self.ik_input_entries[4].text()))
-            yaw = np.deg2rad(float(self.ik_input_entries[5].text()))
-
-            # 创建目标位姿矩阵
-            T_target = SE3.Trans(x, y, z) * SE3.RPY(roll, pitch, yaw)
-
-            q_result, *_ = self.robot.ikine_LM(T_target, q0=self.current_q)
-
-            if q_result is not None and not np.isnan(q_result.q).any():
-                self.current_q = q_result.q
-                self.update_state_display()
-
-                result_str = "逆解成功！\n"
-                for i, q_val in enumerate(self.current_q):
-                    result_str += f"关节{i+1}: q={np.rad2deg(q_val):.2f}°\n"
-
-                self.ik_result_label.setText(result_str)
-                self.status_bar.showMessage("状态: 成功执行逆解，关节值已更新。")
-            else:
-                self.ik_result_label.setText("警告: 无法找到逆解，请检查目标位置是否可达。")
-                self.status_bar.showMessage("状态: 逆解失败。")
-
-        except ValueError:
-            QMessageBox.critical(self, "输入错误", "请输入有效的数字！")
-        except Exception as e:
-            QMessageBox.critical(self, "解算错误", f"逆解过程中发生错误: {e}")
+    # Inverse kinematics related functions are removed.
 
     def closeEvent(self, a0: QCloseEvent):
         """重写关闭事件，执行清理工作"""
