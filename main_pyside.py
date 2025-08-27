@@ -52,10 +52,14 @@ class RobotControlWindow(QMainWindow):
         # --- 1. 初始化GUI所需的关节显示变量 ---
         self.num_joints = 6
         self.joint_vars = [None] * self.num_joints
+        self.tcp_vars = [None] * 6
         self._moving_joint_index = -1
         self._moving_direction = 0
+        self._moving_tcp_index = -1
         self.continuous_move_timer = QTimer(self)
         self.continuous_move_timer.timeout.connect(self.continuous_move)
+        self.continuous_tcp_move_timer = QTimer(self)
+        self.continuous_tcp_move_timer.timeout.connect(self.continuous_tcp_move)
         self.tcp_input_entries = [] # 新增：用于存储TCP设置的输入框
 
         # --- 2. 初始化 TCP 变量 ---
@@ -158,8 +162,6 @@ class RobotControlWindow(QMainWindow):
 
         layout.addWidget(group)
 
-    # 逆运动学模块已移除
-
     def _on_override_slider_changed(self, value):
         """滑条数值改变时，仅更新标签显示，不立即发指令。"""
         override_value = value / 100.0
@@ -207,7 +209,7 @@ class RobotControlWindow(QMainWindow):
         layout.addWidget(group)
 
     def create_tool_state_group(self, layout):
-        """新增：创建用于显示机器人工具端实时状态的模块"""
+        """创建用于显示机器人工具端实时状态的模块，并添加控制按钮"""
         group = QGroupBox("机器人工具端实时状态")
         group_layout = QGridLayout(group)
 
@@ -217,22 +219,41 @@ class RobotControlWindow(QMainWindow):
             ("Tcp_Rx", "Tcp_Rx"), ("Tcp_Ry", "Tcp_Ry"), ("Tcp_Rz", "Tcp_Rz")
         ]
 
-        # 将X,Y,Z放在第一行，Rx,Ry,Rz放在第二行
+        # 调整布局，将按钮放在读数下方
         for i, (label_text, var_key) in enumerate(tool_pose_info):
-            row = 0 if i < 3 else 1
+            row = 0 if i < 3 else 2
             col = i % 3 * 2
-
+            
+            # 添加标签和读数框
             label = QLabel(label_text)
             value_label = QLabel("0.00")
             value_label.setFixedWidth(70)
             value_label.setAlignment(Qt.AlignRight)
             value_label.setStyleSheet("background-color: lightgrey; border: 1px inset grey;")
             self.tool_pose_labels[var_key] = value_label
+            
+            # 添加按钮
+            btn_minus = QPushButton("-")
+            btn_minus.setFixedWidth(30)
+            btn_minus.pressed.connect(lambda idx=i: self.start_tcp_move(idx, -1))
+            btn_minus.released.connect(self.stop_tcp_move)
 
-            group_layout.addWidget(label, row, col)
-            group_layout.addWidget(value_label, row, col + 1)
+            btn_plus = QPushButton("+")
+            btn_plus.setFixedWidth(30)
+            btn_plus.pressed.connect(lambda idx=i: self.start_tcp_move(idx, 1))
+            btn_plus.released.connect(self.stop_tcp_move)
 
-        group_layout.setRowStretch(2, 1) # 撑开底部空间
+            btn_layout = QHBoxLayout()
+            btn_layout.addStretch()
+            btn_layout.addWidget(btn_minus)
+            btn_layout.addWidget(btn_plus)
+            btn_layout.addStretch()
+            
+            # 将控件添加到网格布局
+            group_layout.addWidget(label, row, col, alignment=Qt.AlignCenter)
+            group_layout.addWidget(value_label, row, col + 1, alignment=Qt.AlignRight)
+            group_layout.addLayout(btn_layout, row + 1, col, 1, 2)
+            
         layout.addWidget(group)
 
     def create_ur_control_group(self, layout):
@@ -642,7 +663,53 @@ class RobotControlWindow(QMainWindow):
         if self._moving_joint_index != -1:
             self.motor_adjust(self._moving_joint_index, self._moving_direction)
 
-    # Inverse kinematics related functions are removed.
+    def tcp_adjust(self, tcp_index, direction):
+        """微调TCP坐标，并发送命令"""
+        command_map = {
+            0: "MoveRelL,0,1,0,0,0,0,0;",  # Tcp_X +1mm
+            1: "MoveRelL,0,0,1,0,0,0,0;",  # Tcp_Y +1mm
+            2: "MoveRelL,0,0,0,1,0,0,0;",  # Tcp_Z +1mm
+            3: "MoveRelL,0,0,0,0,1,0,0;",  # Tcp_Rx +1deg
+            4: "MoveRelL,0,0,0,0,0,1,0;",  # Tcp_Ry +1deg
+            5: "MoveRelL,0,0,0,0,0,0,1;",  # Tcp_Rz +1deg
+        }
+        
+        # Determine step size and command based on index and direction
+        if tcp_index < 3:  # X, Y, Z
+            step = 1.0 * direction
+            command_template = "MoveRelL,0,{:.2f},{:.2f},{:.2f},0,0,0;"
+            values = [0.0, 0.0, 0.0]
+            values[tcp_index] = step
+            command = command_template.format(values[0], values[1], values[2])
+        else:  # Rx, Ry, Rz
+            step = np.deg2rad(1.0) * direction
+            command_template = "MoveRelL,0,0,0,0,{:.4f},{:.4f},{:.4f};"
+            values = [0.0, 0.0, 0.0]
+            values[tcp_index - 3] = step
+            command = command_template.format(values[0], values[1], values[2])
+
+        self.send_ur_command(command)
+        self.status_bar.showMessage(f"状态: Tcp_{['X','Y','Z','Rx','Ry','Rz'][tcp_index]} 微调中...")
+
+    def start_tcp_move(self, tcp_index, direction):
+        """开始TCP坐标连续微调"""
+        self._moving_tcp_index = tcp_index
+        self._moving_direction = direction
+        self.tcp_adjust(tcp_index, direction)
+        self.continuous_tcp_move_timer.start(50)
+
+    def stop_tcp_move(self):
+        """停止TCP坐标连续微调"""
+        self.continuous_tcp_move_timer.stop()
+        self._moving_tcp_index = -1
+        self._moving_direction = 0
+        self.send_ur_command("StopRelL;")
+        self.status_bar.showMessage("状态: TCP微调停止")
+    
+    def continuous_tcp_move(self):
+        """连续TCP微调函数，每隔一段时间调用一次自身"""
+        if self._moving_tcp_index != -1:
+            self.tcp_adjust(self._moving_tcp_index, self._moving_direction)
 
     def closeEvent(self, a0: QCloseEvent):
         """重写关闭事件，执行清理工作"""
