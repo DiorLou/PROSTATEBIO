@@ -103,6 +103,10 @@ class RobotControlWindow(QMainWindow):
         # QTimer用于定时请求急停信息
         self.emergency_update_timer = QTimer(self)
         self.emergency_update_timer.timeout.connect(self.request_emergency_info)
+        
+        # 新增的定时器，用于实时读取运动速率
+        self.override_update_timer = QTimer(self)
+        self.override_update_timer.timeout.connect(self.request_override_info)
 
         # --- 3. 初始化UI ---
         self.init_ui()
@@ -133,7 +137,10 @@ class RobotControlWindow(QMainWindow):
         self.status_bar.showMessage("状态: 准备就绪")
 
     def create_motor_group(self, layout):
-        """创建左侧的电机微调模块，用于控制各个关节的运动。"""
+        """
+        创建左侧的电机微调模块，用于控制各个关节的运动。
+        此方法已修改，以调整运动速率滑条的布局，使其与标签更靠近。
+        """
         group = QGroupBox("电机微调模块 (正运动学)")
         group_layout = QHBoxLayout(group)
         left_rows_layout = QVBoxLayout()
@@ -171,11 +178,16 @@ class RobotControlWindow(QMainWindow):
 
         left_rows_layout.addStretch()
 
-        # 添加运动速率滑条（Override）。
+        # 创建一个垂直布局来包含所有与运动速率相关的控件
         slider_container = QVBoxLayout()
-        slider_container.addStretch()
+        
+        # 运动速率标签
         self.override_label = QLabel("运动速率: 0.01")
         self.override_label.setAlignment(Qt.AlignCenter)
+        
+        # 新的布局，用于将滑条和下方的读取框居中
+        center_layout = QVBoxLayout()
+        
         self.override_slider = QSlider(Qt.Vertical)
         self.override_slider.setMinimum(1)      # 对应 0.01 的运动速率。
         self.override_slider.setMaximum(100)    # 对应 1.00 的运动速率。
@@ -184,10 +196,28 @@ class RobotControlWindow(QMainWindow):
         self.override_slider.setTickInterval(10)
         self.override_slider.valueChanged.connect(self._on_override_slider_changed)
         self.override_slider.sliderReleased.connect(self._on_override_slider_released)
+        center_layout.addWidget(self.override_slider, alignment=Qt.AlignCenter)
 
-        slider_container.addWidget(self.override_label)
-        slider_container.addWidget(self.override_slider)
-        slider_container.addStretch()
+        # “当前运动速率”标签和读取框
+        current_override_read_layout = QVBoxLayout()
+        self.current_override_label = QLabel("当前运动速率:")
+        self.current_override_label.setAlignment(Qt.AlignCenter)
+        self.current_override_value = QLineEdit("0.00")
+        self.current_override_value.setReadOnly(True)
+        self.current_override_value.setFixedWidth(60)
+        self.current_override_value.setAlignment(Qt.AlignCenter)
+        self.current_override_value.setStyleSheet("background-color: lightgrey;")
+
+        # 将标签和读取框添加到居中布局
+        current_override_read_layout.addWidget(self.current_override_label, alignment=Qt.AlignCenter)
+        current_override_read_layout.addWidget(self.current_override_value, alignment=Qt.AlignCenter)
+
+        # 将运动速率标签、滑动条居中布局和读取框布局添加到主滑条容器
+        slider_container.addStretch() # 在上方添加伸缩因子
+        slider_container.addWidget(self.override_label, alignment=Qt.AlignCenter)
+        slider_container.addLayout(center_layout)
+        slider_container.addLayout(current_override_read_layout)
+        slider_container.addStretch() # 在下方添加伸缩因子
 
         group_layout.addLayout(left_rows_layout, 1)
         group_layout.addLayout(slider_container)
@@ -523,6 +553,9 @@ class RobotControlWindow(QMainWindow):
             
             # 启动紧急状态更新定时器，每200毫秒请求一次数据
             self.emergency_update_timer.start(200)
+            
+            # 启动运动速率更新定时器，每200毫秒请求一次数据
+            self.override_update_timer.start(200)
 
         except socket.timeout:
             self.tcp_status_label.setText("TCP状态: 连接失败 (连接超时)")
@@ -546,6 +579,7 @@ class RobotControlWindow(QMainWindow):
             self.is_connected = False
             self.real_time_update_timer.stop() # 停止实时数据更新定时器。
             self.emergency_update_timer.stop() # 停止紧急状态更新定时器
+            self.override_update_timer.stop()  # 停止运动速率更新定时器
             if self.receive_thread and self.receive_thread.isRunning():
                 self.receive_thread.stop()  # 安全地停止接收线程。
             try:
@@ -596,6 +630,8 @@ class RobotControlWindow(QMainWindow):
             self.handle_read_tcp_message(message)
         elif message.startswith("ReadEmergencyInfo"):
             self.handle_emergency_info_message(message)
+        elif message.startswith("ReadOverride"):
+            self.handle_override_message(message)
 
     def request_real_time_data(self):
         """定时向机器人发送指令，请求获取实时关节和末端坐标数据。"""
@@ -606,6 +642,20 @@ class RobotControlWindow(QMainWindow):
     def request_emergency_info(self):
         """定时向机器人发送指令，请求获取急停状态。"""
         self.send_ur_command("ReadEmergencyInfo,0;")
+
+    def request_override_info(self):
+        """定时向机器人发送指令，请求获取当前运动速率。"""
+        self.send_ur_command("ReadOverride,0;")
+
+    def handle_override_message(self, message):
+        """解析 'ReadOverride' 消息，并更新当前运动速率显示。"""
+        parts = message.strip(';').split(',')
+        if len(parts) >= 3 and parts[1] == 'OK':
+            try:
+                dOverride = float(parts[2])
+                self.current_override_value.setText(f"{dOverride:.2f}")
+            except (ValueError, IndexError) as e:
+                self.log_message(f"警告: 无法解析运动速率信息: {message}, 错误: {e}")
 
     def handle_emergency_info_message(self, message):
         """解析 'ReadEmergencyInfo' 消息，并根据nESTO值更新急停按钮状态。"""
