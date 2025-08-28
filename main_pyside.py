@@ -56,7 +56,7 @@ class ReceiveThread(QThread):
         """提供一个安全的方法来从外部停止线程。"""
         self.is_running = False  # 设置标志为False，以退出循环。
         # wait() 方法会阻塞，直到线程的 run() 方法执行完毕，确保线程优雅地退出。
-        self.wait() 
+        self.wait()
 
 # --- 主窗口类 ---
 # 此类继承自 QMainWindow，是整个应用程序的图形界面。
@@ -99,6 +99,10 @@ class RobotControlWindow(QMainWindow):
         # QTimer 用于定时向机器人发送请求实时数据的指令。
         self.real_time_update_timer = QTimer(self)
         self.real_time_update_timer.timeout.connect(self.request_real_time_data)
+        
+        # QTimer用于定时请求急停信息
+        self.emergency_update_timer = QTimer(self)
+        self.emergency_update_timer.timeout.connect(self.request_emergency_info)
 
         # --- 3. 初始化UI ---
         self.init_ui()
@@ -284,21 +288,55 @@ class RobotControlWindow(QMainWindow):
         layout.addWidget(group)
 
     def create_ur_control_group(self, layout):
-        """创建用于控制电源、使能、初始化和TCP设置的高级模块。"""
+        """
+        创建用于控制电源、使能、初始化和TCP设置的高级模块。
+        此方法已修改，添加了“复位”、“暂停”、“继续”和“急停”按钮，并控制急停按钮的可用性。
+        """
         ur_control_group = QGroupBox("E05-L Pro设备控制")
         ur_control_layout = QVBoxLayout(ur_control_group)
 
-        # 电源/使能/初始化按钮布局。
+        # 电源/使能/初始化/复位/暂停/急停/继续 按钮布局。
         button_layout = QGridLayout()
+
+        # 第一行按钮：电源和使能
         self.ur_power_btn = QPushButton("电源开启")
         self.ur_power_btn.clicked.connect(self.toggle_power)
         self.ur_enable_btn = QPushButton("使能")
         self.ur_enable_btn.clicked.connect(self.toggle_enable)
+        
+        # 第二行按钮：初始化和复位
         self.ur_init_btn = QPushButton("初始化控制器")
         self.ur_init_btn.clicked.connect(self.send_ur_init_controller_command)
+        
+        self.ur_reset_btn = QPushButton("复位")
+        self.ur_reset_btn.clicked.connect(self.send_ur_reset_command) 
+        
+        # 第三行按钮：暂停和继续
+        self.ur_pause_btn = QPushButton("暂停")
+        self.ur_pause_btn.clicked.connect(self.send_ur_pause_command) 
+
+        self.ur_continue_btn = QPushButton("继续")
+        self.ur_continue_btn.clicked.connect(self.send_ur_continue_command)
+
+        # 第四行按钮：急停
+        self.ur_stop_btn = QPushButton("急停")
+        self.ur_stop_btn.setStyleSheet("background-color: red; color: white; font-weight: bold;")
+        self.ur_stop_btn.clicked.connect(self.send_ur_stop_command) 
+        # 默认情况下，急停按钮不可用，直到收到机器人状态信息
+        self.ur_stop_btn.setEnabled(False)
+
+        # 将按钮添加到网格布局
         button_layout.addWidget(self.ur_power_btn, 0, 0)
         button_layout.addWidget(self.ur_enable_btn, 0, 1)
-        button_layout.addWidget(self.ur_init_btn, 1, 0, 1, 2)
+        
+        button_layout.addWidget(self.ur_init_btn, 1, 0)
+        button_layout.addWidget(self.ur_reset_btn, 1, 1)
+
+        button_layout.addWidget(self.ur_pause_btn, 2, 0)
+        button_layout.addWidget(self.ur_continue_btn, 2, 1)
+
+        button_layout.addWidget(self.ur_stop_btn, 3, 0, 1, 2) # 跨越两列
+
         ur_control_layout.addLayout(button_layout)
 
         # 示教功能复选框。
@@ -482,6 +520,9 @@ class RobotControlWindow(QMainWindow):
             # 启动实时更新定时器，每100毫秒请求一次数据。
             self.real_time_update_timer.start(100)
             self.request_real_time_data()  # 立即请求一次数据，快速更新UI。
+            
+            # 启动紧急状态更新定时器，每200毫秒请求一次数据
+            self.emergency_update_timer.start(200)
 
         except socket.timeout:
             self.tcp_status_label.setText("TCP状态: 连接失败 (连接超时)")
@@ -504,6 +545,7 @@ class RobotControlWindow(QMainWindow):
         if self.is_connected:
             self.is_connected = False
             self.real_time_update_timer.stop() # 停止实时数据更新定时器。
+            self.emergency_update_timer.stop() # 停止紧急状态更新定时器
             if self.receive_thread and self.receive_thread.isRunning():
                 self.receive_thread.stop()  # 安全地停止接收线程。
             try:
@@ -517,6 +559,8 @@ class RobotControlWindow(QMainWindow):
             self.disconnect_button.setEnabled(False)
             self.send_entry.setEnabled(False)
             self.send_button.setEnabled(False)
+            # 重置急停按钮状态
+            self.ur_stop_btn.setEnabled(False)
             self.log_message("系统: 连接已断开。")
 
     def handle_connection_lost(self):
@@ -550,12 +594,29 @@ class RobotControlWindow(QMainWindow):
             self.handle_robot_state_message(message)
         elif message.startswith("ReadCurTCP"):
             self.handle_read_tcp_message(message)
+        elif message.startswith("ReadEmergencyInfo"):
+            self.handle_emergency_info_message(message)
 
     def request_real_time_data(self):
         """定时向机器人发送指令，请求获取实时关节和末端坐标数据。"""
         # 这个方法由 real_time_update_timer 定时调用。
         self.send_ur_command("ReadActPos,0;")
         self.send_ur_command("ReadRobotState,0;")
+    
+    def request_emergency_info(self):
+        """定时向机器人发送指令，请求获取急停状态。"""
+        self.send_ur_command("ReadEmergencyInfo,0;")
+
+    def handle_emergency_info_message(self, message):
+        """解析 'ReadEmergencyInfo' 消息，并根据nESTO值更新急停按钮状态。"""
+        parts = message.strip(';').split(',')
+        if len(parts) >= 4 and parts[1] == 'OK':
+            try:
+                nESTO = int(parts[3])
+                # 如果nESTO为0，说明未处于急停状态，急停按钮可用
+                self.ur_stop_btn.setEnabled(nESTO == 0)
+            except (ValueError, IndexError) as e:
+                self.log_message(f"警告: 无法解析急停信息消息: {message}, 错误: {e}")
 
     def handle_real_time_message(self, message):
         """解析 'ReadActPos' 消息，并更新UI上的关节和末端坐标显示。"""
@@ -662,6 +723,31 @@ class RobotControlWindow(QMainWindow):
     def send_ur_init_controller_command(self):
         """发送初始化控制器指令。"""
         self.send_ur_command("StartMaster;")
+        self.status_bar.showMessage("状态: 已发送初始化控制器指令。")
+
+    def send_ur_reset_command(self):
+        """发送机器人控制器复位指令。"""
+        command = "GrpReset,0;" 
+        self.send_ur_command(command)
+        self.status_bar.showMessage("状态: 已发送复位指令。")
+
+    def send_ur_pause_command(self):
+        """发送机器人运动暂停指令。"""
+        command = "GrpInterrupt,0;"
+        self.send_ur_command(command)
+        self.status_bar.showMessage("状态: 已发送暂停指令。")
+
+    def send_ur_continue_command(self):
+        """发送机器人运动继续指令。"""
+        command = "GrpContinue,0;"
+        self.send_ur_command(command)
+        self.status_bar.showMessage("状态: 已发送继续指令。")
+
+    def send_ur_stop_command(self):
+        """发送机器人急停指令。"""
+        command = "GrpStop,0;" 
+        self.send_ur_command(command)
+        self.status_bar.showMessage("状态: 已发送急停指令。")
 
     def log_message(self, message):
         """将消息添加到接收文本框，并自动滚动到底部。"""
