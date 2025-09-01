@@ -144,7 +144,7 @@ class RobotControlWindow(QMainWindow):
         解析接收到的消息，并根据消息类型分发到不同的处理方法。
         此槽函数由 tcp_manager.message_received 信号触发。
         """
-        self.log_message(message)
+        # self.log_message(message)
         if message.startswith("ReadActPos"):
             self.handle_real_time_message(message)
         elif message.startswith("ReadRobotState"):
