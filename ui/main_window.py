@@ -252,13 +252,13 @@ class RobotControlWindow(QMainWindow):
         """解析 'ReadActPos' 消息，并更新UI上的关节和末端坐标显示。"""
         # 移除消息末尾的分号并按逗号分割。
         parts = message.strip(';').split(',')
-        if len(parts) >= 25 and parts[1] == 'OK':
+        if len(parts) == 26 and parts[1] == 'OK':
             try:
-                # 更新关节值，从弧度转换为度。
                 joint_params = [float(p) for p in parts[2:8]]
                 for i in range(len(joint_params)):
                     if i < len(self.joint_vars):
-                        self.joint_vars[i].setText(f"{np.rad2deg(joint_params[i]):.2f}")
+                        # 直接使用解析出的值，不再进行转换
+                        self.joint_vars[i].setText(f"{joint_params[i]:.2f}")
 
                 # 更新机器人末端姿态（笛卡尔坐标和欧拉角）。
                 pose_params = [float(p) for p in parts[8:14]]
@@ -301,12 +301,12 @@ class RobotControlWindow(QMainWindow):
 
     def handle_robot_state_message(self, message):
         """解析 'ReadRobotState' 消息，并更新UI上的电源和使能按钮状态。"""
-        parts = message.split(',')
-        if len(parts) >= 14:
+        parts = message.strip(';').split(',')
+        if len(parts) == 15 and parts[1] == 'OK':
             try:
                 # 协议中定义了每个状态参数的索引。
-                nElectrify = int(parts[10])
-                nEnableState = int(parts[2])
+                nElectrify = int(parts[11])
+                nEnableState = int(parts[3])
                 self.update_power_button(nElectrify)
                 self.update_enable_button(nEnableState)
             except (ValueError, IndexError):
