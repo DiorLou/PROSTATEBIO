@@ -82,19 +82,21 @@ class TCPManager(QObject):
             return
 
         self.is_connected = False
-        self.real_time_update_timer.stop()  # 停止实时数据更新定时器。
-        self.emergency_update_timer.stop()  # 停止紧急状态更新定时器
-        self.override_update_timer.stop()   # 停止运动速率更新定时器
-
-        if self.receive_thread and self.receive_thread.isRunning():
-            self.receive_thread.stop()  # 安全地停止接收线程。
+        self.real_time_update_timer.stop()
+        self.emergency_update_timer.stop()
+        self.override_update_timer.stop()
         
+        # 优先关闭套接字，这会强制 recv() 抛出异常，让线程快速退出
         try:
-            self.client_socket.close()  # 关闭套接字。
+            if self.client_socket:
+                self.client_socket.close()  # 先关闭套接字
         except Exception as e:
             print(f"关闭套接字出错: {e}")
 
-        # 发出连接状态改变信号
+        # 然后再安全地等待线程退出
+        if self.receive_thread and self.receive_thread.isRunning():
+            self.receive_thread.stop() 
+
         self.connection_status_changed.emit(False)
         self.message_received.emit("系统: 连接已断开。")
 
