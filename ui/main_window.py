@@ -229,8 +229,8 @@ class RobotControlWindow(QMainWindow):
 
     def handle_override_message(self, message):
         """解析 'ReadOverride' 消息，并更新当前运动速率显示。"""
-        parts = message.strip(';').split(',')
-        if len(parts) >= 3 and parts[1] == 'OK':
+        parts = message.strip(';').strip(',').split(',')
+        if len(parts) == 3 and parts[1] == 'OK':
             try:
                 dOverride = float(parts[2])
                 self.current_override_value.setText(f"{dOverride:.2f}")
@@ -239,8 +239,8 @@ class RobotControlWindow(QMainWindow):
 
     def handle_emergency_info_message(self, message):
         """解析 'ReadEmergencyInfo' 消息，并根据nESTO值更新急停按钮状态。"""
-        parts = message.strip(';').split(',')
-        if len(parts) >= 4 and parts[1] == 'OK':
+        parts = message.strip(';').strip(',').split(',')
+        if len(parts) == 6 and parts[1] == 'OK':
             try:
                 nESTO = int(parts[3])
                 # 如果nESTO为0，说明未处于急停状态，急停按钮可用
@@ -251,7 +251,7 @@ class RobotControlWindow(QMainWindow):
     def handle_real_time_message(self, message):
         """解析 'ReadActPos' 消息，并更新UI上的关节和末端坐标显示。"""
         # 移除消息末尾的分号并按逗号分割。
-        parts = message.strip(';').split(',')
+        parts = message.strip(';').strip(',').split(',')
         if len(parts) == 26 and parts[1] == 'OK':
             try:
                 joint_params = [float(p) for p in parts[2:8]]
@@ -286,7 +286,7 @@ class RobotControlWindow(QMainWindow):
 
     def handle_read_tcp_message(self, message):
         """解析 'ReadCurTCP' 消息，并更新TCP参数输入框的值。"""
-        parts = message.strip(';').split(',')
+        parts = message.strip(';').strip(',').split(',')
         if len(parts) == 8 and parts[1] == 'OK':
             try:
                 tcp_params = [f"{float(p):.2f}" for p in parts[2:]]
@@ -301,7 +301,7 @@ class RobotControlWindow(QMainWindow):
 
     def handle_robot_state_message(self, message):
         """解析 'ReadRobotState' 消息，并更新UI上的电源和使能按钮状态。"""
-        parts = message.strip(';').split(',')
+        parts = message.strip(';').strip(',').split(',')
         if len(parts) == 15 and parts[1] == 'OK':
             try:
                 # 协议中定义了每个状态参数的索引。
@@ -454,7 +454,7 @@ class RobotControlWindow(QMainWindow):
             row_layout = QHBoxLayout()
             label = QLabel(f"关节 {i+1} (q{i+1}):")
             value_label = QLabel("0.00")
-            value_label.setFixedWidth(50)
+            value_label.setFixedWidth(70)
             value_label.setAlignment(Qt.AlignRight)
             self.joint_vars[i] = value_label  # 存储引用，以便后续更新显示。
             # 创建并连接“微调减小”按钮。
