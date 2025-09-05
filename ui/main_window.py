@@ -26,6 +26,7 @@ class RobotControlWindow(QMainWindow):
         # 用于存储显示关节角度的 QLabel 控件引用。
         self.joint_vars = [None] * self.num_joints
         # 预留用于TCP变量的列表。
+        self.cur_tcp_vars = [None] * 6
         self.tcp_vars = [None] * 6
         self._moving_joint_index = -1  # 正在连续微调的关节索引，-1表示没有。
         self._moving_direction = 0     # 移动方向，1代表正向，-1代表反向。
@@ -71,6 +72,7 @@ class RobotControlWindow(QMainWindow):
         # 右侧面板布局，包含高级机器人控制和TCP通信模块。
         right_panel_layout = QVBoxLayout()
         self.create_ur_control_group(right_panel_layout)
+        self.create_cur_tcp_group(right_panel_layout)
         self.create_tcp_group(right_panel_layout)
         main_layout.addLayout(right_panel_layout, 1)
 
@@ -97,6 +99,7 @@ class RobotControlWindow(QMainWindow):
         self.ur_stop_btn.clicked.connect(self.send_ur_stop_command)
         self.teach_mode_checkbox.stateChanged.connect(self.handle_teach_mode_state_change)
         self.set_tcp_btn.clicked.connect(self.send_set_tcp_command)
+        self.read_cur_tcp_btn.clicked.connect(self.request_cur_tcp_info)
 
         # 将 TCPManager 的信号连接到本窗口的槽函数
         self.tcp_manager.connection_status_changed.connect(self.update_ui_on_connection)
@@ -155,6 +158,12 @@ class RobotControlWindow(QMainWindow):
             self.handle_emergency_info_message(message)
         elif message.startswith("ReadOverride"):
             self.handle_override_message(message)
+        elif message.startswith("ReadCurTCP"):
+            self.handle_read_tcp_message(self, message)
+
+    def request_cur_tcp_info(self):
+        """通过按钮点击发送指令，请求获取当前TCP坐标。"""
+        self.tcp_manager.send_command("ReadCurTCP,0;")
 
     def send_set_tcp_command(self):
         """
@@ -251,6 +260,7 @@ class RobotControlWindow(QMainWindow):
     def handle_real_time_message(self, message):
         """解析 'ReadActPos' 消息，并更新UI上的关节和末端坐标显示。"""
         # 移除消息末尾的分号并按逗号分割。
+        self.log_message(message)
         parts = message.strip(';').strip(',').split(',')
         if len(parts) == 26 and parts[1] == 'OK':
             try:
@@ -285,20 +295,20 @@ class RobotControlWindow(QMainWindow):
             self.log_message(f"警告: 接收到无效的 ReadActPos 消息: {message}")
 
     def handle_read_tcp_message(self, message):
-        """解析 'ReadCurTCP' 消息，并更新TCP参数输入框的值。"""
+        """解析 'ReadCurTCP' 消息，并更新新的TCP显示框。"""
+        self.log_message(message)
         parts = message.strip(';').strip(',').split(',')
         if len(parts) == 8 and parts[1] == 'OK':
             try:
                 tcp_params = [f"{float(p):.2f}" for p in parts[2:]]
                 for i in range(len(tcp_params)):
-                    if i < len(self.tcp_input_entries):
-                        self.tcp_input_entries[i].setText(tcp_params[i])
-                self.status_bar.showMessage("状态: TCP参数已从设备同步。")
+                    self.cur_tcp_vars[i].setText(tcp_params[i])
+                self.status_bar.showMessage("状态: 当前TCP坐标已更新。")
             except (ValueError, IndexError):
                 self.log_message("警告: 无法解析 ReadCurTCP 消息。")
         else:
             self.log_message(f"警告: 接收到无效的 ReadCurTCP 消息: {message}")
-
+            
     def handle_robot_state_message(self, message):
         """解析 'ReadRobotState' 消息，并更新UI上的电源和使能按钮状态。"""
         parts = message.strip(';').strip(',').split(',')
@@ -634,6 +644,30 @@ class RobotControlWindow(QMainWindow):
         tcp_grid_layout.addWidget(self.set_tcp_btn, 2, 0, 1, 2)
         ur_control_layout.addWidget(tcp_group)
         layout.addWidget(ur_control_group)
+
+    def create_cur_tcp_group(self, layout):
+        """创建用于显示当前TCP坐标的Groupbox。"""
+        group = QGroupBox("当前TCP设置")
+        group_layout = QGridLayout(group)
+
+        tcp_labels = ["Cur_Tcp_X", "Cur_Tcp_Y", "Cur_Tcp_Z", "Cur_Tcp_Rx", "Cur_Tcp_Ry", "Cur_Tcp_Rz"]
+
+        for i, label_text in enumerate(tcp_labels):
+            row, col = i // 3, (i % 3) * 2
+            label = QLabel(label_text + ":")
+            display_entry = QLineEdit("0.00")
+            display_entry.setReadOnly(True)
+            display_entry.setStyleSheet("background-color: lightgrey;")
+            self.cur_tcp_vars[i] = display_entry
+
+            group_layout.addWidget(label, row, col)
+            group_layout.addWidget(display_entry, row, col + 1)
+
+        # 添加“读取Cur TCP”按钮
+        self.read_cur_tcp_btn = QPushButton("读取Cur TCP")
+        group_layout.addWidget(self.read_cur_tcp_btn, 2, 0, 1, 2) # 放置在下一行并跨越两列
+
+        layout.addWidget(group)
 
     def create_tcp_group(self, layout):
         """创建TCP连接和消息收发模块。"""
