@@ -65,7 +65,6 @@ class RobotControlWindow(QMainWindow):
         # 左侧面板布局，包含电机控制和状态显示模块。
         left_panel_layout = QVBoxLayout()
         self.create_motor_group(left_panel_layout)
-        self.create_state_display_group(left_panel_layout)
         self.create_tool_state_group(left_panel_layout)
         main_layout.addLayout(left_panel_layout, 1)
 
@@ -158,8 +157,6 @@ class RobotControlWindow(QMainWindow):
             self.handle_emergency_info_message(message)
         elif message.startswith("ReadOverride"):
             self.handle_override_message(message)
-        elif message.startswith("ReadCurTCP"):
-            self.handle_read_tcp_message(self, message)
 
     def request_cur_tcp_info(self):
         """通过按钮点击发送指令，请求获取当前TCP坐标。"""
@@ -260,7 +257,6 @@ class RobotControlWindow(QMainWindow):
     def handle_real_time_message(self, message):
         """解析 'ReadActPos' 消息，并更新UI上的关节和末端坐标显示。"""
         # 移除消息末尾的分号并按逗号分割。
-        self.log_message(message)
         parts = message.strip(';').strip(',').split(',')
         if len(parts) == 26 and parts[1] == 'OK':
             try:
@@ -270,17 +266,8 @@ class RobotControlWindow(QMainWindow):
                         # 直接使用解析出的值，不再进行转换
                         self.joint_vars[i].setText(f"{joint_params[i]:.2f}")
 
-                # 更新机器人末端姿态（笛卡尔坐标和欧拉角）。
-                pose_params = [float(p) for p in parts[8:14]]
-                self.pose_labels["X"].setText(f"{pose_params[0]:.2f}")
-                self.pose_labels["Y"].setText(f"{pose_params[1]:.2f}")
-                self.pose_labels["Z"].setText(f"{pose_params[2]:.2f}")
-                self.pose_labels["Roll"].setText(f"{pose_params[3]:.2f}")
-                self.pose_labels["Pitch"].setText(f"{pose_params[4]:.2f}")
-                self.pose_labels["Yaw"].setText(f"{pose_params[5]:.2f}")
-
                 # 更新机器人工具端姿态。
-                tool_pose_params = [float(p) for p in parts[14:20]]
+                tool_pose_params = [float(p) for p in parts[8:14]]
                 self.tool_pose_labels["Tcp_X"].setText(f"{tool_pose_params[0]:.2f}")
                 self.tool_pose_labels["Tcp_Y"].setText(f"{tool_pose_params[1]:.2f}")
                 self.tool_pose_labels["Tcp_Z"].setText(f"{tool_pose_params[2]:.2f}")
@@ -524,31 +511,6 @@ class RobotControlWindow(QMainWindow):
         slider_container.addStretch() # 在下方添加伸缩因子
         group_layout.addLayout(left_rows_layout, 1)
         group_layout.addLayout(slider_container)
-        layout.addWidget(group)
-
-    def create_state_display_group(self, layout):
-        """创建用于显示机器人末端实时状态的模块（TCP坐标，不含微调按钮）。"""
-        group = QGroupBox("机器人末端实时状态")
-        group_layout = QGridLayout(group)
-        self.pose_labels = {}
-        # 定义要显示的姿态参数及其对应的键名。
-        pose_info = [
-            ("X (mm)", "X"), ("Y (mm)", "Y"), ("Z (mm)", "Z"),
-            ("Roll (°)", "Roll"), ("Pitch (°)", "Pitch"), ("Yaw (°)", "Yaw")
-        ]
-        # 使用循环和网格布局来排列标签和显示值。
-        for i, (label_text, var_key) in enumerate(pose_info):
-            row = 0 if i < 3 else 1
-            col = i % 3 * 2
-            label = QLabel(label_text)
-            value_label = QLabel("0.00")
-            value_label.setFixedWidth(70)
-            value_label.setAlignment(Qt.AlignRight)
-            value_label.setStyleSheet("background-color: lightgrey; border: 1px inset grey;")
-            self.pose_labels[var_key] = value_label  # 将引用存储在字典中。
-            group_layout.addWidget(label, row, col)
-            group_layout.addWidget(value_label, row, col + 1)
-        group_layout.setRowStretch(2, 1) # 增加底部伸缩因子，使其撑开。
         layout.addWidget(group)
 
     def create_tool_state_group(self, layout):
