@@ -32,6 +32,14 @@ class RobotControlWindow(QMainWindow):
         self._moving_direction = 0     # 移动方向，1代表正向，-1代表反向。
         self._moving_tcp_index = -1    # 正在连续微调的TCP坐标索引。
         
+        # 新增用于记录A点和O点坐标的文本框列表
+        self.a_vars = [None] * 3
+        self.o_vars = [None] * 3
+        self.e_vars = [None] * 3 # 新增 end-effect 变量列表
+        
+        # 新增一个成员变量来存储最新的工具端姿态
+        self.latest_tool_pose = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        
         # QTimer 用于实现按住按钮连续微调关节的功能。
         self.continuous_move_timer = QTimer(self)
         # 将定时器的超时信号连接到 continuous_move 方法。
@@ -72,6 +80,7 @@ class RobotControlWindow(QMainWindow):
         
         left_panel_layout.addLayout(top_left_layout)
         self.create_tool_state_group(left_panel_layout)
+        self.create_record_oae_state_group(left_panel_layout)
         
         # 在最底部添加一个弹簧，将所有内容向上推
         left_panel_layout.addStretch()
@@ -285,6 +294,8 @@ class RobotControlWindow(QMainWindow):
                 self.tool_pose_labels["Tcp_Rx"].setText(f"{tool_pose_params[3]:.2f}")
                 self.tool_pose_labels["Tcp_Ry"].setText(f"{tool_pose_params[4]:.2f}")
                 self.tool_pose_labels["Tcp_Rz"].setText(f"{tool_pose_params[5]:.2f}")
+                # 更新最新工具端姿态
+                self.latest_tool_pose = tool_pose_params
 
                 self.status_bar.showMessage("状态: 关节、末端和工具端坐标已实时同步。")
             except (ValueError, IndexError):
@@ -292,6 +303,39 @@ class RobotControlWindow(QMainWindow):
         else:
             self.log_message(f"警告: 接收到无效的 ReadActPos 消息: {message}")
 
+    def get_a_point_position(self):
+        """将最新的工具端位置记录到A点文本框中。"""
+        if not self.latest_tool_pose:
+            self.status_bar.showMessage("警告: 无法获取位置，请先连接机器人并等待数据更新。")
+            return
+        
+        self.a_vars[0].setText(f"{self.latest_tool_pose[0]:.2f}")
+        self.a_vars[1].setText(f"{self.latest_tool_pose[1]:.2f}")
+        self.a_vars[2].setText(f"{self.latest_tool_pose[2]:.2f}")
+        self.status_bar.showMessage("状态: 已获取A点位置。")
+
+    def get_o_point_position(self):
+        """将最新的工具端位置记录到O点文本框中。"""
+        if not self.latest_tool_pose:
+            self.status_bar.showMessage("警告: 无法获取位置，请先连接机器人并等待数据更新。")
+            return
+        
+        self.o_vars[0].setText(f"{self.latest_tool_pose[0]:.2f}")
+        self.o_vars[1].setText(f"{self.latest_tool_pose[1]:.2f}")
+        self.o_vars[2].setText(f"{self.latest_tool_pose[2]:.2f}")
+        self.status_bar.showMessage("状态: 已获取O点位置。")
+        
+    def get_e_point_position(self):
+        """将最新的工具端位置记录到End-Effect文本框中。"""
+        if not self.latest_tool_pose:
+            self.status_bar.showMessage("警告: 无法获取位置，请先连接机器人并等待数据更新。")
+            return
+        e_point = self.latest_tool_pose[0:3]
+        self.e_vars[0].setText(f"{e_point[0]:.2f}")
+        self.e_vars[1].setText(f"{e_point[1]:.2f}")
+        self.e_vars[2].setText(f"{e_point[2]:.2f}")
+        self.status_bar.showMessage("状态: 已获取End-Effect位置。")
+        
     def handle_read_tcp_message(self, message):
         """解析 'ReadCurTCP' 消息，并更新新的TCP显示框。"""
         self.log_message(message)
@@ -561,6 +605,67 @@ class RobotControlWindow(QMainWindow):
             group_layout.addWidget(label, row, col, alignment=Qt.AlignCenter)
             group_layout.addWidget(value_label, row, col + 1, alignment=Qt.AlignRight)
             group_layout.addLayout(btn_layout, row + 1, col, 1, 2)
+        layout.addWidget(group)
+        
+    def create_record_oae_state_group(self, layout):
+        """创建用于记录机器人A点、O点和end-effect点的模块。"""
+        group = QGroupBox("机器人A、O和End-Effect位置")
+        group_layout = QVBoxLayout(group)
+
+        # A点布局
+        a_point_subgroup = QGroupBox("A点")
+        a_point_layout = QGridLayout(a_point_subgroup)
+        a_labels = ["A_x:", "A_y:", "A_z:"]
+        for i, label_text in enumerate(a_labels):
+            label = QLabel(label_text)
+            text_box = QLineEdit("0.00")
+            text_box.setReadOnly(True)
+            text_box.setStyleSheet("background-color: lightgrey;")
+            self.a_vars[i] = text_box
+            a_point_layout.addWidget(label, 0, i * 2)
+            a_point_layout.addWidget(text_box, 0, i * 2 + 1)
+        get_a_btn = QPushButton("获取A点位置")
+        a_point_layout.addWidget(get_a_btn, 1, 0, 1, 6, alignment=Qt.AlignCenter)
+        group_layout.addWidget(a_point_subgroup)
+
+        # O点布局
+        o_point_subgroup = QGroupBox("O点")
+        o_point_layout = QGridLayout(o_point_subgroup)
+        o_labels = ["O_x:", "O_y:", "O_z:"]
+        for i, label_text in enumerate(o_labels):
+            label = QLabel(label_text)
+            text_box = QLineEdit("0.00")
+            text_box.setReadOnly(True)
+            text_box.setStyleSheet("background-color: lightgrey;")
+            self.o_vars[i] = text_box
+            o_point_layout.addWidget(label, 0, i * 2)
+            o_point_layout.addWidget(text_box, 0, i * 2 + 1)
+        get_o_btn = QPushButton("获取O点位置")
+        o_point_layout.addWidget(get_o_btn, 1, 0, 1, 6, alignment=Qt.AlignCenter)
+        group_layout.addWidget(o_point_subgroup)
+        
+        # End-Effect点布局
+        e_point_subgroup = QGroupBox("End-Effect")
+        e_point_layout = QGridLayout(e_point_subgroup)
+        e_labels = ["E_x:", "E_y:", "E_z:"]
+        for i, label_text in enumerate(e_labels):
+            label = QLabel(label_text)
+            text_box = QLineEdit("0.00")
+            text_box.setReadOnly(True)
+            text_box.setStyleSheet("background-color: lightgrey;")
+            self.e_vars[i] = text_box
+            e_point_layout.addWidget(label, 0, i * 2)
+            e_point_layout.addWidget(text_box, 0, i * 2 + 1)
+        get_e_btn = QPushButton("获取End-Effect位置")
+        e_point_layout.addWidget(get_e_btn, 1, 0, 1, 6, alignment=Qt.AlignCenter)
+        group_layout.addWidget(e_point_subgroup)
+
+        # 连接按钮的点击事件
+        get_a_btn.clicked.connect(self.get_a_point_position)
+        get_o_btn.clicked.connect(self.get_o_point_position)
+        get_e_btn.clicked.connect(self.get_e_point_position) # 连接新按钮
+
+        group_layout.addStretch()
         layout.addWidget(group)
 
     def create_ur_control_group(self, layout):
