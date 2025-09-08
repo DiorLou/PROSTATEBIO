@@ -64,13 +64,24 @@ class RobotControlWindow(QMainWindow):
 
         # 左侧面板布局，包含电机控制和状态显示模块。
         left_panel_layout = QVBoxLayout()
-        self.create_motor_group(left_panel_layout)
+        
+        # 新增：一个水平布局容器来容纳电机微调和运动速率模块
+        top_left_layout = QHBoxLayout()
+        self.create_motor_group(top_left_layout)
+        self.create_override_group(top_left_layout) # 新增：运动速率分组框
+        
+        left_panel_layout.addLayout(top_left_layout)
         self.create_tool_state_group(left_panel_layout)
+        
+        # 在最底部添加一个弹簧，将所有内容向上推
+        left_panel_layout.addStretch()
         main_layout.addLayout(left_panel_layout, 1)
 
         # 右侧面板布局，包含高级机器人控制和TCP通信模块。
         right_panel_layout = QVBoxLayout()
         self.create_ur_control_group(right_panel_layout)
+        self.create_teach_mode_group(right_panel_layout) # 新增：示教功能分组框
+        self.create_set_tcp_group(right_panel_layout) # 新增：工具坐标系设置分组框
         self.create_cur_tcp_group(right_panel_layout)
         self.create_tcp_group(right_panel_layout)
         main_layout.addLayout(right_panel_layout, 1)
@@ -445,8 +456,8 @@ class RobotControlWindow(QMainWindow):
         此方法已修改，以调整运动速率滑条的布局，使其与标签更靠近。
         """
         group = QGroupBox("电机微调模块 (正运动学)")
-        group_layout = QHBoxLayout(group)
-        left_rows_layout = QVBoxLayout()
+        group_layout = QVBoxLayout(group)
+        group_layout.addStretch()
         for i in range(self.num_joints):
             row_layout = QHBoxLayout()
             label = QLabel(f"关节 {i+1} (q{i+1}):")
@@ -473,25 +484,26 @@ class RobotControlWindow(QMainWindow):
             row_layout.addWidget(btn_minus)
             row_layout.addWidget(btn_plus)
             row_layout.addStretch()
-            left_rows_layout.addLayout(row_layout)
-        left_rows_layout.addStretch()
-        # 创建一个垂直布局来包含所有与运动速率相关的控件
-        slider_container = QVBoxLayout()
-        # 运动速率标签
+            group_layout.addLayout(row_layout)
+        group_layout.addStretch()
+        layout.addWidget(group)
+
+    def create_override_group(self, layout):
+        """将运动速率滑块和显示做成一个新Groupbox。"""
+        group = QGroupBox("运动速率")
+        group_layout = QVBoxLayout(group)
         self.override_label = QLabel("运动速率: 0.01")
         self.override_label.setAlignment(Qt.AlignCenter)
-        # 新的布局，用于将滑条和下方的读取框居中
         center_layout = QVBoxLayout()
         self.override_slider = QSlider(Qt.Vertical)
-        self.override_slider.setMinimum(1)      # 对应 0.01 的运动速率。
-        self.override_slider.setMaximum(100)    # 对应 1.00 的运动速率。
+        self.override_slider.setMinimum(1)
+        self.override_slider.setMaximum(100)
         self.override_slider.setValue(1)
         self.override_slider.setTickPosition(QSlider.TicksBothSides)
         self.override_slider.setTickInterval(10)
         self.override_slider.valueChanged.connect(self._on_override_slider_changed)
         self.override_slider.sliderReleased.connect(self._on_override_slider_released)
         center_layout.addWidget(self.override_slider, alignment=Qt.AlignCenter)
-        # “当前运动速率”标签和读取框
         current_override_read_layout = QVBoxLayout()
         self.current_override_label = QLabel("当前运动速率:")
         self.current_override_label.setAlignment(Qt.AlignCenter)
@@ -500,17 +512,14 @@ class RobotControlWindow(QMainWindow):
         self.current_override_value.setFixedWidth(60)
         self.current_override_value.setAlignment(Qt.AlignCenter)
         self.current_override_value.setStyleSheet("background-color: lightgrey;")
-        # 将标签和读取框添加到居中布局
         current_override_read_layout.addWidget(self.current_override_label, alignment=Qt.AlignCenter)
         current_override_read_layout.addWidget(self.current_override_value, alignment=Qt.AlignCenter)
-        # 将运动速率标签、滑动条居中布局和读取框布局添加到主滑条容器
-        slider_container.addStretch() # 在上方添加伸缩因子
-        slider_container.addWidget(self.override_label, alignment=Qt.AlignCenter)
-        slider_container.addLayout(center_layout)
-        slider_container.addLayout(current_override_read_layout)
-        slider_container.addStretch() # 在下方添加伸缩因子
-        group_layout.addLayout(left_rows_layout, 1)
-        group_layout.addLayout(slider_container)
+        group_layout.addStretch()
+        group_layout.addWidget(self.override_label, alignment=Qt.AlignCenter)
+        group_layout.addLayout(center_layout)
+        group_layout.addLayout(current_override_read_layout)
+         # 移除垂直拉伸因子，让group不再被拉伸
+        group_layout.addStretch()
         layout.addWidget(group)
 
     def create_tool_state_group(self, layout):
@@ -586,10 +595,19 @@ class RobotControlWindow(QMainWindow):
         button_layout.addWidget(self.ur_continue_btn, 2, 1)
         button_layout.addWidget(self.ur_stop_btn, 3, 0, 1, 2) # 跨越两列
         ur_control_layout.addLayout(button_layout)
-        # 示教功能复选框。
-        self.teach_mode_checkbox = QCheckBox("示教功能")
-        ur_control_layout.addWidget(self.teach_mode_checkbox)
-        # 工具坐标系设置模块。
+
+        layout.addWidget(ur_control_group)
+
+    def create_teach_mode_group(self, layout):
+        """新增：示教功能分组框，并将其移到左侧。"""
+        group = QGroupBox("示教功能")
+        group_layout = QHBoxLayout(group)
+        self.teach_mode_checkbox = QCheckBox("示教功能开启")
+        group_layout.addWidget(self.teach_mode_checkbox)
+        layout.addWidget(group)
+
+    def create_set_tcp_group(self, layout):
+        """新增：将工具坐标系设置移出并做成独立的Groupbox。"""
         tcp_group = QGroupBox("工具坐标系设置 (TCP)")
         tcp_grid_layout = QGridLayout(tcp_group)
         tcp_labels = ["Tcp_X", "Tcp_Y", "Tcp_Z", "Tcp_Rx", "Tcp_Ry", "Tcp_Rz"]
@@ -604,8 +622,7 @@ class RobotControlWindow(QMainWindow):
             tcp_grid_layout.addWidget(entry, row, col + 1)
         self.set_tcp_btn = QPushButton("设置TCP")
         tcp_grid_layout.addWidget(self.set_tcp_btn, 2, 0, 1, 2)
-        ur_control_layout.addWidget(tcp_group)
-        layout.addWidget(ur_control_group)
+        layout.addWidget(tcp_group)
 
     def create_cur_tcp_group(self, layout):
         """创建用于显示当前TCP坐标的Groupbox。"""
