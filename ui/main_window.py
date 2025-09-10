@@ -119,6 +119,7 @@ class RobotControlWindow(QMainWindow):
         self.teach_mode_checkbox.stateChanged.connect(self.handle_teach_mode_state_change)
         self.set_tcp_btn.clicked.connect(self.send_set_tcp_command)
         self.read_cur_tcp_btn.clicked.connect(self.request_cur_tcp_info)
+        self.get_suitable_tcp_btn.clicked.connect(self.get_suitable_tcp)
 
         # 将 TCPManager 的信号连接到本窗口的槽函数
         self.tcp_manager.connection_status_changed.connect(self.update_ui_on_connection)
@@ -725,9 +726,45 @@ class RobotControlWindow(QMainWindow):
             self.tcp_input_entries.append(entry)
             tcp_grid_layout.addWidget(label, row, col)
             tcp_grid_layout.addWidget(entry, row, col + 1)
+
         self.set_tcp_btn = QPushButton("设置TCP")
-        tcp_grid_layout.addWidget(self.set_tcp_btn, 2, 0, 1, 2)
+        self.get_suitable_tcp_btn = QPushButton("获取合适的TCP")
+
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self.set_tcp_btn)
+        button_layout.addWidget(self.get_suitable_tcp_btn)
+
+        tcp_grid_layout.addLayout(button_layout, 2, 0, 1, 2)
+        
         layout.addWidget(tcp_group)
+        
+    def get_suitable_tcp(self):
+        """
+        计算O点和End-effect点之间的距离，并设置到Tcp_Z。
+        同时将其他五个TCP值设置成0。
+        """
+        # 1. 检查A点和O点是否有数据
+        try:
+            o_point = np.array([float(self.o_vars[i].text()) for i in range(3)])
+            e_point = np.array([float(self.e_vars[i].text()) for i in range(3)])
+        except (ValueError, IndexError):
+            self.status_bar.showMessage("警告: 请先获取O点和End-effect点坐标。")
+            return
+
+        # 2. 计算两点之间的欧几里得距离
+        distance = np.linalg.norm(e_point - o_point)
+        self.status_bar.showMessage(f"状态: 计算出的O点和End-effect点距离为 {distance:.2f}。")
+
+        # 3. 更新TCP设置输入框
+        # 将Tcp_Z设置为计算出的距离
+        self.tcp_input_entries[2].setText(f"{distance:.2f}")
+
+        # 将其他五个值设置为0
+        for i in range(len(self.tcp_input_entries)):
+            if i != 2: # 索引2是Tcp_Z
+                self.tcp_input_entries[i].setText("0.00")
+        
+        QMessageBox.information(self, "操作成功", f"TCP_Z值已设置为 {distance:.2f}。\n请点击“设置TCP”按钮以应用更改。")
 
     def create_cur_tcp_group(self, layout):
         """创建用于显示当前TCP坐标的Groupbox。"""
