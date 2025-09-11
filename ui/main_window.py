@@ -715,8 +715,13 @@ class RobotControlWindow(QMainWindow):
     def create_set_tcp_group(self, layout):
         """新增：将工具坐标系设置移出并做成独立的Groupbox。"""
         tcp_group = QGroupBox("工具坐标系设置 (TCP)")
-        tcp_grid_layout = QGridLayout(tcp_group)
-        tcp_labels = ["Tcp_X", "Tcp_Y", "Tcp_Z", "Tcp_Rx", "Tcp_Ry", "Tcp_Rz"]
+        
+        # 使用垂直布局作为主布局
+        main_v_layout = QVBoxLayout(tcp_group)
+        
+        # 创建网格布局来容纳标签和输入框
+        tcp_grid_layout = QGridLayout()
+        tcp_labels = ["Tar_Tcp_X", "Tar_Tcp_Y", "Tar_Tcp_Z", "Tar_Tcp_Rx", "Tar_Tcp_Ry", "Tar_Tcp_Rz"]
         tcp_initial_values = ["0", "0", "0", "0", "0", "0"]
         self.tcp_input_entries = []
         for i, label_text in enumerate(tcp_labels):
@@ -726,15 +731,22 @@ class RobotControlWindow(QMainWindow):
             self.tcp_input_entries.append(entry)
             tcp_grid_layout.addWidget(label, row, col)
             tcp_grid_layout.addWidget(entry, row, col + 1)
+        
+        # 添加网格布局到主垂直布局中
+        main_v_layout.addLayout(tcp_grid_layout)
+        
+        # 添加可拉伸的弹簧，将按钮推到底部
+        main_v_layout.addStretch()
 
+        # 创建一个水平布局来放置并居中按钮
+        button_layout = QHBoxLayout()
         self.set_tcp_btn = QPushButton("设置TCP")
         self.get_suitable_tcp_btn = QPushButton("获取合适的TCP")
-
-        button_layout = QHBoxLayout()
         button_layout.addWidget(self.set_tcp_btn)
         button_layout.addWidget(self.get_suitable_tcp_btn)
-
-        tcp_grid_layout.addLayout(button_layout, 2, 0, 1, 2)
+        
+        # 将按钮布局添加到主垂直布局的底部
+        main_v_layout.addLayout(button_layout)
         
         layout.addWidget(tcp_group)
         
@@ -767,12 +779,15 @@ class RobotControlWindow(QMainWindow):
         QMessageBox.information(self, "操作成功", f"TCP_Z值已设置为 {distance:.2f}。\n请点击“设置TCP”按钮以应用更改。")
 
     def create_cur_tcp_group(self, layout):
-        """创建用于显示当前TCP坐标的Groupbox。"""
+        """新增：创建用于显示当前TCP坐标的Groupbox。"""
         group = QGroupBox("当前TCP设置")
-        group_layout = QGridLayout(group)
-
+        
+        # 使用垂直布局作为主布局
+        main_v_layout = QVBoxLayout(group)
+        
+        # 创建网格布局来容纳标签和输入框
+        grid_layout = QGridLayout()
         tcp_labels = ["Cur_Tcp_X", "Cur_Tcp_Y", "Cur_Tcp_Z", "Cur_Tcp_Rx", "Cur_Tcp_Ry", "Cur_Tcp_Rz"]
-
         for i, label_text in enumerate(tcp_labels):
             row, col = i // 3, (i % 3) * 2
             label = QLabel(label_text + ":")
@@ -780,14 +795,24 @@ class RobotControlWindow(QMainWindow):
             display_entry.setReadOnly(True)
             display_entry.setStyleSheet("background-color: lightgrey;")
             self.cur_tcp_vars[i] = display_entry
-
-            group_layout.addWidget(label, row, col)
-            group_layout.addWidget(display_entry, row, col + 1)
-
-        # 添加“读取Cur TCP”按钮
+            grid_layout.addWidget(label, row, col)
+            grid_layout.addWidget(display_entry, row, col + 1)
+        
+        # 添加网格布局到主垂直布局中
+        main_v_layout.addLayout(grid_layout)
+        
+        # 添加可拉伸的弹簧
+        main_v_layout.addStretch()
+        
+        # 创建按钮并将其居中
+        button_layout = QHBoxLayout()
         self.read_cur_tcp_btn = QPushButton("读取Cur TCP")
-        group_layout.addWidget(self.read_cur_tcp_btn, 2, 0, 1, 2) # 放置在下一行并跨越两列
-
+        button_layout.addStretch()
+        button_layout.addWidget(self.read_cur_tcp_btn)
+        button_layout.addStretch()
+        
+        main_v_layout.addLayout(button_layout)
+        
         layout.addWidget(group)
 
     def create_tcp_group(self, layout):
