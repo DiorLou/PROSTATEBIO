@@ -422,11 +422,10 @@ class RobotControlWindow(QMainWindow):
         self.recv_text.verticalScrollBar().setValue(self.recv_text.verticalScrollBar().maximum())
 
     def motor_adjust(self, joint_index, direction):
-        """发送 JOG 指令，实现单个关节的增量运动。"""
-        # JOG 指令格式: JOG,nRbtID,nAxisID,dDeltaVal;
-        # dDeltaVal 是以弧度为单位的增量值。
-        step_rad = np.deg2rad(1.0)  # 设置每步为1度。
-        command = f"JOG,0,{joint_index+1},{direction*step_rad:.4f};"
+        """发送 MoveRelJ 指令，实现单个关节的增量运动。"""
+        # MoveRelJ 指令格式: MoveRelJ,nRbtID,nAxisID,nDirection,dDeltaVal;
+        # dDeltaVal 是以度为单位的增量值。
+        command = f"MoveRelJ,0,{joint_index},{direction},1;"
         self.tcp_manager.send_command(command)
         self.status_bar.showMessage(f"状态: 关节{joint_index+1} 微调中...")
 
@@ -435,15 +434,14 @@ class RobotControlWindow(QMainWindow):
         self._moving_joint_index = joint_index
         self._moving_direction = direction
         self.motor_adjust(joint_index, direction)
-        self.continuous_move_timer.start(50)  # 每50毫秒调用一次 continuous_move。
+        self.continuous_move_timer.start(300)  # 每300毫秒调用一次 continuous_move。
 
     def stop_move(self):
         """停止连续微调关节运动，停止定时器并发送停止指令。"""
         self.continuous_move_timer.stop()
         self._moving_joint_index = -1
         self._moving_direction = 0
-        self.tcp_manager.send_command("StopJOG;")
-        self.status_bar.showMessage("状态: 微调停止")
+        self.status_bar.showMessage("状态: 关节微调停止")
 
     def continuous_move(self):
         """由定时器周期性调用的函数，用于持续微调关节。"""
