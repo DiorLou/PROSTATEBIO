@@ -40,6 +40,55 @@ def calculate_ultrasound_plane_normal(tcp_rx_deg, tcp_ry_deg, tcp_rz_deg):
 
     return ultrasound_normal_in_world_frame
 
+def calculate_rotation_for_plane_alignment(a_point, o_point, e_point, initial_rpy_deg):
+    """
+    计算使超声平面与AOE平面重合所需的关节6旋转角度。
+
+    Args:
+        a_point (np.ndarray): 机器人 A 点的坐标 (3,).
+        o_point (np.ndarray): 机器人 O 点（即 TCP 点）的坐标 (3,).
+        e_point (np.ndarray): 机器人 End-effect 点的坐标 (3,).
+        initial_rpy_deg (np.ndarray): 初始 TCP 姿态的欧拉角 [Rx, Ry, Rz]，单位为度。
+
+    Returns:
+        float: 关节6需要旋转的角度（单位：度）。
+    """
+    # 1. 计算 AOE 平面的法向量
+    ea_vector = a_point - e_point
+    eo_vector = o_point - e_point
+    
+    # 检查 A,O,E 三点是否共线
+    if np.linalg.norm(np.cross(ea_vector, eo_vector)) < 1e-6:
+        return 0.0, "AOE平面法向量为零，无法对齐。"
+    
+    aoe_plane_normal = np.cross(ea_vector, eo_vector)
+    aoe_plane_normal = aoe_plane_normal / np.linalg.norm(aoe_plane_normal)
+
+    # 2. 计算超声平面的法向量
+    ultrasound_plane_normal = calculate_ultrasound_plane_normal(
+        initial_rpy_deg[0], initial_rpy_deg[1], initial_rpy_deg[2])
+
+    # 3. 计算旋转角度和方向
+    initial_rpy_rad = np.deg2rad(initial_rpy_deg)
+    tool_rotation_matrix = pyrot.matrix_from_euler(initial_rpy_rad, 0, 1, 2, extrinsic=True)
+    tool_z_axis = tool_rotation_matrix[:, 2]
+
+    projected_aoe_normal = aoe_plane_normal - np.dot(aoe_plane_normal, tool_z_axis) * tool_z_axis
+    projected_ultrasound_normal = ultrasound_plane_normal - np.dot(ultrasound_plane_normal, tool_z_axis) * tool_z_axis
+    
+    # 避免除零错误
+    if np.linalg.norm(projected_ultrasound_normal) < 1e-6 or np.linalg.norm(projected_aoe_normal) < 1e-6:
+        return 0.0, "投影法向量为零，无需旋转。"
+
+    cos_alpha = np.dot(projected_ultrasound_normal, projected_aoe_normal) / (np.linalg.norm(projected_ultrasound_normal) * np.linalg.norm(projected_aoe_normal))
+    cos_alpha = np.clip(cos_alpha, -1.0, 1.0)
+    angle_rad = np.arccos(cos_alpha)
+    
+    cross_product_direction = np.dot(np.cross(projected_ultrasound_normal, projected_aoe_normal), tool_z_axis)
+    if cross_product_direction < 0:
+        angle_rad = -angle_rad
+        
+    return np.rad2deg(angle_rad)
 
 if __name__ == '__main__':
     # --- 演示如何使用此函数 ---
