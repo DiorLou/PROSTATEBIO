@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QCloseEvent, QFont
 from core.tcp_manager import TCPManager
+from core.ultrasound_plane import calculate_rotation_for_plane_alignment
 
 class RobotControlWindow(QMainWindow):
     """
@@ -337,6 +338,64 @@ class RobotControlWindow(QMainWindow):
         self.e_vars[2].setText(f"{e_point[2]:.2f}")
         self.status_bar.showMessage("状态: 已获取End-Effect位置。")
         
+    def get_current_tool_pose(self):
+        """从UI中获取当前的工具姿态（位置和欧拉角）。"""
+        try:
+            x = float(self.latest_tool_pose[0])
+            y = float(self.latest_tool_pose[1])
+            z = float(self.latest_tool_pose[2])
+            rx = float(self.latest_tool_pose[3])
+            ry = float(self.latest_tool_pose[4])
+            rz = float(self.latest_tool_pose[5])
+            return np.array([x, y, z, rx, ry, rz])
+        except (ValueError, IndexError):
+            return None
+        
+    def align_ultrasound_plane_to_aoe(self):
+        """计算并发送指令，以使超声平面与AOE平面重合。"""
+        try:
+            a_point = np.array([float(self.a_vars[i].text()) for i in range(3)])
+            o_point = np.array([float(self.o_vars[i].text()) for i in range(3)])
+            e_point = np.array([float(self.e_vars[i].text()) for i in range(3)])
+        except ValueError:
+            self.status_bar.showMessage("错误: A、O、E点坐标必须为有效数字。")
+            return
+        
+        initial_tcp_pose = self.get_current_tool_pose()
+        if initial_tcp_pose is None:
+            self.status_bar.showMessage("警告: 无法获取当前的机器人姿态。")
+            return
+
+        # 调用函数，计算关节6需要旋转的角度（带正负号）
+        initial_rpy_deg = initial_tcp_pose[3:]
+        result = calculate_rotation_for_plane_alignment(a_point, o_point, e_point, initial_rpy_deg)
+
+        # Check if the result is an error message
+        if isinstance(result, tuple):
+            self.status_bar.showMessage(f"错误: {result[1]}")
+            QMessageBox.warning(self, "错误", result[1])
+            return
+        
+        rotation_angle_deg = result # Assign the float value if no error
+
+        # 根据角度的正负来确定 nDirection 参数
+        if rotation_angle_deg >= 0:
+            nDirection = 1  # 正向
+        else:
+            nDirection = -1 # 反向
+
+        # dDeltaVal 总是正值
+        dDeltaVal = abs(rotation_angle_deg)
+
+        # 构造 MoveRelJ 运动指令
+        # 关节6的 nAxisID 为 5
+        # 指令格式: MoveRelJ,nRbtID,nAxisID,nDirection,dDeltaVal;
+        command = f"MoveRelJ,0,5,{nDirection},{dDeltaVal:.2f};"
+        
+        # 发送指令
+        self.tcp_manager.send_command(command)
+        self.status_bar.showMessage(f"状态: 已发送指令，使超声平面与AOE平面重合，关节6旋转了 {rotation_angle_deg:.2f} 度。")
+        
     def handle_read_tcp_message(self, message):
         """解析 'ReadCurTCP' 消息，并更新新的TCP显示框。"""
         self.log_message(message)
@@ -658,11 +717,19 @@ class RobotControlWindow(QMainWindow):
         get_e_btn = QPushButton("获取End-Effect位置")
         e_point_layout.addWidget(get_e_btn, 1, 0, 1, 6, alignment=Qt.AlignCenter)
         group_layout.addWidget(e_point_subgroup)
+        
+        # 在Groupbox底部添加一个水平布局，用于放置按钮
+        button_layout = QHBoxLayout()
+        align_planes_btn = QPushButton("使超声平面对齐AOE平面")
+        button_layout.addWidget(align_planes_btn)
+
+        group_layout.addLayout(button_layout)
 
         # 连接按钮的点击事件
         get_a_btn.clicked.connect(self.get_a_point_position)
         get_o_btn.clicked.connect(self.get_o_point_position)
         get_e_btn.clicked.connect(self.get_e_point_position) # 连接新按钮
+        align_planes_btn.clicked.connect(self.align_ultrasound_plane_to_aoe)
 
         group_layout.addStretch()
         layout.addWidget(group)
