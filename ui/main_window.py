@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QCloseEvent, QFont
 from core.tcp_manager import TCPManager
-from core.ultrasound_plane import calculate_rotation_for_plane_alignment
+from core.ultrasound_plane import calculate_rotation_for_plane_alignment, calculate_new_rpy_for_b_point
 
 # Constants for motion direction
 # 移动方向常量
@@ -51,6 +51,7 @@ class RobotControlWindow(QMainWindow):
         self.get_e_btn = None
         self.align_planes_btn = None
         self.b_point_btn = None
+        self.rotate_b_point_btn = None # 新增按钮成员变量
         
         # 新增一个成员变量来存储最新的工具端姿态
         self.latest_tool_pose = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
@@ -137,6 +138,7 @@ class RobotControlWindow(QMainWindow):
         self.read_cur_tcp_btn.clicked.connect(self.request_cur_tcp_info)
         self.get_suitable_tcp_btn.clicked.connect(self.get_suitable_tcp)
         self.b_point_btn.clicked.connect(self.set_b_point_position)
+        self.rotate_b_point_btn.clicked.connect(self.rotate_ultrasound_plane_to_b)
         self.get_a_btn.clicked.connect(self.get_a_point_position)
         self.get_o_btn.clicked.connect(self.get_o_point_position)
         self.get_e_btn.clicked.connect(self.get_e_point_position)
@@ -415,6 +417,54 @@ class RobotControlWindow(QMainWindow):
         # 发送指令
         self.tcp_manager.send_command(command)
         self.status_bar.showMessage(f"状态: 已发送指令，使超声平面与AOE平面重合，关节6旋转了 {rotation_angle_deg:.2f} 度。")
+        
+    def rotate_ultrasound_plane_to_b(self):
+        """
+        计算并发送指令，以使超声平面绕AO轴旋转，使其经过B点。
+        """
+        try:
+            a_point = np.array([float(self.a_vars[i].text()) for i in range(3)])
+            o_point = np.array([float(self.o_vars[i].text()) for i in range(3)])
+            if np.all(self.b_point_position == 0):
+                QMessageBox.warning(self, "操作失败", "请先输入B点位置。")
+                return
+            b_point = self.b_point_position
+        except ValueError:
+            self.status_bar.showMessage("错误: A、O、B点坐标必须为有效数字。")
+            return
+        
+        initial_tcp_pose = self.get_current_tool_pose()
+        if initial_tcp_pose is None:
+            self.status_bar.showMessage("警告: 无法获取当前的机器人姿态。")
+            return
+
+        try:
+            # 计算新的欧拉角姿态
+            new_rpy_deg = calculate_new_rpy_for_b_point(a_point, o_point, b_point, initial_tcp_pose[3:])
+            current_rpy_deg = initial_tcp_pose[3:]
+
+            # 计算每个欧拉角的增量
+            delta_rpy_deg = new_rpy_deg - current_rpy_deg
+            
+            # 逐个轴发送 MoveRelL 命令
+            # 这里我们假设一次只发送一个轴的旋转，你可以根据需求调整
+            # nRbtID=0, nToolMotion=0
+            nRobotID = 0
+            nToolMotion = 0
+            
+            # 遍历Rx, Ry, Rz
+            for i, delta_angle in enumerate(delta_rpy_deg):
+                if abs(delta_angle) > 0.01: # 忽略微小的变化
+                    nAxisId = i + 3 # 3:Rx, 4:Ry, 5:Rz
+                    dDistance = abs(delta_angle)
+                    nDirection = 1 if delta_angle >= 0 else 0
+                    
+                    command = f"MoveRelL,{nRobotID},{nAxisId},{nDirection},{dDistance:.2f},{nToolMotion};"
+                    self.tcp_manager.send_command(command)
+                    self.status_bar.showMessage(f"状态: 已发送指令，使超声平面包含B点，轴 {['Rx', 'Ry', 'Rz'][i]} 旋转了 {delta_angle:.2f} 度。")
+
+        except ValueError as e:
+            self.status_bar.showMessage(f"错误: {e}")
         
     def handle_read_tcp_message(self, message):
         """解析 'ReadCurTCP' 消息，并更新新的TCP显示框。"""
@@ -781,6 +831,13 @@ class RobotControlWindow(QMainWindow):
         
         # 将内部的子 GroupBox 控件添加到外部的布局中
         group_layout.addWidget(b_point_subgroup)
+        
+        # 在Groupbox底部添加一个水平布局，用于放置按钮
+        button_layout = QHBoxLayout()
+        self.rotate_b_point_btn = QPushButton("绕AO旋转超声平面使经过B点")
+        button_layout.addWidget(self.rotate_b_point_btn)
+        
+        group_layout.addLayout(button_layout)
         
         group_layout.addStretch()
         layout.addWidget(group)
