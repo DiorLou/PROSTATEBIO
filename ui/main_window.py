@@ -37,6 +37,14 @@ class RobotControlWindow(QMainWindow):
         self.a_vars = [None] * 3
         self.o_vars = [None] * 3
         self.e_vars = [None] * 3 # 新增 end-effect 变量列表
+        self.b_vars = [None] * 3
+        self.b_point_position = np.zeros(3)
+        
+        self.get_a_btn = None
+        self.get_o_btn = None
+        self.get_e_btn = None
+        self.align_planes_btn = None
+        self.b_point_btn = None
         
         # 新增一个成员变量来存储最新的工具端姿态
         self.latest_tool_pose = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
@@ -82,6 +90,7 @@ class RobotControlWindow(QMainWindow):
         left_panel_layout.addLayout(top_left_layout)
         self.create_tool_state_group(left_panel_layout)
         self.create_record_oae_state_group(left_panel_layout)
+        self.create_b_point_group(left_panel_layout)  # 调用新的方法
         
         # 在最底部添加一个弹簧，将所有内容向上推
         left_panel_layout.addStretch()
@@ -121,6 +130,11 @@ class RobotControlWindow(QMainWindow):
         self.set_tcp_btn.clicked.connect(self.send_set_tcp_command)
         self.read_cur_tcp_btn.clicked.connect(self.request_cur_tcp_info)
         self.get_suitable_tcp_btn.clicked.connect(self.get_suitable_tcp)
+        self.b_point_btn.clicked.connect(self.set_b_point_position)
+        self.get_a_btn.clicked.connect(self.get_a_point_position)
+        self.get_o_btn.clicked.connect(self.get_o_point_position)
+        self.get_e_btn.clicked.connect(self.get_e_point_position)
+        self.align_planes_btn.clicked.connect(self.align_ultrasound_plane_to_aoe)
 
         # 将 TCPManager 的信号连接到本窗口的槽函数
         self.tcp_manager.connection_status_changed.connect(self.update_ui_on_connection)
@@ -682,8 +696,8 @@ class RobotControlWindow(QMainWindow):
             self.a_vars[i] = text_box
             a_point_layout.addWidget(label, 0, i * 2)
             a_point_layout.addWidget(text_box, 0, i * 2 + 1)
-        get_a_btn = QPushButton("获取A点位置")
-        a_point_layout.addWidget(get_a_btn, 1, 0, 1, 6, alignment=Qt.AlignCenter)
+        self.get_a_btn = QPushButton("获取A点位置") # 创建按钮实例
+        a_point_layout.addWidget(self.get_a_btn, 1, 0, 1, 6, alignment=Qt.AlignCenter)
         group_layout.addWidget(a_point_subgroup)
 
         # O点布局
@@ -698,8 +712,8 @@ class RobotControlWindow(QMainWindow):
             self.o_vars[i] = text_box
             o_point_layout.addWidget(label, 0, i * 2)
             o_point_layout.addWidget(text_box, 0, i * 2 + 1)
-        get_o_btn = QPushButton("获取O点位置")
-        o_point_layout.addWidget(get_o_btn, 1, 0, 1, 6, alignment=Qt.AlignCenter)
+        self.get_o_btn = QPushButton("获取O点位置") # 创建按钮实例
+        o_point_layout.addWidget(self.get_o_btn, 1, 0, 1, 6, alignment=Qt.AlignCenter)
         group_layout.addWidget(o_point_subgroup)
         
         # End-Effect点布局
@@ -714,25 +728,61 @@ class RobotControlWindow(QMainWindow):
             self.e_vars[i] = text_box
             e_point_layout.addWidget(label, 0, i * 2)
             e_point_layout.addWidget(text_box, 0, i * 2 + 1)
-        get_e_btn = QPushButton("获取End-Effect位置")
-        e_point_layout.addWidget(get_e_btn, 1, 0, 1, 6, alignment=Qt.AlignCenter)
+        self.get_e_btn = QPushButton("获取End-Effect位置") # 创建按钮实例
+        e_point_layout.addWidget(self.get_e_btn, 1, 0, 1, 6, alignment=Qt.AlignCenter)
         group_layout.addWidget(e_point_subgroup)
         
         # 在Groupbox底部添加一个水平布局，用于放置按钮
         button_layout = QHBoxLayout()
-        align_planes_btn = QPushButton("使超声平面对齐AOE平面")
-        button_layout.addWidget(align_planes_btn)
+        self.align_planes_btn = QPushButton("使超声平面对齐AOE平面") # 创建按钮实例
+        button_layout.addWidget(self.align_planes_btn)
 
         group_layout.addLayout(button_layout)
 
-        # 连接按钮的点击事件
-        get_a_btn.clicked.connect(self.get_a_point_position)
-        get_o_btn.clicked.connect(self.get_o_point_position)
-        get_e_btn.clicked.connect(self.get_e_point_position) # 连接新按钮
-        align_planes_btn.clicked.connect(self.align_ultrasound_plane_to_aoe)
-
         group_layout.addStretch()
         layout.addWidget(group)
+        
+    def create_b_point_group(self, layout):
+        """新增：创建病灶点B定位Group。"""
+        
+        # 最外层的 GroupBox
+        group = QGroupBox("病灶点B定位")
+        group_layout = QVBoxLayout(group)
+        
+        # 内部的子 GroupBox
+        b_point_subgroup = QGroupBox("B点")
+        b_point_layout = QGridLayout(b_point_subgroup)
+        
+        b_labels = ["B_x:", "B_y:", "B_z:"]
+        for i, label_text in enumerate(b_labels):
+            label = QLabel(label_text)
+            text_box = QLineEdit("0.00")
+            self.b_vars[i] = text_box
+            b_point_layout.addWidget(label, 0, i * 2)
+            b_point_layout.addWidget(text_box, 0, i * 2 + 1)
+        
+        self.b_point_btn = QPushButton("输入B点位置")
+        b_point_layout.addWidget(self.b_point_btn, 1, 0, 1, 6, alignment=Qt.AlignCenter)
+        
+        # 将内部的子 GroupBox 控件添加到外部的布局中
+        group_layout.addWidget(b_point_subgroup)
+        
+        group_layout.addStretch()
+        layout.addWidget(group)
+        
+    def set_b_point_position(self):
+        """
+        从文本框中读取B点坐标，并将其存储。
+        """
+        try:
+            b_x = float(self.b_vars[0].text())
+            b_y = float(self.b_vars[1].text())
+            b_z = float(self.b_vars[2].text())
+            self.b_point_position = np.array([b_x, b_y, b_z])
+            self.status_bar.showMessage(f"状态: B点位置 ({b_x}, {b_y}, {b_z}) 已输入。")
+        except ValueError:
+            self.status_bar.showMessage("错误: B点坐标必须为有效数字。")
+            QMessageBox.critical(self, "输入错误", "B点坐标必须是有效的数字！")
 
     def create_ur_control_group(self, layout):
         """
