@@ -10,6 +10,11 @@ from PyQt5.QtGui import QCloseEvent, QFont
 from core.tcp_manager import TCPManager
 from core.ultrasound_plane import calculate_rotation_for_plane_alignment
 
+# Constants for motion direction
+# 移动方向常量
+FORWARD = 1
+BACKWARD = 0
+
 class RobotControlWindow(QMainWindow):
     """
     此类继承自 QMainWindow，是整个应用程序的图形界面。
@@ -30,7 +35,8 @@ class RobotControlWindow(QMainWindow):
         self.cur_tcp_vars = [None] * 6
         self.tcp_vars = [None] * 6
         self._moving_joint_index = -1  # 正在连续微调的关节索引，-1表示没有。
-        self._moving_direction = 0     # 移动方向，1代表正向，-1代表反向。
+        # 移动方向，1代表正向，0代表反向。
+        self._moving_direction = BACKWARD
         self._moving_tcp_index = -1    # 正在连续微调的TCP坐标索引。
         
         # 新增用于记录A点和O点坐标的文本框列表
@@ -394,9 +400,9 @@ class RobotControlWindow(QMainWindow):
 
         # 根据角度的正负来确定 nDirection 参数
         if rotation_angle_deg >= 0:
-            nDirection = 1  # 正向
+            nDirection = FORWARD  # 正向
         else:
-            nDirection = -1 # 反向
+            nDirection = BACKWARD # 反向
 
         # dDeltaVal 总是正值
         dDeltaVal = abs(rotation_angle_deg)
@@ -513,7 +519,7 @@ class RobotControlWindow(QMainWindow):
         """停止连续微调关节运动，停止定时器并发送停止指令。"""
         self.continuous_move_timer.stop()
         self._moving_joint_index = -1
-        self._moving_direction = 0
+        self._moving_direction = BACKWARD
         self.status_bar.showMessage("状态: 关节微调停止")
 
     def continuous_move(self):
@@ -522,24 +528,34 @@ class RobotControlWindow(QMainWindow):
             self.motor_adjust(self._moving_joint_index, self._moving_direction)
 
     def tcp_adjust(self, tcp_index, direction):
-        """发送 MoveRelL 指令，实现TCP坐标的增量运动。"""
-        # MoveRelL 指令格式: MoveRelL,nRbtID,dX,dY,dZ,dRx,dRy,dRz;
-        # dX, dY, dZ, dRx, dRy, dRz 都是增量值（mm或弧度）。
-        if tcp_index < 3:  # X, Y, Z
-            step = 1.0 * direction  # 1mm的步长。
-            command_template = "MoveRelL,0,{:.2f},{:.2f},{:.2f},0,0,0;"
-            values = [0.0, 0.0, 0.0]
-            values[tcp_index] = step
-            command = command_template.format(values[0], values[1], values[2])
-        else:  # Rx, Ry, Rz
-            step = np.deg2rad(1.0) * direction  # 1度的步长，转换为弧度。
-            command_template = "MoveRelL,0,0,0,0,{:.4f},{:.4f},{:.4f};"
-            values = [0.0, 0.0, 0.0]
-            values[tcp_index - 3] = step
-            command = command_template.format(values[0], values[1], values[2])
+        """
+        发送 MoveRelL 指令，实现TCP坐标的增量运动。
+        MoveRelL 指令格式: MoveRelL,nRbtID,nAxisId,nDirection,dDistance,nToolMotion;
+        dDistance 是增量值（mm或度）。
+        """
+        # nRbtID 设为 0
+        nRobotID = 0
+        # nToolMotion 设为 0
+        nToolMotion = 0
+        
+        # nDirection 的值根据传入的 direction 参数确定
+        nDirection = direction # direction = 1 为正向，0 为反向
+        
+        # dDistance 的值根据微调类型确定
+        if tcp_index < 3: # X, Y, Z
+            dDistance = 1.0 # 1mm的增量
+        else: # Rx, Ry, Rz
+            dDistance = 1.0 # 1度的增量
 
+        # nAxisId 的值根据 tcp_index 确定
+        nAxisId = tcp_index
+        
+        command = f"MoveRelL,{nRobotID},{nAxisId},{nDirection},{dDistance:.2f},{nToolMotion};"
         self.tcp_manager.send_command(command)
-        self.status_bar.showMessage(f"状态: Tcp_{['X','Y','Z','Rx','Ry','Rz'][tcp_index]} 微调中...")
+        
+        # 更新状态栏显示，这里可能需要根据 nAxisId 重新映射标签
+        axis_labels = ["X", "Y", "Z", "Rx", "Ry", "Rz"]
+        self.status_bar.showMessage(f"状态: Tcp_{axis_labels[nAxisId]} 微调中...")
 
     def start_tcp_move(self, tcp_index, direction):
         """开始连续微调TCP坐标，启动定时器。"""
@@ -552,8 +568,7 @@ class RobotControlWindow(QMainWindow):
         """停止连续微调TCP坐标，停止定时器并发送停止指令。"""
         self.continuous_tcp_move_timer.stop()
         self._moving_tcp_index = -1
-        self._moving_direction = 0
-        self.tcp_manager.send_command("StopRelL;")
+        self._moving_direction = BACKWARD
         self.status_bar.showMessage("状态: TCP微调停止")
     
     def continuous_tcp_move(self):
@@ -661,12 +676,12 @@ class RobotControlWindow(QMainWindow):
             # 添加微调减小按钮。
             btn_minus = QPushButton("-")
             btn_minus.setFixedWidth(30)
-            btn_minus.pressed.connect(lambda idx=i: self.start_tcp_move(idx, -1))
+            btn_minus.pressed.connect(lambda idx=i: self.start_tcp_move(idx, BACKWARD))
             btn_minus.released.connect(self.stop_tcp_move)
             # 添加微调增加按钮。
             btn_plus = QPushButton("+")
             btn_plus.setFixedWidth(30)
-            btn_plus.pressed.connect(lambda idx=i: self.start_tcp_move(idx, 1))
+            btn_plus.pressed.connect(lambda idx=i: self.start_tcp_move(idx, FORWARD))
             btn_plus.released.connect(self.stop_tcp_move)
             btn_layout = QHBoxLayout()
             btn_layout.addStretch()
