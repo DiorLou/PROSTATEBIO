@@ -94,7 +94,7 @@ def calculate_new_rpy_for_b_point(a_point, o_point, b_point, initial_rpy_deg):
     """
     计算使超声平面包含病灶点B所需的新工具姿态（欧拉角）。
 
-    该函数通过绕AO轴旋转超声平面来计算新的姿态。
+    该函数通过绕OA轴旋转超声平面来计算新的姿态。
     Args:
         a_point (np.ndarray): 机器人 A 点的坐标 (3,).
         o_point (np.ndarray): 机器人 O 点（即 TCP 点）的坐标 (3,).
@@ -109,13 +109,12 @@ def calculate_new_rpy_for_b_point(a_point, o_point, b_point, initial_rpy_deg):
     b_point = np.array(b_point, dtype=np.float64)
     initial_rpy_deg = np.array(initial_rpy_deg, dtype=np.float64)
     
-    # 1. 计算旋转轴：AO向量
-    ao_vector = a_point - o_point
-    if np.linalg.norm(ao_vector) < 1e-6:
-        # 如果AO向量为零，无法定义旋转轴
-        raise ValueError("AO向量为零，无法计算旋转轴。")
+    # 1. 计算旋转轴：OA向量
+    oa_vector = a_point - o_point
+    if np.linalg.norm(oa_vector) < 1e-6:
+        raise ValueError("OA向量为零，无法定义旋转轴。")
 
-    ao_unit_vector = ao_vector / np.linalg.norm(ao_vector)
+    oa_unit_vector = oa_vector / np.linalg.norm(oa_vector)
 
     # 2. 计算超声平面的初始法向量
     ultrasound_normal = calculate_ultrasound_plane_normal(
@@ -124,33 +123,31 @@ def calculate_new_rpy_for_b_point(a_point, o_point, b_point, initial_rpy_deg):
     # 3. 计算从O点到B点的向量
     ob_vector = b_point - o_point
     if np.linalg.norm(ob_vector) < 1e-6:
-        # 如果B点与O点重合，则无需旋转
         return initial_rpy_deg
 
     # 4. 计算旋转所需的角度
-    # 将超声平面法向量和OB向量投影到垂直于AO轴的平面上
-    projected_ultrasound_normal = ultrasound_normal - np.dot(ultrasound_normal, ao_unit_vector) * ao_unit_vector
-    projected_ob_vector = ob_vector - np.dot(ob_vector, ao_unit_vector) * ao_unit_vector
+    # 将超声平面法向量和OB向量投影到垂直于OA轴的平面上
+    projected_ultrasound_normal = ultrasound_normal - np.dot(ultrasound_normal, oa_unit_vector) * oa_unit_vector
+    projected_ob_vector = ob_vector - np.dot(ob_vector, oa_unit_vector) * oa_unit_vector
 
     if np.linalg.norm(projected_ultrasound_normal) < 1e-6 or np.linalg.norm(projected_ob_vector) < 1e-6:
-        # 投影向量为零，无法计算旋转
         raise ValueError("投影向量为零，无法计算旋转。")
 
     # 使用反正切函数计算带方向的旋转角度
-    y_axis_in_plane = np.cross(ao_unit_vector, projected_ultrasound_normal)
+    y_axis_in_plane = np.cross(oa_unit_vector, projected_ultrasound_normal)
     
     x_component = np.dot(projected_ob_vector, projected_ultrasound_normal)
     y_component = np.dot(projected_ob_vector, y_axis_in_plane)
 
-    # np.arctan2 能够计算出绕AO轴的旋转角度
+    # np.arctan2 能够计算出绕OA轴的旋转角度
     rotation_angle_rad = np.arctan2(y_component, x_component)
 
     # 5. 应用旋转到初始姿态上
     initial_rpy_rad = np.deg2rad(initial_rpy_deg)
     initial_rotation_matrix = pyrot.matrix_from_euler(initial_rpy_rad, 0, 1, 2, extrinsic=True)
 
-    # 绕AO向量旋转指定角度
-    rotation_axis_angle = np.array([ao_unit_vector[0], ao_unit_vector[1], ao_unit_vector[2], rotation_angle_rad])
+    # 绕OA向量旋转指定角度
+    rotation_axis_angle = np.array([oa_unit_vector[0], oa_unit_vector[1], oa_unit_vector[2], rotation_angle_rad])
     delta_rotation_matrix = pyrot.matrix_from_axis_angle(rotation_axis_angle)
 
     # 组合旋转
