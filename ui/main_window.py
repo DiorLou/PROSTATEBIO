@@ -53,6 +53,13 @@ class RobotControlWindow(QMainWindow):
         self.b_point_btn = None
         self.rotate_b_point_btn = None # 新增按钮成员变量
         
+        self.set_tcp_o_btn = None
+        self.set_tcp_tip_btn = None
+        self.read_tcp_o_btn = None
+        self.read_tcp_tip_btn = None
+        self.read_cur_tcp_btn = None
+        self.set_cur_tcp_btn = None
+        
         # 新增一个成员变量来存储最新的工具端姿态
         self.latest_tool_pose = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         
@@ -134,8 +141,12 @@ class RobotControlWindow(QMainWindow):
         self.ur_continue_btn.clicked.connect(self.send_ur_continue_command)
         self.ur_stop_btn.clicked.connect(self.send_ur_stop_command)
         self.teach_mode_checkbox.stateChanged.connect(self.handle_teach_mode_state_change)
-        self.set_tcp_btn.clicked.connect(self.send_set_tcp_command)
+        self.set_cur_tcp_btn.clicked.connect(self.send_set_tcp_command)
         self.read_cur_tcp_btn.clicked.connect(self.request_cur_tcp_info)
+        self.read_tcp_o_btn.clicked.connect(self.read_tcp_o)
+        self.set_tcp_o_btn.clicked.connect(self.set_tcp_o)
+        self.read_tcp_tip_btn.clicked.connect(self.read_tcp_tip)
+        self.set_tcp_tip_btn.clicked.connect(self.set_tcp_tip)
         self.get_suitable_tcp_btn.clicked.connect(self.get_suitable_tcp)
         self.b_point_btn.clicked.connect(self.set_b_point_position)
         self.rotate_b_point_btn.clicked.connect(self.rotate_ultrasound_plane_to_b)
@@ -196,7 +207,11 @@ class RobotControlWindow(QMainWindow):
         elif message.startswith("ReadRobotState"):
             self.handle_robot_state_message(message)
         elif message.startswith("ReadCurTCP"):
-            self.handle_read_tcp_message(message)
+            self.log_message(message)
+            self.handle_read_cur_tcp_message(message)
+        elif message.startswith("ReadTCPByName"):
+            self.log_message(message)
+            self.handle_read_tcp_byname_message(message)
         elif message.startswith("ReadEmergencyInfo"):
             self.handle_emergency_info_message(message)
         elif message.startswith("ReadOverride"):
@@ -286,6 +301,8 @@ class RobotControlWindow(QMainWindow):
                 self.current_override_value.setText(f"{dOverride:.2f}")
             except (ValueError, IndexError) as e:
                 self.log_message(f"警告: 无法解析运动速率信息: {message}, 错误: {e}")
+        else:
+            self.log_message(f"警告: 接收到无效的 ReadOverride 消息: {message}")
 
     def handle_emergency_info_message(self, message):
         """解析 'ReadEmergencyInfo' 消息，并根据nESTO值更新急停按钮状态。"""
@@ -297,6 +314,8 @@ class RobotControlWindow(QMainWindow):
                 self.ur_stop_btn.setEnabled(nESTO == 0)
             except (ValueError, IndexError) as e:
                 self.log_message(f"警告: 无法解析急停信息消息: {message}, 错误: {e}")
+        else:
+            self.log_message(f"警告: 接收到无效的 ReadEmergencyInfo 消息: {message}")
 
     def handle_real_time_message(self, message):
         """解析 'ReadActPos' 消息，并更新UI上的关节和末端坐标显示。"""
@@ -467,7 +486,7 @@ class RobotControlWindow(QMainWindow):
             dTarget = [0, 0, 0] + list(delta_rpy_deg)
             dTarget_str = ",".join([f"{val:.2f}" for val in dTarget])
             
-            sTcpName = "TCP_tip"
+            sTcpName = "TCP_O"
             sUcsName = "Base"
             dVelocity = 50
             dAcc = 250
@@ -492,9 +511,22 @@ class RobotControlWindow(QMainWindow):
         except ValueError as e:
             self.status_bar.showMessage(f"错误: {e}")
         
-    def handle_read_tcp_message(self, message):
+    def handle_read_tcp_byname_message(self, message):
+        """解析 'ReadTCPByName' 消息，并更新新的TCP显示框。"""
+        parts = message.strip(';').strip(',').split(',')
+        if len(parts) == 8 and parts[1] == 'OK':
+            try:
+                tcp_params = [f"{float(p):.2f}" for p in parts[2:]]
+                for i in range(len(tcp_params)):
+                    self.cur_tcp_vars[i].setText(tcp_params[i])
+                self.status_bar.showMessage("状态: 当前TCP坐标已更新。")
+            except (ValueError, IndexError):
+                self.log_message("警告: 无法解析 ReadTCPByName 消息。")
+        else:
+            self.log_message(f"警告: 接收到无效的 ReadTCPByName 消息: {message}")
+            
+    def handle_read_cur_tcp_message(self, message):
         """解析 'ReadCurTCP' 消息，并更新新的TCP显示框。"""
-        self.log_message(message)
         parts = message.strip(';').strip(',').split(',')
         if len(parts) == 8 and parts[1] == 'OK':
             try:
@@ -519,6 +551,8 @@ class RobotControlWindow(QMainWindow):
                 self.update_enable_button(nEnableState)
             except (ValueError, IndexError):
                 self.log_message("警告: 无法解析机器人状态消息中的上电/使能状态。")
+        else:
+            self.log_message(f"警告: 接收到无效的 ReadRobotState 消息: {message}")
 
     def update_power_button(self, nElectrify):
         """根据上电状态更新电源按钮的文本和颜色。"""
@@ -947,22 +981,44 @@ class RobotControlWindow(QMainWindow):
         
         # 添加网格布局到主垂直布局中
         main_v_layout.addLayout(tcp_grid_layout)
-        
-        # 添加可拉伸的弹簧，将按钮推到底部
-        main_v_layout.addStretch()
 
         # 创建一个水平布局来放置并居中按钮
         button_layout = QHBoxLayout()
-        self.set_tcp_btn = QPushButton("设置TCP")
+        self.set_cur_tcp_btn = QPushButton("设置Cur TCP")
+        self.set_tcp_o_btn = QPushButton("切换TCP_O")
+        self.set_tcp_tip_btn = QPushButton("切换TCP_tip")
         self.get_suitable_tcp_btn = QPushButton("获取合适的TCP")
-        button_layout.addWidget(self.set_tcp_btn)
+        
+        button_layout.addWidget(self.set_cur_tcp_btn)
+        button_layout.addWidget(self.set_tcp_o_btn)
+        button_layout.addWidget(self.set_tcp_tip_btn)
         button_layout.addWidget(self.get_suitable_tcp_btn)
         
         # 将按钮布局添加到主垂直布局的底部
         main_v_layout.addLayout(button_layout)
         
         layout.addWidget(tcp_group)
-        
+
+    def set_tcp_o(self):
+        """发送设置TCP_O的命令。"""
+        self.tcp_manager.send_command("SetTCPByName,0,TCP_O;")
+        self.status_bar.showMessage("状态: 已发送设置TCP_O的命令。")
+
+    def set_tcp_tip(self):
+        """发送设置TCP_tip的命令。"""
+        self.tcp_manager.send_command("SetTCPByName,0,TCP_tip;")
+        self.status_bar.showMessage("状态: 已发送设置TCP_tip的命令。")
+    
+    def read_tcp_o(self):
+        """发送读取TCP_O的命令。"""
+        self.tcp_manager.send_command("ReadTCPByName,0,TCP_O;")
+        self.status_bar.showMessage("状态: 已发送读取TCP_O的命令。")
+    
+    def read_tcp_tip(self):
+        """发送读取TCP_tip的命令。"""
+        self.tcp_manager.send_command("ReadTCPByName,0,TCP_tip;")
+        self.status_bar.showMessage("状态: 已发送读取TCP_tip的命令。")
+                
     def get_suitable_tcp(self):
         """
         计算O点和End-effect点之间的距离，并设置到Tcp_Z。
@@ -1014,15 +1070,15 @@ class RobotControlWindow(QMainWindow):
         # 添加网格布局到主垂直布局中
         main_v_layout.addLayout(grid_layout)
         
-        # 添加可拉伸的弹簧
-        main_v_layout.addStretch()
-        
         # 创建按钮并将其居中
         button_layout = QHBoxLayout()
         self.read_cur_tcp_btn = QPushButton("读取Cur TCP")
-        button_layout.addStretch()
+        self.read_tcp_o_btn = QPushButton("读取TCP_O")
+        self.read_tcp_tip_btn = QPushButton("读取TCP_tip")
+        
         button_layout.addWidget(self.read_cur_tcp_btn)
-        button_layout.addStretch()
+        button_layout.addWidget(self.read_tcp_o_btn)
+        button_layout.addWidget(self.read_tcp_tip_btn)
         
         main_v_layout.addLayout(button_layout)
         
