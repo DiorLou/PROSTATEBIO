@@ -420,7 +420,7 @@ class RobotControlWindow(QMainWindow):
         
     def rotate_ultrasound_plane_to_b(self):
         """
-        计算并发送指令，以使超声平面绕AO轴旋转，使其经过B点。
+        计算并发送指令，以使超声平面绕OA轴旋转，使其经过B点。
         """
         try:
             a_point = np.array([float(self.a_vars[i].text()) for i in range(3)])
@@ -446,22 +446,48 @@ class RobotControlWindow(QMainWindow):
             # 计算每个欧拉角的增量
             delta_rpy_deg = new_rpy_deg - current_rpy_deg
             
-            # 逐个轴发送 MoveRelL 命令
-            # 这里我们假设一次只发送一个轴的旋转，你可以根据需求调整
-            # nRbtID=0, nToolMotion=0
-            nRobotID = 0
-            nToolMotion = 0
+            # 构造 WayPointRel 命令
+            nRbtID = 0
+            nType = 1  # 1代表直线运动
+            nPointList = 0
             
-            # 遍历Rx, Ry, Rz
-            for i, delta_angle in enumerate(delta_rpy_deg):
-                if abs(delta_angle) > 0.01: # 忽略微小的变化
-                    nAxisId = i + 3 # 3:Rx, 4:Ry, 5:Rz
-                    dDistance = abs(delta_angle)
-                    nDirection = 1 if delta_angle >= 0 else 0
-                    
-                    command = f"MoveRelL,{nRobotID},{nAxisId},{nDirection},{dDistance:.2f},{nToolMotion};"
-                    self.tcp_manager.send_command(command)
-                    self.status_bar.showMessage(f"状态: 已发送指令，使超声平面包含B点，轴 {['Rx', 'Ry', 'Rz'][i]} 旋转了 {delta_angle:.2f} 度。")
+            # dPos_X, dPos_Y, dPos_Z, dPos_Rx, dPos_Ry, dPos_Rz, dPos_J1, ..., dPos_J6
+            # 在不使用点位列表的情况下，这12个参数都为0
+            dPos = ",".join(["0.00"] * 12)
+            
+            nrelMoveType = 1 # 1表示叠加作用
+            
+            # nAxisMask_1, nAxisMask_2, ...
+            # Rx, Ry, Rz 运动，其他为0
+            nAxisMask = [0, 0, 0] + [1 if abs(angle) > 0.01 else 0 for angle in delta_rpy_deg]
+            nAxisMask_str = ",".join([str(val) for val in nAxisMask])
+            
+            # dTarget_1, dTarget_2, ...
+            # X, Y, Z 的移动量为0，Rx, Ry, Rz的移动量为计算出的角度增量
+            dTarget = [0, 0, 0] + list(delta_rpy_deg)
+            dTarget_str = ",".join([f"{val:.2f}" for val in dTarget])
+            
+            sTcpName = "TCP_tip"
+            sUcsName = "Base"
+            dVelocity = 50
+            dAcc = 250
+            dRadius = 50
+            nIsUseJoint = 0
+            nIsSeek = 0
+            nIOBit = 0
+            nIOState = 0
+            strCmdID = "ID1"
+            
+            # 拼接完整的命令
+            command = (
+                f"WayPointRel,{nRbtID},{nType},{nPointList},{dPos},{nrelMoveType},{nAxisMask_str},{dTarget_str},"
+                f"{sTcpName},{sUcsName},{dVelocity},{dAcc},{dRadius},{nIsUseJoint},{nIsSeek},{nIOBit},{nIOState},"
+                f"{strCmdID};"
+            )
+            
+            # 发送指令
+            self.tcp_manager.send_command(command)
+            self.status_bar.showMessage("状态: 已发送指令，使超声平面包含B点。")
 
         except ValueError as e:
             self.status_bar.showMessage(f"错误: {e}")
