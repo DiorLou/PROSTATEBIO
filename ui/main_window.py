@@ -1117,7 +1117,7 @@ class RobotControlWindow(QMainWindow):
         self.recv_text = QTextEdit()
         self.recv_text.setReadOnly(True)  # 设置为只读，用户无法编辑。
         self.recv_text.setStyleSheet("background-color: lightgrey;")
-        group_layout.addWidget(self.recv_text, 1)
+        group_layout.addWidget(self.recv_text) # Removed the index here
         # 发送消息输入框和按钮。
         group_layout.addWidget(QLabel("发送消息:"))
         send_layout = QHBoxLayout()
@@ -1128,5 +1128,8 @@ class RobotControlWindow(QMainWindow):
         send_layout.addWidget(self.send_entry)
         send_layout.addWidget(self.send_button)
         group_layout.addLayout(send_layout)
-        group_layout.setStretch(3, 1) # 让接收消息文本框可以随窗口拉伸。
+        
+        # Corrected line to pass the widget directly
+        group_layout.setStretchFactor(self.recv_text, 1)
+        
         layout.addWidget(group)
