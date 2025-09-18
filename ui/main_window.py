@@ -179,6 +179,7 @@ class RobotControlWindow(QMainWindow):
         message = self.send_entry.text()
         if not message:
             return
+        self.log_message(message)
         self.tcp_manager.send_command(message)
         self.send_entry.clear()
         
@@ -206,6 +207,8 @@ class RobotControlWindow(QMainWindow):
             self.handle_real_time_message(message)
         elif message.startswith("ReadRobotState"):
             self.handle_robot_state_message(message)
+        elif message.startswith("SetCurTCP"):
+            self.log_message(message)
         elif message.startswith("ReadCurTCP"):
             self.log_message(message)
             self.handle_read_cur_tcp_message(message)
@@ -216,9 +219,12 @@ class RobotControlWindow(QMainWindow):
             self.handle_emergency_info_message(message)
         elif message.startswith("ReadOverride"):
             self.handle_override_message(message)
+        elif message.startswith("SetTCPByName"):
+            self.log_message(message)
 
     def request_cur_tcp_info(self):
         """通过按钮点击发送指令，请求获取当前TCP坐标。"""
+        self.log_message("ReadCurTCP,0;")
         self.tcp_manager.send_command("ReadCurTCP,0;")
 
     def send_set_tcp_command(self):
@@ -233,6 +239,7 @@ class RobotControlWindow(QMainWindow):
 
             # 格式化指令字符串，并保留两位小数。
             command = f"SetCurTCP,0,{tcp_x:.2f},{tcp_y:.2f},{tcp_z:.2f},{tcp_rx:.2f},{tcp_ry:.2f},{tcp_rz:.2f};"
+            self.log_message(command)
             self.tcp_manager.send_command(command)
             self.status_bar.showMessage("状态: TCP参数已发送。")
         except ValueError:
@@ -1001,21 +1008,25 @@ class RobotControlWindow(QMainWindow):
 
     def set_tcp_o(self):
         """发送设置TCP_O的命令。"""
+        self.log_message("SetTCPByName,0,TCP_O;")
         self.tcp_manager.send_command("SetTCPByName,0,TCP_O;")
         self.status_bar.showMessage("状态: 已发送设置TCP_O的命令。")
 
     def set_tcp_tip(self):
         """发送设置TCP_tip的命令。"""
+        self.log_message("SetTCPByName,0,TCP_tip;")
         self.tcp_manager.send_command("SetTCPByName,0,TCP_tip;")
         self.status_bar.showMessage("状态: 已发送设置TCP_tip的命令。")
     
     def read_tcp_o(self):
         """发送读取TCP_O的命令。"""
+        self.log_message("ReadTCPByName,0,TCP_O;")
         self.tcp_manager.send_command("ReadTCPByName,0,TCP_O;")
         self.status_bar.showMessage("状态: 已发送读取TCP_O的命令。")
     
     def read_tcp_tip(self):
         """发送读取TCP_tip的命令。"""
+        self.log_message("ReadTCPByName,0,TCP_tip;")
         self.tcp_manager.send_command("ReadTCPByName,0,TCP_tip;")
         self.status_bar.showMessage("状态: 已发送读取TCP_tip的命令。")
                 
