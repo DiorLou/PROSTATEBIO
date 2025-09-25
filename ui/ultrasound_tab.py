@@ -2,17 +2,16 @@
 import cv2
 import os
 import numpy as np
+import time
+from datetime import datetime
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QMessageBox, QSlider, QFileDialog
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap
 
 class UltrasoundTab(QWidget):
-    """
-    一个专门用于显示超声图像的标签页。
-    它负责与USB摄像头通信，捕获图像流并将其显示在UI上。
-    """
-    def __init__(self, parent=None):
+    def __init__(self, tcp_manager, parent=None):
         super().__init__(parent)
+        self.tcp_manager = tcp_manager
         self.camera = None
         self.original_frame = None # 存储原始帧
         self.current_frame = None  # 用于存储裁剪后的帧
@@ -28,6 +27,17 @@ class UltrasoundTab(QWidget):
         self.right_slider = QSlider(Qt.Horizontal)
         self.left_label = QLabel("左侧裁剪: 0")
         self.right_label = QLabel("右侧裁剪: 640")
+        
+        # 新增: 机器人旋转和拍照相关变量
+        self.tcp_manager = tcp_manager
+        self.right_rotate_timer = QTimer(self)
+        self.right_rotate_timer.timeout.connect(self.rotate_step)
+        self.current_rotation_step = 0
+        self.save_folder = ""
+
+        # 新增: 旋转按钮
+        self.left_45_btn = QPushButton("超声探头左转45度")
+        self.right_90_btn = QPushButton("超声探头右转90度")
 
         self.init_ui()
         self.setup_connections()
@@ -74,6 +84,12 @@ class UltrasoundTab(QWidget):
         self.stop_btn.setEnabled(False)
         self.save_btn.setFixedSize(120, 40)
         self.save_btn.setEnabled(False)
+        
+        # 新增: 旋转按钮
+        self.left_45_btn.setFixedSize(120, 40)
+        self.right_90_btn.setFixedSize(120, 40)
+        self.left_45_btn.setEnabled(False)
+        self.right_90_btn.setEnabled(False)
 
         btn_layout.addStretch()
         btn_layout.addWidget(self.start_btn)
@@ -81,6 +97,10 @@ class UltrasoundTab(QWidget):
         btn_layout.addWidget(self.stop_btn)
         btn_layout.addSpacing(10)
         btn_layout.addWidget(self.save_btn)
+        btn_layout.addSpacing(20) # 增加间距
+        btn_layout.addWidget(self.left_45_btn)
+        btn_layout.addSpacing(10)
+        btn_layout.addWidget(self.right_90_btn)
         btn_layout.addStretch()
         
         layout.addLayout(btn_layout)
@@ -92,6 +112,10 @@ class UltrasoundTab(QWidget):
         self.save_btn.clicked.connect(self.save_image)
         self.left_slider.valueChanged.connect(self.update_crop_value)
         self.right_slider.valueChanged.connect(self.update_crop_value)
+        
+        # 新增: 机器人旋转按钮的连接
+        self.left_45_btn.clicked.connect(self.rotate_left_45)
+        self.right_90_btn.clicked.connect(self.rotate_and_capture_90)
 
     def update_crop_value(self, value):
         """更新裁剪滑块的标签文本，并确保左右边界的逻辑正确性。"""
@@ -141,6 +165,8 @@ class UltrasoundTab(QWidget):
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.save_btn.setEnabled(True)
+        self.left_45_btn.setEnabled(True) # 新增
+        self.right_90_btn.setEnabled(True) # 新增
         self.image_label.setText("正在捕获图像...")
 
     def stop_capture(self):
@@ -152,6 +178,8 @@ class UltrasoundTab(QWidget):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.save_btn.setEnabled(False)
+        self.left_45_btn.setEnabled(False) # 新增
+        self.right_90_btn.setEnabled(False) # 新增
         self.image_label.setText("已停止捕获。")
     
     def update_frame(self):
@@ -206,3 +234,58 @@ class UltrasoundTab(QWidget):
     def cleanup(self):
         """在窗口关闭时进行清理。"""
         self.stop_capture()
+
+    def rotate_left_45(self):
+        """发送指令，使超声探头左转45度。"""
+        # MoveRelJ, nRbtID, nAxisId, nDirection, dDistance;
+        # nRbtID=0, nAxisId=5 (关节六), nDirection=0 (反向), dDistance=45
+        command = "MoveRelJ,0,5,0,45;"
+        if self.tcp_manager and self.tcp_manager.is_connected:
+            self.tcp_manager.send_command(command)
+            QMessageBox.information(self, "指令已发送", "已发送左转45度指令。")
+        else:
+            QMessageBox.warning(self, "连接错误", "未连接到机器人或TCP管理器。")
+
+    def rotate_and_capture_90(self):
+        """开始90度右转，并每1度保存一张图像。"""
+        if not self.tcp_manager or not self.tcp_manager.is_connected:
+            QMessageBox.warning(self, "连接错误", "未连接到机器人或TCP管理器。")
+            return
+        
+        # 创建新的文件夹
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.save_folder = os.path.join(os.getcwd(), f"ultrasound_images_{timestamp}")
+        try:
+            os.makedirs(self.save_folder, exist_ok=True)
+        except OSError as e:
+            QMessageBox.critical(self, "文件系统错误", f"无法创建保存目录: {e}")
+            return
+
+        self.current_rotation_step = 0
+        self.right_rotate_timer.start(1000)  # 每1000毫秒（1秒）旋转1度
+        QMessageBox.information(self, "任务开始", "超声探头开始右转并捕捉图像。")
+        self.right_90_btn.setEnabled(False) # 任务进行时禁用按钮
+
+    def rotate_step(self):
+        """由定时器调用，每步旋转1度并保存图像。"""
+        if self.current_rotation_step < 90:
+            # 旋转1度
+            # MoveRelJ, nRbtID, nAxisId, nDirection, dDistance;
+            # nRbtID=0, nAxisId=5 (关节六), nDirection=1 (正向), dDistance=1
+            command = "MoveRelJ,0,5,1,1;"
+            self.tcp_manager.send_command(command)
+            
+            # 立即保存当前图像
+            image_path = os.path.join(self.save_folder, f"image_{self.current_rotation_step:03d}.png")
+            if self.current_frame is not None:
+                try:
+                    cv2.imwrite(image_path, self.current_frame)
+                    print(f"已保存图像: {image_path}")
+                except Exception as e:
+                    print(f"保存图像时出错: {e}")
+            
+            self.current_rotation_step += 1
+        else:
+            self.right_rotate_timer.stop()
+            self.right_90_btn.setEnabled(True) # 任务完成后重新启用按钮
+            QMessageBox.information(self, "任务完成", f"已完成右转90度并保存了{self.current_rotation_step}张图像。")
