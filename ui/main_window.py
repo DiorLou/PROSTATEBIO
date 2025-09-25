@@ -4,11 +4,12 @@ import numpy as np
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QGroupBox, QLabel, QLineEdit, QPushButton,
                              QTextEdit, QStatusBar, QGridLayout, QMessageBox,
-                             QCheckBox, QSlider)
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QCloseEvent, QFont
+                             QCheckBox, QSlider, QTabWidget)
+from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
+from PyQt5.QtGui import QCloseEvent, QFont, QImage, QPixmap
 from core.tcp_manager import TCPManager
 from core.ultrasound_plane import calculate_rotation_for_plane_alignment, calculate_new_rpy_for_b_point
+from ui.ultrasound_tab import UltrasoundTab
 
 # Constants for motion direction
 # 移动方向常量
@@ -80,6 +81,9 @@ class RobotControlWindow(QMainWindow):
         
         # 实例化 TCPManager 类，所有通信逻辑都通过它来调用。
         self.tcp_manager = TCPManager()
+        
+        # 新增：实例化超声图像标签页
+        self.ultrasound_tab = UltrasoundTab()
 
         # --- 3. 初始化UI ---
         self.init_ui()
@@ -88,10 +92,13 @@ class RobotControlWindow(QMainWindow):
 
     def init_ui(self):
         """构建所有UI组件并使用布局管理器进行排列。"""
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
+        # 使用 QTabWidget 作为主窗口的中心部件
+        self.tabs = QTabWidget()
+        self.setCentralWidget(self.tabs)
 
-        main_layout = QHBoxLayout(central_widget)
+        # 创建第一个标签页，用于现有的机器人控制
+        robot_control_tab = QWidget()
+        main_layout = QHBoxLayout(robot_control_tab)
 
         # 左侧面板布局，包含电机控制和状态显示模块。
         left_panel_layout = QVBoxLayout()
@@ -118,6 +125,12 @@ class RobotControlWindow(QMainWindow):
         self.create_cur_tcp_group(right_panel_layout)
         self.create_tcp_group(right_panel_layout)
         main_layout.addLayout(right_panel_layout, 1)
+        
+        # 将机器人控制标签页添加到 QTabWidget
+        self.tabs.addTab(robot_control_tab, "机器人控制")
+
+        # 将超声图像标签页添加到 QTabWidget
+        self.tabs.addTab(self.ultrasound_tab, "超声图像")
 
         # 状态栏，用于在底部显示简短的程序状态信息。
         self.status_bar = QStatusBar()
@@ -154,7 +167,7 @@ class RobotControlWindow(QMainWindow):
         self.get_o_btn.clicked.connect(self.get_o_point_position)
         self.get_e_btn.clicked.connect(self.get_e_point_position)
         self.align_planes_btn.clicked.connect(self.align_ultrasound_plane_to_aoe)
-
+        
         # 将 TCPManager 的信号连接到本窗口的槽函数
         self.tcp_manager.connection_status_changed.connect(self.update_ui_on_connection)
         self.tcp_manager.message_received.connect(self.handle_incoming_message)
@@ -681,7 +694,7 @@ class RobotControlWindow(QMainWindow):
         self.tcp_adjust(tcp_index, direction)
         self.continuous_tcp_move_timer.start(50)
 
-    def stop_tcp_move(self,):
+    def stop_tcp_move(self):
         """停止连续微调TCP坐标，停止定时器并发送停止指令。"""
         self.continuous_tcp_move_timer.stop()
         self._moving_tcp_index = -1
@@ -696,6 +709,7 @@ class RobotControlWindow(QMainWindow):
     def closeEvent(self, a0: QCloseEvent):
         """重写窗口关闭事件，确保在程序退出前断开TCP连接并清理资源。"""
         self.tcp_manager.disconnect()
+        self.ultrasound_tab.cleanup()
         super().closeEvent(a0)
 
     def create_motor_group(self, layout):
