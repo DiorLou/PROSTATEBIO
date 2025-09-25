@@ -82,8 +82,8 @@ class RobotControlWindow(QMainWindow):
         # 实例化 TCPManager 类，所有通信逻辑都通过它来调用。
         self.tcp_manager = TCPManager()
         
-        # 新增：实例化超声图像标签页
-        self.ultrasound_tab = UltrasoundTab()
+        # 将 tcp_manager 和父级实例 (self) 传递给 UltrasoundTab
+        self.ultrasound_tab = UltrasoundTab(self.tcp_manager, self)
 
         # --- 3. 初始化UI ---
         self.init_ui()
