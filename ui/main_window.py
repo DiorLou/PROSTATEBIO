@@ -234,6 +234,9 @@ class RobotControlWindow(QMainWindow):
             self.handle_override_message(message)
         elif message.startswith("SetTCPByName"):
             self.log_message(message)
+        elif message.startswith("MoveRelJ,OK"):
+            # 如果是，通知 ultrasound_tab 继续下一步操作
+            self.ultrasound_tab.continue_rotation()
 
     def request_cur_tcp_info(self):
         """通过按钮点击发送指令，请求获取当前TCP坐标。"""

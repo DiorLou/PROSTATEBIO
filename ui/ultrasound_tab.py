@@ -30,8 +30,7 @@ class UltrasoundTab(QWidget):
         
         # 新增: 机器人旋转和拍照相关变量
         self.tcp_manager = tcp_manager
-        self.right_rotate_timer = QTimer(self)
-        self.right_rotate_timer.timeout.connect(self.rotate_step)
+        self.is_rotating = False  # 新增: 旋转状态标志
         self.current_rotation_step = 0
         self.save_folder = ""
 
@@ -252,6 +251,12 @@ class UltrasoundTab(QWidget):
             QMessageBox.warning(self, "连接错误", "未连接到机器人或TCP管理器。")
             return
         
+        # 禁用按钮防止重复点击
+        self.right_90_btn.setEnabled(False)
+        self.left_45_btn.setEnabled(False)
+        self.start_btn.setEnabled(False)
+        self.stop_btn.setEnabled(False)
+
         # 创建新的文件夹
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.save_folder = os.path.join(os.getcwd(), f"ultrasound_images_{timestamp}")
@@ -262,9 +267,42 @@ class UltrasoundTab(QWidget):
             return
 
         self.current_rotation_step = 0
-        self.right_rotate_timer.start(1000)  # 每1000毫秒（1秒）旋转1度
+        self.is_rotating = True  # 启动旋转状态
+
+        # 立即发送第一条旋转指令
+        command = "MoveRelJ,0,5,1,1;"
+        self.tcp_manager.send_command(command)
         QMessageBox.information(self, "任务开始", "超声探头开始右转并捕捉图像。")
-        self.right_90_btn.setEnabled(False) # 任务进行时禁用按钮
+        
+    def continue_rotation(self):
+        """在接收到机器人反馈后，继续旋转并保存图像。"""
+        if not self.is_rotating:
+            return
+
+        # 立即保存当前图像
+        image_path = os.path.join(self.save_folder, f"image_{self.current_rotation_step:03d}.png")
+        if self.current_frame is not None:
+            try:
+                cv2.imwrite(image_path, self.current_frame)
+                print(f"已保存图像: {image_path}")
+            except Exception as e:
+                print(f"保存图像时出错: {e}")
+
+        # 增加旋转步数
+        self.current_rotation_step += 1
+
+        if self.current_rotation_step < 90:
+            # 继续发送下一条旋转指令
+            command = "MoveRelJ,0,5,1,1;"
+            self.tcp_manager.send_command(command)
+        else:
+            self.is_rotating = False  # 停止旋转状态
+            # 重新启用按钮
+            self.right_90_btn.setEnabled(True)
+            self.left_45_btn.setEnabled(True)
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(True)
+            QMessageBox.information(self, "任务完成", f"已完成右转90度并保存了{self.current_rotation_step}张图像。")
 
     def rotate_step(self):
         """由定时器调用，每步旋转1度并保存图像。"""
