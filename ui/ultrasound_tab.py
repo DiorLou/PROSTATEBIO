@@ -257,13 +257,46 @@ class UltrasoundTab(QWidget):
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(False)
 
-        # 创建新的文件夹
+        # 1. 定义 'image' 根目录
+        base_dir = os.path.join(os.getcwd(), "image")
+        
+        # 2. 只有在 'image' 目录不存在时才创建它和 .gitignore 文件
+        if not os.path.isdir(base_dir):
+            try:
+                os.makedirs(base_dir) # 不使用 exist_ok=True，因为已经检查过
+            except OSError as e:
+                QMessageBox.critical(self, "文件系统错误", f"无法创建根保存目录 ('image'): {e}")
+                self.right_90_btn.setEnabled(True)
+                self.left_45_btn.setEnabled(True)
+                self.start_btn.setEnabled(True)
+                self.stop_btn.setEnabled(True)
+                return
+
+            # 2a. 创建 .gitignore 文件 (只在首次创建目录时执行)
+            gitignore_path = os.path.join(base_dir, ".gitignore")
+            try:
+                # 写入一个简单的规则以忽略图像文件
+                with open(gitignore_path, 'w') as f:
+                    f.write("# 忽略所有超声图像数据 (由程序自动生成)\n")
+                    # 忽略所有以 ultrasound_images_ 开头的文件夹
+                    f.write("ultrasound_images_*/\n") 
+            except Exception as e:
+                # 这是一个非关键错误，可以打印警告但继续
+                print(f"警告: 无法创建 .gitignore 文件: {e}")
+        
+        # 3. 创建带有时间戳的子文件夹，并将其保存在 'image' 目录中
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.save_folder = os.path.join(os.getcwd(), f"ultrasound_images_{timestamp}")
+        self.save_folder = os.path.join(base_dir, f"ultrasound_images_{timestamp}")
+        
         try:
             os.makedirs(self.save_folder, exist_ok=True)
         except OSError as e:
             QMessageBox.critical(self, "文件系统错误", f"无法创建保存目录: {e}")
+            # 重新启用按钮
+            self.right_90_btn.setEnabled(True)
+            self.left_45_btn.setEnabled(True)
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(True)
             return
 
         self.current_rotation_step = 0
