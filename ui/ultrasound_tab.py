@@ -23,14 +23,21 @@ class UltrasoundTab(QWidget):
         self.stop_btn = QPushButton("关闭超声探头")
         self.save_btn = QPushButton("保存图像")
         
+        # --- 原始左右裁剪滑块 ---
         self.left_slider = QSlider(Qt.Horizontal)
         self.right_slider = QSlider(Qt.Horizontal)
         self.left_label = QLabel("左侧裁剪: 0")
-        self.right_label = QLabel("右侧裁剪: 640")
+        self.right_label = QLabel("右侧裁剪: 1920") # 已修改为 1920
         
+        # --- 新增上下裁剪滑块 ---
+        self.top_slider = QSlider(Qt.Horizontal)
+        self.bottom_slider = QSlider(Qt.Horizontal)
+        self.top_label = QLabel("顶部裁剪: 0")
+        self.bottom_label = QLabel("底部裁剪: 1080")
+
         # 新增: 机器人旋转和拍照相关变量
         self.tcp_manager = tcp_manager
-        self.is_rotating = False  # 新增: 旋转状态标志
+        self.is_rotating = False
         self.current_rotation_step = 0
         self.save_folder = ""
 
@@ -60,21 +67,38 @@ class UltrasoundTab(QWidget):
         crop_group = QWidget()
         crop_layout = QVBoxLayout(crop_group)
         
+        # --- 水平裁剪 (左右) ---
         left_crop_layout = QHBoxLayout()
         # 滑块范围将在启动捕获后动态设置
-        self.left_slider.setRange(0, 640)
+        self.left_slider.setRange(0, 1920)
         self.left_slider.setValue(0)
         left_crop_layout.addWidget(self.left_label)
         left_crop_layout.addWidget(self.left_slider)
         
         right_crop_layout = QHBoxLayout()
-        self.right_slider.setRange(0, 640)
-        self.right_slider.setValue(640)
+        self.right_slider.setRange(0, 1920) # 已修改为 1920
+        self.right_slider.setValue(1920)    # 已修改为 1920
         right_crop_layout.addWidget(self.right_label)
         right_crop_layout.addWidget(self.right_slider)
 
+        # --- 垂直裁剪 (上下) ---
+        top_crop_layout = QHBoxLayout()
+        self.top_slider.setRange(0, 1080)
+        self.top_slider.setValue(0)
+        top_crop_layout.addWidget(self.top_label)
+        top_crop_layout.addWidget(self.top_slider)
+
+        bottom_crop_layout = QHBoxLayout()
+        self.bottom_slider.setRange(0, 1080)
+        self.bottom_slider.setValue(1080)
+        bottom_crop_layout.addWidget(self.bottom_label)
+        bottom_crop_layout.addWidget(self.bottom_slider)
+
         crop_layout.addLayout(left_crop_layout)
         crop_layout.addLayout(right_crop_layout)
+        crop_layout.addLayout(top_crop_layout)
+        crop_layout.addLayout(bottom_crop_layout)
+
         layout.addWidget(crop_group)
 
         btn_layout = QHBoxLayout()
@@ -109,24 +133,41 @@ class UltrasoundTab(QWidget):
         self.start_btn.clicked.connect(self.start_capture)
         self.stop_btn.clicked.connect(self.stop_capture)
         self.save_btn.clicked.connect(self.save_image)
+        
+        # 连接水平裁剪滑块
         self.left_slider.valueChanged.connect(self.update_crop_value)
         self.right_slider.valueChanged.connect(self.update_crop_value)
+        
+        # 连接垂直裁剪滑块
+        self.top_slider.valueChanged.connect(self.update_crop_value)
+        self.bottom_slider.valueChanged.connect(self.update_crop_value)
         
         # 新增: 机器人旋转按钮的连接
         self.left_45_btn.clicked.connect(self.rotate_left_45)
         self.right_90_btn.clicked.connect(self.rotate_and_capture_90)
 
     def update_crop_value(self, value):
-        """更新裁剪滑块的标签文本，并确保左右边界的逻辑正确性。"""
+        """更新裁剪滑块的标签文本，并确保上下左右边界的逻辑正确性。"""
         left_val = self.left_slider.value()
         right_val = self.right_slider.value()
+        top_val = self.top_slider.value()
+        bottom_val = self.bottom_slider.value()
 
+        # 1. 检查水平边界 (Left < Right)
         if left_val > right_val:
             self.right_slider.setValue(left_val)
             right_val = left_val
         
+        # 2. 检查垂直边界 (Top < Bottom)
+        if top_val > bottom_val:
+            self.bottom_slider.setValue(top_val)
+            bottom_val = top_val
+
+        # 3. 更新标签
         self.left_label.setText(f"左侧裁剪: {left_val}")
         self.right_label.setText(f"右侧裁剪: {right_val}")
+        self.top_label.setText(f"顶部裁剪: {top_val}")
+        self.bottom_label.setText(f"底部裁剪: {bottom_val}")
 
     def start_capture(self):
         """开始捕获超声图像流。"""
@@ -154,18 +195,29 @@ class UltrasoundTab(QWidget):
             
         actual_height, actual_width, _ = frame.shape
 
+        # --- 设置水平滑块范围 (宽度) ---
         self.left_slider.setRange(0, actual_width)
         self.right_slider.setRange(0, actual_width)
         self.right_slider.setValue(actual_width)
         self.left_label.setText(f"左侧裁剪: 0")
         self.right_label.setText(f"右侧裁剪: {actual_width}")
+        
+        # --- 设置垂直滑块范围 (高度) ---
+        self.top_slider.setRange(0, actual_height)
+        self.top_slider.setValue(0)
+        self.top_label.setText(f"顶部裁剪: 0")
+
+        self.bottom_slider.setRange(0, actual_height)
+        self.bottom_slider.setValue(actual_height)
+        self.bottom_label.setText(f"底部裁剪: {actual_height}")
+
 
         self.image_timer.start(30)
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.save_btn.setEnabled(True)
-        self.left_45_btn.setEnabled(True) # 新增
-        self.right_90_btn.setEnabled(True) # 新增
+        self.left_45_btn.setEnabled(True)
+        self.right_90_btn.setEnabled(True)
         self.image_label.setText("正在捕获图像...")
 
     def stop_capture(self):
@@ -177,8 +229,8 @@ class UltrasoundTab(QWidget):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.save_btn.setEnabled(False)
-        self.left_45_btn.setEnabled(False) # 新增
-        self.right_90_btn.setEnabled(False) # 新增
+        self.left_45_btn.setEnabled(False)
+        self.right_90_btn.setEnabled(False)
         self.image_label.setText("已停止捕获。")
     
     def update_frame(self):
@@ -191,11 +243,15 @@ class UltrasoundTab(QWidget):
         
         self.original_frame = frame
         
+        # 获取四向裁剪值
         left_crop = self.left_slider.value()
         right_crop = self.right_slider.value()
+        top_crop = self.top_slider.value()
+        bottom_crop = self.bottom_slider.value()
         
-        # 裁剪图像并存储，以供保存按钮使用
-        self.current_frame = self.original_frame[:, left_crop:right_crop]
+        # 裁剪图像并存储 (同时应用垂直和水平裁剪)
+        # 注意: Python的切片顺序是 [行/Y轴, 列/X轴]
+        self.current_frame = self.original_frame[top_crop:bottom_crop, left_crop:right_crop]
         
         # 将裁剪后的图像转换为 PyQt 格式，并等比例缩放到显示窗口
         rgb_image = cv2.cvtColor(self.current_frame, cv2.COLOR_BGR2RGB)
@@ -263,7 +319,7 @@ class UltrasoundTab(QWidget):
         # 2. 只有在 'image' 目录不存在时才创建它和 .gitignore 文件
         if not os.path.isdir(base_dir):
             try:
-                os.makedirs(base_dir) # 不使用 exist_ok=True，因为已经检查过
+                os.makedirs(base_dir)
             except OSError as e:
                 QMessageBox.critical(self, "文件系统错误", f"无法创建根保存目录 ('image'): {e}")
                 self.right_90_btn.setEnabled(True)
@@ -300,7 +356,7 @@ class UltrasoundTab(QWidget):
             return
 
         self.current_rotation_step = 0
-        self.is_rotating = True  # 启动旋转状态
+        self.is_rotating = True
 
         # 立即发送第一条旋转指令
         command = "MoveRelJ,0,5,1,1;"
@@ -329,7 +385,7 @@ class UltrasoundTab(QWidget):
             command = "MoveRelJ,0,5,1,1;"
             self.tcp_manager.send_command(command)
         else:
-            self.is_rotating = False  # 停止旋转状态
+            self.is_rotating = False
             # 重新启用按钮
             self.right_90_btn.setEnabled(True)
             self.left_45_btn.setEnabled(True)
@@ -358,5 +414,5 @@ class UltrasoundTab(QWidget):
             self.current_rotation_step += 1
         else:
             self.right_rotate_timer.stop()
-            self.right_90_btn.setEnabled(True) # 任务完成后重新启用按钮
+            self.right_90_btn.setEnabled(True)
             QMessageBox.information(self, "任务完成", f"已完成右转90度并保存了{self.current_rotation_step}张图像。")
