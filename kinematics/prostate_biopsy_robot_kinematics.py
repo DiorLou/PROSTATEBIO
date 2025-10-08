@@ -259,7 +259,8 @@ class RobotKinematics:
         [joint1_val, joint2_val] = result.x
         self._joint2_compensate(joint2_val)
         joint2_val_compensated = self._angle_of_rotation(self.OC0, self.OC, self.OA)
-        return [joint1_val, joint2_val_compensated]
+        joint2_val_compensated2 = joint2_val_compensated + joint1_val
+        return [joint1_val, joint2_val_compensated2]
 
 if __name__ == '__main__':
     # 定义需要作为符号的变量名
@@ -278,6 +279,9 @@ if __name__ == '__main__':
     print(rcm00)
     needle_vector = robot.get_needle_vector([0,0,85,0])
     print(needle_vector)
+
+    # 定义needle的向量
     calculated_joint23_value = robot.get_joint23_value(needle_vector)
+    
     print(calculated_joint23_value)
     
