@@ -368,11 +368,36 @@ class UltrasoundTab(QWidget):
         if not self.is_rotating:
             return
 
+        # 获取父窗口（RobotControlWindow）的最新工具端位姿
+        # 注意: 假设 self.parent() 是 RobotControlWindow 的实例
+        robot_control_window = self.parent()
+        if not robot_control_window:
+            print("错误：无法获取父窗口实例。")
+            return
+            
+        pose = robot_control_window.latest_tool_pose
+        
+        # 格式化工具端位姿: (x,y,z,Rx,Ry,Rz)
+        if pose and len(pose) == 6:
+            pose_str = f"({pose[0]:.2f},{pose[1]:.2f},{pose[2]:.2f},{pose[3]:.2f},{pose[4]:.2f},{pose[5]:.2f})"
+        else:
+            pose_str = "POSE_NA"
+            print("警告: 无法获取有效的工具端位姿数据。")
+
+        # 构造新的文件名: (旋转度数) + (工具端位姿) + .png
+        # 旋转度数使用三位零填充
+        rotation_step_str = f"{self.current_rotation_step:03d}"
+        
+        # 拼接文件名: "000(x,y,z,Rx,Ry,Rz).png"
+        new_filename = f"{rotation_step_str}{pose_str}.png"
+        
+        image_path = os.path.join(self.save_folder, new_filename)
+
         # 立即保存当前图像
-        image_path = os.path.join(self.save_folder, f"image_{self.current_rotation_step:03d}.png")
         if self.current_frame is not None:
             try:
                 cv2.imwrite(image_path, self.current_frame)
+                # 打印新的文件名
                 print(f"已保存图像: {image_path}")
             except Exception as e:
                 print(f"保存图像时出错: {e}")
