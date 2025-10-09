@@ -10,6 +10,8 @@ from PyQt5.QtGui import QCloseEvent, QFont, QImage, QPixmap
 from core.tcp_manager import TCPManager
 from core.ultrasound_plane import calculate_rotation_for_plane_alignment, calculate_new_rpy_for_b_point
 from ui.ultrasound_tab import UltrasoundTab
+from kinematics.prostate_biopsy_robot_kinematics import RobotKinematics
+from ui.beckhoff_tab import BeckhoffTab
 
 # Constants for motion direction
 # 移动方向常量
@@ -19,8 +21,15 @@ BACKWARD = 0
 class RobotControlWindow(QMainWindow):
     """
     此类继承自 QMainWindow，是整个应用程序的图形界面。
-    它负责构建UI，并与后台的 TCPManager 进行交互。
+    它负责构建UI，并与后台的 TCPManager/RobotKinematics 进行交互。
     """
+    # --- Kinematics Constants: 机器人 DH 参数 --- #
+    VARIABLE_NAMES = ['x0', 'x1', 'x2', 'x3']
+    A_PARAMS = [247.204, 0, 0, 0]
+    ALPHA_PARAMS = [0, -65, -30, 34]
+    D_PARAMS = ['x0 - 184.845', 545.517, 0, 'x3 + 60.7']
+    THETA_PARAMS = [30, 'x1', 'x2 + 85.96', 0]
+    
     def __init__(self):
         super().__init__()
         # 设置窗口标题。
@@ -82,8 +91,20 @@ class RobotControlWindow(QMainWindow):
         # 实例化 TCPManager 类，所有通信逻辑都通过它来调用。
         self.tcp_manager = TCPManager()
         
+        # 实例化 RobotKinematics 类。
+        self.robot_kinematics = RobotKinematics(
+            self.A_PARAMS, 
+            self.ALPHA_PARAMS, 
+            self.D_PARAMS, 
+            self.THETA_PARAMS, 
+            self.VARIABLE_NAMES
+        )
+        
         # 将 tcp_manager 和父级实例 (self) 传递给 UltrasoundTab
         self.ultrasound_tab = UltrasoundTab(self.tcp_manager, self)
+        
+        # 实例化 BeckhoffTab 类。 # 新增
+        self.beckhoff_tab = BeckhoffTab(self.robot_kinematics, self)
 
         # --- 3. 初始化UI ---
         self.init_ui()
@@ -131,6 +152,9 @@ class RobotControlWindow(QMainWindow):
 
         # 将超声图像标签页添加到 QTabWidget
         self.tabs.addTab(self.ultrasound_tab, "超声图像")
+        
+        # 将 Beckhoff 通信标签页添加到 QTabWidget
+        self.tabs.addTab(self.beckhoff_tab, "Beckhoff通信")
 
         # 状态栏，用于在底部显示简短的程序状态信息。
         self.status_bar = QStatusBar()
