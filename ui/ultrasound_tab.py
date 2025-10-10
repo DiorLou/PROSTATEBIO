@@ -12,6 +12,8 @@ class UltrasoundTab(QWidget):
     def __init__(self, tcp_manager, parent=None):
         super().__init__(parent)
         self.tcp_manager = tcp_manager
+        # 🌟 修复点 1: 显式存储主窗口实例
+        self.main_window = parent 
         self.camera = None
         self.original_frame = None # 存储原始帧
         self.current_frame = None  # 用于存储裁剪后的帧
@@ -368,11 +370,11 @@ class UltrasoundTab(QWidget):
         if not self.is_rotating:
             return
 
-        # 获取父窗口（RobotControlWindow）的最新工具端位姿
-        # 注意: 假设 self.parent() 是 RobotControlWindow 的实例
-        robot_control_window = self.parent()
+        # 🌟 修复点 2: 使用存储的 self.main_window 属性
+        # 而不是 self.parent()，以确保获取到 RobotControlWindow 实例
+        robot_control_window = self.main_window
         if not robot_control_window:
-            print("错误：无法获取父窗口实例。")
+            print("错误：无法获取主窗口实例。")
             return
             
         pose = robot_control_window.latest_tool_pose
