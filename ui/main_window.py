@@ -759,13 +759,13 @@ class RobotControlWindow(QMainWindow):
             btn_minus.setFixedWidth(30)
             # 使用 lambda 表达式来传递参数 (关节索引和方向)。
             # pressed 信号在按钮被按下时立即触发。
-            btn_minus.pressed.connect(lambda j=i: self.start_move(j, -1))
+            btn_minus.pressed.connect(lambda j=i: self.start_move(j, BACKWARD))
             # released 信号在按钮被释放时触发。
             btn_minus.released.connect(self.stop_move)
             # 创建并连接“微调增加”按钮。
             btn_plus = QPushButton("+")
             btn_plus.setFixedWidth(30)
-            btn_plus.pressed.connect(lambda j=i: self.start_move(j, 1))
+            btn_plus.pressed.connect(lambda j=i: self.start_move(j, FORWARD))
             btn_plus.released.connect(self.stop_move)
             row_layout.addWidget(label)
             row_layout.addWidget(value_label)
