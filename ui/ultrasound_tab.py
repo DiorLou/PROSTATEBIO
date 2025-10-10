@@ -12,6 +12,8 @@ class UltrasoundTab(QWidget):
     def __init__(self, tcp_manager, parent=None):
         super().__init__(parent)
         self.tcp_manager = tcp_manager
+        # 🌟 修复点 1: 显式存储主窗口实例
+        self.main_window = parent 
         self.camera = None
         self.original_frame = None # 存储原始帧
         self.current_frame = None  # 用于存储裁剪后的帧
@@ -111,6 +113,8 @@ class UltrasoundTab(QWidget):
         # 新增: 旋转按钮
         self.left_45_btn.setFixedSize(120, 40)
         self.right_90_btn.setFixedSize(120, 40)
+        self.left_45_btn.setFixedSize(155, 40)
+        self.right_90_btn.setFixedSize(155, 40)
         self.left_45_btn.setEnabled(False)
         self.right_90_btn.setEnabled(False)
 
@@ -368,11 +372,11 @@ class UltrasoundTab(QWidget):
         if not self.is_rotating:
             return
 
-        # 获取父窗口（RobotControlWindow）的最新工具端位姿
-        # 注意: 假设 self.parent() 是 RobotControlWindow 的实例
-        robot_control_window = self.parent()
+        # 🌟 修复点 2: 使用存储的 self.main_window 属性
+        # 而不是 self.parent()，以确保获取到 RobotControlWindow 实例
+        robot_control_window = self.main_window
         if not robot_control_window:
-            print("错误：无法获取父窗口实例。")
+            print("错误：无法获取主窗口实例。")
             return
             
         pose = robot_control_window.latest_tool_pose
@@ -416,28 +420,4 @@ class UltrasoundTab(QWidget):
             self.left_45_btn.setEnabled(True)
             self.start_btn.setEnabled(True)
             self.stop_btn.setEnabled(True)
-            QMessageBox.information(self, "任务完成", f"已完成右转90度并保存了{self.current_rotation_step}张图像。")
-
-    def rotate_step(self):
-        """由定时器调用，每步旋转1度并保存图像。"""
-        if self.current_rotation_step < 90:
-            # 旋转1度
-            # MoveRelJ, nRbtID, nAxisId, nDirection, dDistance;
-            # nRbtID=0, nAxisId=5 (关节六), nDirection=1 (正向), dDistance=1
-            command = "MoveRelJ,0,5,1,1;"
-            self.tcp_manager.send_command(command)
-            
-            # 立即保存当前图像
-            image_path = os.path.join(self.save_folder, f"image_{self.current_rotation_step:03d}.png")
-            if self.current_frame is not None:
-                try:
-                    cv2.imwrite(image_path, self.current_frame)
-                    print(f"已保存图像: {image_path}")
-                except Exception as e:
-                    print(f"保存图像时出错: {e}")
-            
-            self.current_rotation_step += 1
-        else:
-            self.right_rotate_timer.stop()
-            self.right_90_btn.setEnabled(True)
             QMessageBox.information(self, "任务完成", f"已完成右转90度并保存了{self.current_rotation_step}张图像。")
