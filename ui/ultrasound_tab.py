@@ -50,6 +50,22 @@ class UltrasoundTab(QWidget):
         self.init_ui()
         self.setup_connections()
 
+    def _log_message(self, message):
+        """通过主窗口的引用调用其 log_message 方法。"""
+        # 确保 self.main_window 存在且具有 log_message 方法
+        if self.main_window and hasattr(self.main_window, 'log_message'):
+            self.main_window.log_message(f"超声TAB: {message}")
+        else:
+            # 如果主窗口不存在或方法不存在，则退回到打印到控制台
+            print(f"超声TAB (无法写入日志): {message}")
+
+    def _send_next_rotation_command(self):
+        """发送下一个 1 度旋转命令，由 QTimer 延迟调用。"""
+        command = "MoveRelJ,0,5,1,1;"
+        self.tcp_manager.send_command(command)
+        # 如果您已实现 _log_message, 可以在这里添加日志
+        # self._log_message("已发送下一个 1 度旋转指令 (延迟 10ms)。")
+        
     def init_ui(self):
         """构建超声图像标签页的UI。"""
         layout = QVBoxLayout(self)
@@ -111,8 +127,8 @@ class UltrasoundTab(QWidget):
         self.save_btn.setEnabled(False)
         
         # 新增: 旋转按钮
-        self.left_45_btn.setFixedSize(120, 40)
-        self.right_90_btn.setFixedSize(120, 40)
+        self.left_45_btn.setFixedSize(155, 40)
+        self.right_90_btn.setFixedSize(155, 40)
         self.left_45_btn.setEnabled(False)
         self.right_90_btn.setEnabled(False)
 
@@ -409,8 +425,10 @@ class UltrasoundTab(QWidget):
 
         if self.current_rotation_step < 90:
             # 继续发送下一条旋转指令
-            command = "MoveRelJ,0,5,1,1;"
-            self.tcp_manager.send_command(command)
+            # 🌟 核心修改: 使用 QTimer.singleShot 实现 10ms 延时 (非阻塞)
+            # 10 毫秒后，将执行 self._send_next_rotation_command
+            QTimer.singleShot(300, self._send_next_rotation_command)            
+            self._log_message("send")
         else:
             self.is_rotating = False
             # 重新启用按钮
@@ -418,28 +436,4 @@ class UltrasoundTab(QWidget):
             self.left_45_btn.setEnabled(True)
             self.start_btn.setEnabled(True)
             self.stop_btn.setEnabled(True)
-            QMessageBox.information(self, "任务完成", f"已完成右转90度并保存了{self.current_rotation_step}张图像。")
-
-    def rotate_step(self):
-        """由定时器调用，每步旋转1度并保存图像。"""
-        if self.current_rotation_step < 90:
-            # 旋转1度
-            # MoveRelJ, nRbtID, nAxisId, nDirection, dDistance;
-            # nRbtID=0, nAxisId=5 (关节六), nDirection=1 (正向), dDistance=1
-            command = "MoveRelJ,0,5,1,1;"
-            self.tcp_manager.send_command(command)
-            
-            # 立即保存当前图像
-            image_path = os.path.join(self.save_folder, f"image_{self.current_rotation_step:03d}.png")
-            if self.current_frame is not None:
-                try:
-                    cv2.imwrite(image_path, self.current_frame)
-                    print(f"已保存图像: {image_path}")
-                except Exception as e:
-                    print(f"保存图像时出错: {e}")
-            
-            self.current_rotation_step += 1
-        else:
-            self.right_rotate_timer.stop()
-            self.right_90_btn.setEnabled(True)
             QMessageBox.information(self, "任务完成", f"已完成右转90度并保存了{self.current_rotation_step}张图像。")

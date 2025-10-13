@@ -258,9 +258,12 @@ class RobotControlWindow(QMainWindow):
             self.handle_override_message(message)
         elif message.startswith("SetTCPByName"):
             self.log_message(message)
-        elif message.startswith("MoveRelJ,OK"):
+        elif message.startswith("MoveRelJ"):
             # 如果是，通知 ultrasound_tab 继续下一步操作
+            self.log_message(message)
             self.ultrasound_tab.continue_rotation()
+        elif message.startswith("ReadCurFSM"):
+            self.log_message(message)
 
     def request_cur_tcp_info(self):
         """通过按钮点击发送指令，请求获取当前TCP坐标。"""
@@ -759,13 +762,13 @@ class RobotControlWindow(QMainWindow):
             btn_minus.setFixedWidth(30)
             # 使用 lambda 表达式来传递参数 (关节索引和方向)。
             # pressed 信号在按钮被按下时立即触发。
-            btn_minus.pressed.connect(lambda j=i: self.start_move(j, -1))
+            btn_minus.pressed.connect(lambda j=i: self.start_move(j, BACKWARD))
             # released 信号在按钮被释放时触发。
             btn_minus.released.connect(self.stop_move)
             # 创建并连接“微调增加”按钮。
             btn_plus = QPushButton("+")
             btn_plus.setFixedWidth(30)
-            btn_plus.pressed.connect(lambda j=i: self.start_move(j, 1))
+            btn_plus.pressed.connect(lambda j=i: self.start_move(j, FORWARD))
             btn_plus.released.connect(self.stop_move)
             row_layout.addWidget(label)
             row_layout.addWidget(value_label)
