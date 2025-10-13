@@ -70,6 +70,9 @@ class RobotControlWindow(QMainWindow):
         self.read_cur_tcp_btn = None
         self.set_cur_tcp_btn = None
         
+        # 新增：Tool坐标系复选框
+        self.tool_coord_checkbox = None 
+        
         # 新增一个成员变量来存储最新的工具端姿态
         self.latest_tool_pose = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         
@@ -692,8 +695,11 @@ class RobotControlWindow(QMainWindow):
         """
         # nRbtID 设为 0
         nRobotID = 0
-        # nToolMotion 设为 0
-        nToolMotion = 0
+        # ***** 关键修改: 根据 Tool 坐标系复选框状态设置 nToolMotion *****
+        if self.tool_coord_checkbox and self.tool_coord_checkbox.isChecked():
+            nToolMotion = 1 # 在 Tool 坐标系下运动
+        else:
+            nToolMotion = 0 # 在 Base 坐标系下运动
         
         # nDirection 的值根据传入的 direction 参数确定
         nDirection = direction # direction = 1 为正向，0 为反向
@@ -712,7 +718,8 @@ class RobotControlWindow(QMainWindow):
         
         # 更新状态栏显示，这里可能需要根据 nAxisId 重新映射标签
         axis_labels = ["X", "Y", "Z", "Rx", "Ry", "Rz"]
-        self.status_bar.showMessage(f"状态: Tcp_{axis_labels[nAxisId]} 微调中...")
+        coord_sys = "Tool" if nToolMotion == 1 else "Base"
+        self.status_bar.showMessage(f"状态: {coord_sys}坐标系下 Tcp_{axis_labels[nAxisId]} 微调中...")
 
     def start_tcp_move(self, tcp_index, direction):
         """开始连续微调TCP坐标，启动定时器。"""
@@ -850,6 +857,13 @@ class RobotControlWindow(QMainWindow):
             group_layout.addWidget(label, row, col, alignment=Qt.AlignCenter)
             group_layout.addWidget(value_label, row, col + 1, alignment=Qt.AlignRight)
             group_layout.addLayout(btn_layout, row + 1, col, 1, 2)
+        
+        # ***** 关键修改: 添加 Tool 坐标系复选框 *****
+        # 将复选框放在最后一行，跨越所有列
+        self.tool_coord_checkbox = QCheckBox("Tool 坐标系")
+        # 默认不勾选，即在 Base 坐标系下运动 (nToolMotion=0)
+        group_layout.addWidget(self.tool_coord_checkbox, 4, 0, 1, 6, alignment=Qt.AlignCenter)
+
         layout.addWidget(group)
         
     def create_record_oae_state_group(self, layout):
