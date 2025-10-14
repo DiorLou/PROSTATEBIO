@@ -50,6 +50,11 @@ class UltrasoundTab(QWidget):
         self.init_ui()
         self.setup_connections()
 
+    def _send_next_rotation_command(self):
+        """发送下一个 1 度旋转命令，由 QTimer 延迟调用。"""
+        command = "MoveRelJ,0,5,1,1;"
+        self.tcp_manager.send_command(command)
+
     def init_ui(self):
         """构建超声图像标签页的UI。"""
         layout = QVBoxLayout(self)
@@ -411,8 +416,9 @@ class UltrasoundTab(QWidget):
 
         if self.current_rotation_step < 90:
             # 继续发送下一条旋转指令
-            command = "MoveRelJ,0,5,1,1;"
-            self.tcp_manager.send_command(command)
+            # 🌟 核心修改: 使用 QTimer.singleShot 实现 300ms 延时 (非阻塞)
+            # 300 毫秒后，将执行 self._send_next_rotation_command
+            QTimer.singleShot(300, self._send_next_rotation_command)            
         else:
             self.is_rotating = False
             # 重新启用按钮

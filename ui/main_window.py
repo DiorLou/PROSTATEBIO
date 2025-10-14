@@ -264,6 +264,9 @@ class RobotControlWindow(QMainWindow):
         elif message.startswith("MoveRelJ,OK"):
             # 如果是，通知 ultrasound_tab 继续下一步操作
             self.ultrasound_tab.continue_rotation()
+        elif message.startswith("MoveRelJ"):
+            # 说明指令未完成，开启报错
+            QMessageBox.critical(self, "关节转动错误", "检查状态机是否空闲")
 
     def request_cur_tcp_info(self):
         """通过按钮点击发送指令，请求获取当前TCP坐标。"""
