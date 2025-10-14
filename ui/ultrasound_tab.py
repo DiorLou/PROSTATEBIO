@@ -9,6 +9,12 @@ from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap
 
 class UltrasoundTab(QWidget):
+    # 默认裁剪常量
+    DEFAULT_LEFT_CROP   = 407
+    DEFAULT_RIGHT_CROP  = 638
+    DEFAULT_TOP_CROP    = 131
+    DEFAULT_BOTTOM_CROP = 643
+    
     def __init__(self, tcp_manager, parent=None):
         super().__init__(parent)
         self.tcp_manager = tcp_manager
@@ -28,14 +34,14 @@ class UltrasoundTab(QWidget):
         # --- 原始左右裁剪滑块 ---
         self.left_slider = QSlider(Qt.Horizontal)
         self.right_slider = QSlider(Qt.Horizontal)
-        self.left_label = QLabel("左侧裁剪: 0")
-        self.right_label = QLabel("右侧裁剪: 1920") # 已修改为 1920
+        self.left_label = QLabel(f"左侧裁剪: {self.DEFAULT_LEFT_CROP}")
+        self.right_label = QLabel(f"右侧裁剪: {self.DEFAULT_RIGHT_CROP}")
         
         # --- 新增上下裁剪滑块 ---
         self.top_slider = QSlider(Qt.Horizontal)
         self.bottom_slider = QSlider(Qt.Horizontal)
-        self.top_label = QLabel("顶部裁剪: 0")
-        self.bottom_label = QLabel("底部裁剪: 1080")
+        self.top_label = QLabel(f"顶部裁剪: {self.DEFAULT_TOP_CROP}")
+        self.bottom_label = QLabel(f"底部裁剪: {self.DEFAULT_BOTTOM_CROP}")
 
         # 新增: 机器人旋转和拍照相关变量
         self.tcp_manager = tcp_manager
@@ -78,26 +84,26 @@ class UltrasoundTab(QWidget):
         left_crop_layout = QHBoxLayout()
         # 滑块范围将在启动捕获后动态设置
         self.left_slider.setRange(0, 1920)
-        self.left_slider.setValue(0)
+        self.left_slider.setValue(self.DEFAULT_LEFT_CROP)
         left_crop_layout.addWidget(self.left_label)
         left_crop_layout.addWidget(self.left_slider)
         
         right_crop_layout = QHBoxLayout()
         self.right_slider.setRange(0, 1920) # 已修改为 1920
-        self.right_slider.setValue(1920)    # 已修改为 1920
+        self.right_slider.setValue(self.DEFAULT_RIGHT_CROP)    # 已修改为 1920
         right_crop_layout.addWidget(self.right_label)
         right_crop_layout.addWidget(self.right_slider)
 
         # --- 垂直裁剪 (上下) ---
         top_crop_layout = QHBoxLayout()
         self.top_slider.setRange(0, 1080)
-        self.top_slider.setValue(0)
+        self.top_slider.setValue(self.DEFAULT_TOP_CROP)
         top_crop_layout.addWidget(self.top_label)
         top_crop_layout.addWidget(self.top_slider)
 
         bottom_crop_layout = QHBoxLayout()
         self.bottom_slider.setRange(0, 1080)
-        self.bottom_slider.setValue(1080)
+        self.bottom_slider.setValue(self.DEFAULT_BOTTOM_CROP)
         bottom_crop_layout.addWidget(self.bottom_label)
         bottom_crop_layout.addWidget(self.bottom_slider)
 
@@ -207,19 +213,13 @@ class UltrasoundTab(QWidget):
         # --- 设置水平滑块范围 (宽度) ---
         self.left_slider.setRange(0, actual_width)
         self.right_slider.setRange(0, actual_width)
-        self.right_slider.setValue(actual_width)
-        self.left_label.setText(f"左侧裁剪: 0")
-        self.right_label.setText(f"右侧裁剪: {actual_width}")
-        
+         
         # --- 设置垂直滑块范围 (高度) ---
         self.top_slider.setRange(0, actual_height)
-        self.top_slider.setValue(0)
-        self.top_label.setText(f"顶部裁剪: 0")
-
         self.bottom_slider.setRange(0, actual_height)
-        self.bottom_slider.setValue(actual_height)
-        self.bottom_label.setText(f"底部裁剪: {actual_height}")
-
+ 
+        # 强制调用一次 update_crop_value 以更新标签和边界检查
+        self.update_crop_value(0)
 
         self.image_timer.start(30)
         self.start_btn.setEnabled(False)
