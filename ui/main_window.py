@@ -12,6 +12,7 @@ from core.ultrasound_plane import calculate_rotation_for_plane_alignment, calcul
 from ui.ultrasound_tab import UltrasoundTab
 from kinematics.prostate_biopsy_robot_kinematics import RobotKinematics
 from ui.beckhoff_tab import BeckhoffTab
+import pytransform3d.rotations as pyrot
 
 # Constants for motion direction
 # 移动方向常量
@@ -1052,7 +1053,7 @@ class RobotControlWindow(QMainWindow):
         self.set_cur_tcp_btn = QPushButton("设置Cur TCP")
         self.set_tcp_o_btn = QPushButton("切换TCP_O")
         self.set_tcp_tip_btn = QPushButton("切换TCP_tip")
-        self.get_suitable_tcp_btn = QPushButton("获取合适的TCP")
+        self.get_suitable_tcp_btn = QPushButton("获取合适的Tar_Tcp_Z以及更新O点位置")
         
         button_layout.addWidget(self.set_cur_tcp_btn)
         button_layout.addWidget(self.set_tcp_o_btn)
@@ -1087,34 +1088,73 @@ class RobotControlWindow(QMainWindow):
         self.log_message("ReadTCPByName,0,TCP_tip;")
         self.tcp_manager.send_command("ReadTCPByName,0,TCP_tip;")
         self.status_bar.showMessage("状态: 已发送读取TCP_tip的命令。")
+        
+    def _get_z_axis_vector(self, rpy_deg):
+        """
+        根据 Roll, Pitch, Yaw 角度（度），计算工具坐标系 Z 轴在基座标系中的方向向量。
+        假设使用 SXYZ 外部（Extrinsic）欧拉角顺序。
+        """
+        rpy_rad = np.deg2rad(rpy_deg)
+        rotation_matrix = pyrot.matrix_from_euler(rpy_rad, 0, 1, 2, extrinsic=True)
+        # Z 轴向量是旋转矩阵的第三列
+        return rotation_matrix[:, 2]
                 
     def get_suitable_tcp(self):
         """
-        计算O点和End-effect点之间的距离，并设置到Tcp_Z。
-        同时将其他五个TCP值设置成0。
+        计算EO向量在关节六Z轴方向的投影距离，并设置到Tcp_Z。
+        同时将其他五个TCP值设置成0，并将新的O点位置投影到E点沿着工具Z轴的延长线上。
         """
-        # 1. 检查A点和O点是否有数据
+        # 1. 检查E点和O点是否有数据
         try:
             o_point = np.array([float(self.o_vars[i].text()) for i in range(3)])
             e_point = np.array([float(self.e_vars[i].text()) for i in range(3)])
-        except (ValueError, IndexError):
+        except ValueError:
             self.status_bar.showMessage("警告: 请先获取O点和End-effect点坐标。")
             return
 
-        # 2. 计算两点之间的欧几里得距离
-        distance = np.linalg.norm(e_point - o_point)
-        self.status_bar.showMessage(f"状态: 计算出的O点和End-effect点距离为 {distance:.2f}。")
+        initial_tcp_pose = self.get_current_tool_pose()
+        if initial_tcp_pose is None:
+            QMessageBox.warning(self, "警告", "无法获取当前的机器人姿态来计算新的O点位置。")
+            return
+            
+        try:
+            # a. 获取 End-effect Z 轴向量 (V_Z) 和 P_EE
+            rpy_deg = initial_tcp_pose[3:]
+            z_axis_vector = self._get_z_axis_vector(rpy_deg)
+            p_ee = initial_tcp_pose[:3]
 
-        # 3. 更新TCP设置输入框
-        # 将Tcp_Z设置为计算出的距离
-        self.tcp_input_entries[2].setText(f"{distance:.2f}")
+            # b. 计算 EO 向量 (O - E)
+            vector_eo = o_point - e_point
+            
+            # c. 计算投影距离 (D_proj): EO 向量在工具Z轴方向的投影。这个投影距离就是新的 TCP_Z
+            projection_distance = np.dot(vector_eo, z_axis_vector)
+            self.status_bar.showMessage(f"状态: EO向量在工具Z轴的投影距离为 {projection_distance:.2f}。")
 
-        # 将其他五个值设置为0
-        for i in range(len(self.tcp_input_entries)):
-            if i != 2: # 索引2是Tcp_Z
-                self.tcp_input_entries[i].setText("0.00")
+            # 2. 设置TCP_Z和其他TCP值
+            self.tcp_input_entries[2].setText(f"{projection_distance:.2f}")
+            
+            # 3. 将其他五个TCP值设置成0
+            for i in range(len(self.tcp_input_entries)):
+                if i != 2: # 索引2是Tcp_Z
+                    self.tcp_input_entries[i].setText("0.00")
+
+            # 4. 计算新的 O 点位置 (P_O_new)
+            # P_O_new = P_EE + D_proj * V_Z
+            p_o_new = p_ee + projection_distance * z_axis_vector
+            
+            # d. 更新 O 点 UI
+            self.o_vars[0].setText(f"{p_o_new[0]:.2f}")
+            self.o_vars[1].setText(f"{p_o_new[1]:.2f}")
+            self.o_vars[2].setText(f"{p_o_new[2]:.2f}")
         
-        QMessageBox.information(self, "操作成功", f"TCP_Z值已设置为 {distance:.2f}。\n请点击“设置TCP”按钮以应用更改。")
+            QMessageBox.information(self, "操作成功", 
+                                    f"TCP_Z值已设置为 {projection_distance:.2f}。\n"
+                                    f"O点位置已更新至 ({p_o_new[0]:.2f}, {p_o_new[1]:.2f}, {p_o_new[2]:.2f}) (Base坐标系)。\n"
+                                    "请点击“设置Cur TCP”按钮以应用更改。"
+                                   )
+        except Exception as e:
+            QMessageBox.critical(self, "计算错误", f"计算TCP或新的O点位置时出错: {e}")
+            self.status_bar.showMessage("错误: 计算TCP或新的O点位置时出错。")
 
     def create_cur_tcp_group(self, layout):
         """新增：创建用于显示当前TCP坐标的Groupbox。"""
