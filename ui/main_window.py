@@ -62,7 +62,9 @@ class RobotControlWindow(QMainWindow):
         self.get_e_btn = None
         self.align_planes_btn = None
         self.b_point_btn = None
-        self.rotate_b_point_btn = None # 新增按钮成员变量
+        self.rotate_b_point_btn = None
+        
+        self.init_joint_pos_btn = None # 新增初始化关节按钮成员变量
         
         self.set_tcp_o_btn = None
         self.set_tcp_tip_btn = None
@@ -195,6 +197,7 @@ class RobotControlWindow(QMainWindow):
         self.get_o_btn.clicked.connect(self.get_o_point_position)
         self.get_e_btn.clicked.connect(self.get_e_point_position)
         self.align_planes_btn.clicked.connect(self.align_ultrasound_plane_to_aoe)
+        self.init_joint_pos_btn.clicked.connect(self.send_init_joint_position_command)
         
         # 将 TCPManager 的信号连接到本窗口的槽函数
         self.tcp_manager.connection_status_changed.connect(self.update_ui_on_connection)
@@ -739,6 +742,39 @@ class RobotControlWindow(QMainWindow):
         self._moving_direction = BACKWARD
         self.status_bar.showMessage("状态: TCP微调停止")
     
+    def send_init_joint_position_command(self):
+        """发送指令，使机器人移动到预设的初始关节位置。"""
+        # 预设的关节值
+        J_VALS = [-213.88, -117.11, -73.94, -264.29, -94.03, 219.22]
+        # 格式化关节值字符串，保留两位小数
+        J_STR = ",".join([f"{j:.2f}" for j in J_VALS])
+        
+        # 固定参数：nRbtID=0, dX,dY,dZ,dRx,dRy,dRz 都为 0
+        RBT_ID = 0
+        POS_RPY_ZERO = ",".join(["0.00"] * 6)
+        
+        sTcpName = "TCP"
+        sUcsName = "Base"
+        dVelocity = 50
+        dAcc = 360
+        dRadius = 0
+        nMoveType = 0
+        nIsUseJoint = 1  # 关键：使用关节值模式
+        nIsSeek = 0
+        nIOBit = 0
+        nIOState = 0
+        strCmdID = "ID1"
+        
+        # 拼接 WayPoint 命令
+        command = (
+            f"WayPoint,{RBT_ID},{POS_RPY_ZERO},{J_STR},"
+            f"{sTcpName},{sUcsName},{dVelocity},{dAcc},{dRadius},{nMoveType},"
+            f"{nIsUseJoint},{nIsSeek},{nIOBit},{nIOState},{strCmdID};"
+        )
+
+        self.tcp_manager.send_command(command)
+        self.status_bar.showMessage("状态: 已发送初始化关节位置指令。")
+
     def continuous_tcp_move(self):
         """由定时器周期性调用的函数，用于持续微调TCP坐标。"""
         if self._moving_tcp_index != -1:
@@ -760,6 +796,7 @@ class RobotControlWindow(QMainWindow):
         group_layout.addStretch()
         for i in range(self.num_joints):
             row_layout = QHBoxLayout()
+            row_layout.addStretch()
             label = QLabel(f"关节 {i+1} (q{i+1}):")
             value_label = QLabel("0.00")
             value_label.setFixedWidth(70)
@@ -781,10 +818,20 @@ class RobotControlWindow(QMainWindow):
             row_layout.addWidget(label)
             row_layout.addWidget(value_label)
             row_layout.addSpacing(10)
+            row_layout.addStretch()
             row_layout.addWidget(btn_minus)
             row_layout.addWidget(btn_plus)
             row_layout.addStretch()
             group_layout.addLayout(row_layout)
+        group_layout.addStretch()
+        # --- 新增：初始化关节位置按钮 ---
+        init_btn_layout = QHBoxLayout()
+        self.init_joint_pos_btn = QPushButton("初始化关节位置")
+        init_btn_layout.addStretch()
+        init_btn_layout.addWidget(self.init_joint_pos_btn)
+        init_btn_layout.addStretch()
+        group_layout.addLayout(init_btn_layout)
+
         group_layout.addStretch()
         layout.addWidget(group)
 
