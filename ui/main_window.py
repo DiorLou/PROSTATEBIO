@@ -50,6 +50,10 @@ class RobotControlWindow(QMainWindow):
         self._moving_direction = BACKWARD
         self._moving_tcp_index = -1    # 正在连续微调的TCP坐标索引。
         
+        # 新增用于判断是否已进入连续模式的标志
+        self._is_continuous_mode_active = False # 关节连续模式状态
+        self._is_continuous_tcp_mode_active = False # TCP连续模式状态
+        
         # 新增用于记录A点和O点坐标的文本框列表
         self.a_vars = [None] * 3
         self.o_vars = [None] * 3
@@ -83,9 +87,20 @@ class RobotControlWindow(QMainWindow):
         self.continuous_move_timer = QTimer(self)
         # 将定时器的超时信号连接到 continuous_move 方法。
         self.continuous_move_timer.timeout.connect(self.continuous_move)
+        
+        # 新增：用于延迟2秒启动连续模式的单次定时器
+        self.start_continuous_move_timer = QTimer(self)
+        self.start_continuous_move_timer.setSingleShot(True)
+        self.start_continuous_move_timer.timeout.connect(self._start_joint_continuous_mode)
+        
         # QTimer 用于实现按住按钮连续微调TCP的功能。
         self.continuous_tcp_move_timer = QTimer(self)
         self.continuous_tcp_move_timer.timeout.connect(self.continuous_tcp_move)
+        
+        # 新增：用于延迟2秒启动连续TCP模式的单次定时器
+        self.start_continuous_tcp_move_timer = QTimer(self)
+        self.start_continuous_tcp_move_timer.setSingleShot(True)
+        self.start_continuous_tcp_move_timer.timeout.connect(self._start_tcp_continuous_mode)
         
         # 一个列表，用于存储用于设置TCP参数的 QLineEdit 控件的引用。
         self.tcp_input_entries = []
@@ -674,19 +689,35 @@ class RobotControlWindow(QMainWindow):
         command = f"MoveRelJ,0,{joint_index},{direction},1;"
         self.tcp_manager.send_command(command)
         self.status_bar.showMessage(f"状态: 关节{joint_index+1} 微调中...")
+    
+    def _start_joint_continuous_mode(self):
+        """延迟2秒后触发，启动关节的连续循环微调模式。"""
+        self._is_continuous_mode_active = True
+        # 立即发送第一个连续指令，然后启动循环定时器
+        self.motor_adjust(self._moving_joint_index, self._moving_direction)
+        self.continuous_move_timer.start(300) # 每300毫秒调用一次 continuous_move。
 
     def start_move(self, joint_index, direction):
-        """开始连续微调关节运动，启动定时器。"""
+        """开始微调关节运动：设置参数，并启动2秒延迟定时器。"""
         self._moving_joint_index = joint_index
         self._moving_direction = direction
-        self.motor_adjust(joint_index, direction)
-        self.continuous_move_timer.start(300)  # 每300毫秒调用一次 continuous_move。
+        self._is_continuous_mode_active = False # 假定非连续模式
+        self.start_continuous_move_timer.start(2000) # 2秒后触发连续模式
 
     def stop_move(self):
-        """停止连续微调关节运动，停止定时器并发送停止指令。"""
+        """停止微调关节运动：停止定时器，并检查是否需要执行单步运动。"""
+        # 停止所有相关定时器
+        self.start_continuous_move_timer.stop()
         self.continuous_move_timer.stop()
+        
+        # 如果2秒内释放按钮（即未进入连续模式），则执行单次运动
+        # 此时 _is_continuous_mode_active 仍为 False
+        if not self._is_continuous_mode_active and self._moving_joint_index != -1:
+            self.motor_adjust(self._moving_joint_index, self._moving_direction)
+
         self._moving_joint_index = -1
         self._moving_direction = BACKWARD
+        self._is_continuous_mode_active = False
         self.status_bar.showMessage("状态: 关节微调停止")
 
     def continuous_move(self):
@@ -728,18 +759,34 @@ class RobotControlWindow(QMainWindow):
         coord_sys = "Tool" if nToolMotion == 1 else "Base"
         self.status_bar.showMessage(f"状态: {coord_sys}坐标系下 Tcp_{axis_labels[nAxisId]} 微调中...")
 
+    def _start_tcp_continuous_mode(self):
+        """延迟2秒后触发，启动TCP的连续循环微调模式。"""
+        self._is_continuous_tcp_mode_active = True
+        # 立即发送第一个连续指令，然后启动循环定时器
+        self.tcp_adjust(self._moving_tcp_index, self._moving_direction)
+        self.continuous_tcp_move_timer.start(300) # 每300毫秒调用一次 continuous_tcp_move。
+
     def start_tcp_move(self, tcp_index, direction):
-        """开始连续微调TCP坐标，启动定时器。"""
+        """开始微调TCP坐标运动：设置参数，并启动2秒延迟定时器。"""
         self._moving_tcp_index = tcp_index
         self._moving_direction = direction
-        self.tcp_adjust(tcp_index, direction)
-        self.continuous_tcp_move_timer.start(50)
+        self._is_continuous_tcp_mode_active = False # 假定非连续模式
+        self.start_continuous_tcp_move_timer.start(2000) # 2秒后触发连续模式
 
     def stop_tcp_move(self):
-        """停止连续微调TCP坐标，停止定时器并发送停止指令。"""
+        """停止微调TCP坐标运动：停止定时器，并检查是否需要执行单步运动。"""
+        # 停止所有相关定时器
+        self.start_continuous_tcp_move_timer.stop()
         self.continuous_tcp_move_timer.stop()
+        
+        # 如果2秒内释放按钮（即未进入连续模式），则执行单次运动
+        # 此时 _is_continuous_tcp_mode_active 仍为 False
+        if not self._is_continuous_tcp_mode_active and self._moving_tcp_index != -1:
+            self.tcp_adjust(self._moving_tcp_index, self._moving_direction)
+
         self._moving_tcp_index = -1
         self._moving_direction = BACKWARD
+        self._is_continuous_tcp_mode_active = False
         self.status_bar.showMessage("状态: TCP微调停止")
     
     def send_init_joint_position_command(self):
