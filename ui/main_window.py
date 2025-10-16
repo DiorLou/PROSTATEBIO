@@ -831,6 +831,8 @@ class RobotControlWindow(QMainWindow):
         """重写窗口关闭事件，确保在程序退出前断开TCP连接并清理资源。"""
         self.tcp_manager.disconnect()
         self.ultrasound_tab.cleanup()
+        # ***** 新增：调用 BeckhoffTab 的清理函数 *****
+        self.beckhoff_tab.cleanup() 
         super().closeEvent(a0)
 
     def create_motor_group(self, layout):
