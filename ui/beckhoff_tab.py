@@ -3,8 +3,8 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, 
     QLabel, QLineEdit, QPushButton, QMessageBox, QGroupBox
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject # 导入 QThread, pyqtSignal, QObject
-import pyads # 确保 pyads 已导入
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject 
+import pyads 
 import threading
 import time
 
@@ -21,13 +21,15 @@ J3_PV   = "MAIN.J3"
 START_BOOL = "MAIN.Position_5"    
 
 # 目标与判据
-DONE_TOL   = 0.5                  # 判定完成阈值
+DONE_TOL   = 0.1                  # 判定完成阈值
 READ_T     = pyads.PLCTYPE_LREAL
 WRITE_T    = pyads.PLCTYPE_LREAL
 # ----------------------------------------------------
 
-# 从 WriteTest.py 拷贝 ADS 线程安全封装类
+# ADS class and ADSThread class remain unchanged.
+
 class ADS:
+# ... (ADS class body remains unchanged) ...
     def __init__(self, ams, port, ip):
         self._c = pyads.Connection(ams, port, ip)
         self.connected = False
@@ -64,8 +66,8 @@ class ADS:
         with self.lock:
             self._c.write_by_name(name, bool(val), pyads.PLCTYPE_BOOL)
 
-# ... (在 BeckhoffTab 类之前添加 ADSThread)
 class ADSThread(QThread):
+# ... (ADSThread class body remains unchanged) ...
     """一个独立的线程用于执行 ADS 运动和监控到位状态。"""
     movement_status_update = pyqtSignal(str)
     
@@ -88,18 +90,6 @@ class ADSThread(QThread):
             self.movement_status_update.emit("运动启动，等待到位...")
             
             # 3. 监控到位状态（此处简化为等待固定时间）
-            # 注意：WriteTest.py 中是通过轮询线程实时监控 Pos[2]/Pos[3] 来判定到位。
-            # 在 PyQt 中，我们通常会在主窗口的 ADS 轮询线程中执行这个监控。
-            # 为了实现您要求的“一键触发”，我们在这里只发送启动命令。
-            # PLC 侧应该配置为接收到 True 后立即启动，并且在接收到 False 后停止。
-            
-            # ***************************************************************
-            # 警告：要实现 WriteTest.py 的自动回落功能，需要一个持续的轮询线程
-            # 来读取实际位置并判断 DONE_TOL。由于您只要求实现“触发”功能，
-            # 我们假设 PLC 侧在运动结束后**不会**自动将 Position_5 拉回 False。
-            # 并且我们现在只发送启动信号，不在这里实现复杂的到位判定。
-            # ***************************************************************
-            
             self.movement_status_update.emit("J2/J3 目标和启动信号已发送。请手动停止 Position_5。")
             
         except Exception as e:
@@ -108,6 +98,7 @@ class ADSThread(QThread):
     def stop(self):
         self.is_running = False
         self.wait()
+
 
 class BeckhoffTab(QWidget):
     """
@@ -130,6 +121,10 @@ class BeckhoffTab(QWidget):
         self.latest_j2 = 0.0
         self.latest_j3 = 0.0
         
+        # ***** 用户新增的按钮实例 *****
+        self.reset_j2j3_btn = None 
+        # ******************************
+
         self.init_ui()
         self.setup_connections()
 
@@ -139,7 +134,7 @@ class BeckhoffTab(QWidget):
 
         # -----------------------------------------------------------------
         # 1. 穿刺针 Vector 定位模块
-        # ... (保持不变) ...
+        # ... (unchanged) ...
         # -----------------------------------------------------------------
         vector_group = QGroupBox("穿刺针Vector定位 (逆运动学)")
         vector_layout = QVBoxLayout(vector_group)
@@ -198,11 +193,18 @@ class BeckhoffTab(QWidget):
 
         # J2/J3 触发按钮行
         trigger_layout = QHBoxLayout()
-        # ***** 新增按钮 *****
+        
+        # ***** 新增按钮 (重置 J2, J3) *****
+        self.reset_j2j3_btn = QPushButton("重置 J2, J3")
+        self.reset_j2j3_btn.setEnabled(False)
+        
+        # ***** 现有按钮 (运动到计算出的 J2, J3) *****
         self.trigger_j2j3_btn = QPushButton("运动到计算出的 J2, J3")
         self.trigger_j2j3_btn.setEnabled(False) 
         
-        trigger_layout.addWidget(self.trigger_j2j3_btn)
+        # 按用户要求，将重置按钮放在左边
+        trigger_layout.addWidget(self.reset_j2j3_btn) 
+        trigger_layout.addWidget(self.trigger_j2j3_btn) 
         beckhoff_comm_layout.addLayout(trigger_layout)
         
         # 新增一个 QLabel 用于显示运动状态
@@ -218,6 +220,8 @@ class BeckhoffTab(QWidget):
         self.connect_ads_btn.clicked.connect(self.connect_ads)
         self.disconnect_ads_btn.clicked.connect(self.disconnect_ads)
         self.trigger_j2j3_btn.clicked.connect(self.trigger_j2j3_move)
+        # ***** 连接新增的按钮 *****
+        self.reset_j2j3_btn.clicked.connect(self.trigger_j2j3_reset)
 
     def connect_ads(self):
         """尝试连接到 ADS。"""
@@ -226,6 +230,8 @@ class BeckhoffTab(QWidget):
         self.connect_ads_btn.setEnabled(not ok)
         self.disconnect_ads_btn.setEnabled(ok)
         self.trigger_j2j3_btn.setEnabled(ok)
+        # ***** 更新新增按钮的状态 *****
+        self.reset_j2j3_btn.setEnabled(ok)
         
     def disconnect_ads(self):
         """断开 ADS 连接。"""
@@ -241,10 +247,13 @@ class BeckhoffTab(QWidget):
         self.connect_ads_btn.setEnabled(True)
         self.disconnect_ads_btn.setEnabled(False)
         self.trigger_j2j3_btn.setEnabled(False)
+        # ***** 更新新增按钮的状态 *****
+        self.reset_j2j3_btn.setEnabled(False)
 
 
     def calculate_joint_values(self):
         """读取 Vector 值，计算 J2 和 J3 关节角，并显示结果。"""
+        # ... (calculate_joint_values body remains unchanged) ...
         try:
             x = float(self.vector_inputs[0].text())
             y = float(self.vector_inputs[1].text())
@@ -290,6 +299,7 @@ class BeckhoffTab(QWidget):
 
     def trigger_j2j3_move(self):
         """触发 J2/J3 关节运动（相当于 WriteTest.py 中的 start_move）。"""
+        # ... (trigger_j2j3_move body remains unchanged) ...
         if not self.ads_client.connected:
             QMessageBox.warning(self, "警告", "ADS 未连接。请先连接 Beckhoff PLC。")
             return
@@ -307,8 +317,32 @@ class BeckhoffTab(QWidget):
         self.ads_thread = ADSThread(self.ads_client, self.latest_j2, self.latest_j3)
         self.ads_thread.movement_status_update.connect(self.update_movement_status)
         self.ads_thread.start()
+
+    # ***** 用户要求新增的方法 *****
+    def trigger_j2j3_reset(self):
+        """触发 J2/J3 关节运动到预设的重置位置 (5.18, 9.25)。"""
+        if not self.ads_client.connected:
+            QMessageBox.warning(self, "警告", "ADS 未连接。请先连接 Beckhoff PLC。")
+            return
+            
+        if self.ads_thread and self.ads_thread.isRunning():
+            QMessageBox.warning(self, "警告", "正在执行其他 ADS 任务，请稍候。")
+            return
+
+        # 使用预设的重置值
+        RESET_J2 = 76.46
+        RESET_J3 = 16.34
         
-    # 确保在 tab 关闭时断开 ADS 连接
+        # 启动 ADS 写入线程
+        self.ads_thread = ADSThread(self.ads_client, RESET_J2, RESET_J3)
+        self.ads_thread.movement_status_update.connect(self.update_movement_status)
+        self.ads_thread.start()
+        # 立即更新状态栏
+        parent_window = self.parent()
+        if hasattr(parent_window, 'status_bar'):
+             parent_window.status_bar.showMessage(f"状态: 已发送重置指令: J2={RESET_J2:.2f}, J3={RESET_J3:.2f}。")
+        # ******************************
+        
     def cleanup(self):
         """在标签页关闭或主窗口关闭时调用，用于清理资源。"""
         self.disconnect_ads()
