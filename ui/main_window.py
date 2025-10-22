@@ -31,6 +31,9 @@ class RobotControlWindow(QMainWindow):
     D_PARAMS = ['x0 - 184.845', 545.517, 0, 'x3 + 60.7']
     THETA_PARAMS = [30, 'x1', 'x2 + 85.96', 0]
     
+    # 新增：FSM Standby 状态码
+    FSM_STANDBY_CODE = 33 
+    
     def __init__(self):
         super().__init__()
         # 设置窗口标题。
@@ -109,6 +112,12 @@ class RobotControlWindow(QMainWindow):
         self.power_state = 0  # 机器人的电源状态：0为未上电，1为已上电。
         self.enable_state = 0 # 机器人的使能状态：0为未使能，1为已使能。
         
+        # 新增：FSM 轮询状态标志和定时器
+        self.waiting_for_fsm_ok = False
+        self.fsm_poll_timer = QTimer(self)
+        self.fsm_poll_timer.setSingleShot(True)
+        self.fsm_poll_timer.timeout.connect(self.request_fsm_status)
+
         # 实例化 TCPManager 类，所有通信逻辑都通过它来调用。
         self.tcp_manager = TCPManager()
         
@@ -255,6 +264,46 @@ class RobotControlWindow(QMainWindow):
         self.status_bar.showMessage("状态: 已连接到机器人" if is_connected else "状态: 准备就绪")
         if not is_connected:
             self.ur_stop_btn.setEnabled(False) # 断开连接时禁用急停按钮
+            # 断开连接时停止 FSM 轮询
+            self.waiting_for_fsm_ok = False
+            self.fsm_poll_timer.stop()
+
+
+    def request_fsm_status(self):
+        """Sends the command to read the current FSM status."""
+        if self.tcp_manager.is_connected and self.waiting_for_fsm_ok:
+            self.tcp_manager.send_command("ReadCurFSM,0;")
+        elif self.waiting_for_fsm_ok:
+            # Connection lost while waiting
+            self.waiting_for_fsm_ok = False
+            self.status_bar.showMessage("警告: 等待FSM状态时连接已断开。")
+
+    def handle_fsm_message(self, message):
+        """Parses 'ReadCurFSM' message and checks for standby state."""
+        if not self.waiting_for_fsm_ok:
+            return # Not waiting for a specific move completion FSM check
+
+        parts = message.strip(';').strip(',').split(',')
+        if len(parts) >= 3 and parts[1] == 'OK':
+            try:
+                fsm_state = int(parts[2])
+                
+                if fsm_state == self.FSM_STANDBY_CODE:
+                    # FSM is Standby (33) -> Continue rotation
+                    self.waiting_for_fsm_ok = False
+                    self.status_bar.showMessage("状态: 机器人已就绪 (FSM=33)。继续旋转。")
+                    self.ultrasound_tab.continue_rotation()
+                else:
+                    # FSM is not Standby -> Poll again after delay
+                    self.status_bar.showMessage(f"状态: 运动指令完成，等待机器人就绪 (FSM={fsm_state})。")
+                    self.fsm_poll_timer.start(200) # Poll every 200ms
+            except (ValueError, IndexError):
+                self.log_message(f"警告: 无法解析 ReadCurFSM 消息: {message}")
+                self.waiting_for_fsm_ok = False
+        else:
+             self.log_message(f"警告: 接收到无效的 ReadCurFSM 消息: {message}")
+             self.waiting_for_fsm_ok = False
+
 
     def handle_incoming_message(self, message):
         """
@@ -278,11 +327,20 @@ class RobotControlWindow(QMainWindow):
             self.handle_emergency_info_message(message)
         elif message.startswith("ReadOverride"):
             self.handle_override_message(message)
+        elif message.startswith("ReadCurFSM"): # NEW FSM handler
+            self.log_message(message)
+            self.handle_fsm_message(message)
         elif message.startswith("SetTCPByName"):
             self.log_message(message)
         elif message.startswith("MoveRelJ,OK"):
-            # 如果是，通知 ultrasound_tab 继续下一步操作
-            self.ultrasound_tab.continue_rotation()
+            # 如果是，检查是否处于旋转捕获模式
+            if self.ultrasound_tab.is_rotating:
+                # 运动完成，开始等待 FSM 状态变为 Standby (33)
+                self.waiting_for_fsm_ok = True
+                self.request_fsm_status() # Send first FSM request immediately
+            else:
+                 # 不是旋转捕获模式，但收到运动完成指令，可能是其他运动
+                 self.log_message("系统: 收到 MoveRelJ,OK, 但未在旋转捕获模式。")
         elif message.startswith("MoveRelJ"):
             # 说明指令未完成，开启报错
             QMessageBox.critical(self, "关节转动错误", "检查状态机是否空闲")
