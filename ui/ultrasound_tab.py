@@ -4,9 +4,12 @@ import os
 import numpy as np
 import time
 from datetime import datetime
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QMessageBox, QSlider, QFileDialog
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QMessageBox, QSlider, QFileDialog, QLineEdit
 from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QImage, QPixmap
+
+# Constants for motion direction (来自 main_window.py)
+FORWARD = 1
+BACKWARD = 0
 
 class UltrasoundTab(QWidget):
     # 默认裁剪常量
@@ -47,18 +50,21 @@ class UltrasoundTab(QWidget):
         self.tcp_manager = tcp_manager
         self.is_rotating = False
         self.current_rotation_step = 0
+        self.total_rotation_steps = 0 # 新增：总旋转步数
         self.save_folder = ""
 
-        # 新增: 旋转按钮
-        self.left_45_btn = QPushButton("超声探头左转45度")
-        self.right_90_btn = QPushButton("超声探头右转90度")
+        # 新增: 旋转范围输入框和按钮
+        self.rotation_range_input = QLineEdit("45") # 默认值 45
+        self.left_x_btn = QPushButton("超声探头左转x度")
+        self.right_2x_btn = QPushButton("超声探头右转2x度")
 
         self.init_ui()
         self.setup_connections()
 
     def _send_next_rotation_command(self):
         """发送下一个 1 度旋转命令，由 QTimer 延迟调用。"""
-        command = "MoveRelJ,0,5,1,1;"
+        # Direction FORWARD (1) is used for the continuous right turn
+        command = f"MoveRelJ,0,5,{FORWARD},1;" 
         self.tcp_manager.send_command(command)
 
     def init_ui(self):
@@ -114,6 +120,7 @@ class UltrasoundTab(QWidget):
 
         layout.addWidget(crop_group)
 
+        # --- 按钮和旋转控制布局 ---
         btn_layout = QHBoxLayout()
         self.start_btn.setFixedSize(120, 40)
         self.stop_btn.setFixedSize(120, 40)
@@ -121,13 +128,17 @@ class UltrasoundTab(QWidget):
         self.save_btn.setFixedSize(120, 40)
         self.save_btn.setEnabled(False)
         
-        # 新增: 旋转按钮
-        self.left_45_btn.setFixedSize(120, 40)
-        self.right_90_btn.setFixedSize(120, 40)
-        self.left_45_btn.setFixedSize(155, 40)
-        self.right_90_btn.setFixedSize(155, 40)
-        self.left_45_btn.setEnabled(False)
-        self.right_90_btn.setEnabled(False)
+        # 旋转范围输入布局
+        rotation_input_layout = QHBoxLayout()
+        rotation_input_layout.addWidget(QLabel("转动范围 x 度:"))
+        self.rotation_range_input.setFixedWidth(50) 
+        rotation_input_layout.addWidget(self.rotation_range_input)
+        
+        # 旋转按钮设置
+        self.left_x_btn.setFixedSize(155, 40)
+        self.right_2x_btn.setFixedSize(155, 40)
+        self.left_x_btn.setEnabled(False)
+        self.right_2x_btn.setEnabled(False)
 
         btn_layout.addStretch()
         btn_layout.addWidget(self.start_btn)
@@ -135,10 +146,14 @@ class UltrasoundTab(QWidget):
         btn_layout.addWidget(self.stop_btn)
         btn_layout.addSpacing(10)
         btn_layout.addWidget(self.save_btn)
-        btn_layout.addSpacing(20) # 增加间距
-        btn_layout.addWidget(self.left_45_btn)
+        
+        # 添加旋转控制组
+        btn_layout.addSpacing(20) 
+        btn_layout.addLayout(rotation_input_layout) 
         btn_layout.addSpacing(10)
-        btn_layout.addWidget(self.right_90_btn)
+        btn_layout.addWidget(self.left_x_btn)
+        btn_layout.addSpacing(10)
+        btn_layout.addWidget(self.right_2x_btn)
         btn_layout.addStretch()
         
         layout.addLayout(btn_layout)
@@ -157,9 +172,9 @@ class UltrasoundTab(QWidget):
         self.top_slider.valueChanged.connect(self.update_crop_value)
         self.bottom_slider.valueChanged.connect(self.update_crop_value)
         
-        # 新增: 机器人旋转按钮的连接
-        self.left_45_btn.clicked.connect(self.rotate_left_45)
-        self.right_90_btn.clicked.connect(self.rotate_and_capture_90)
+        # 机器人旋转按钮的连接 (使用新的方法)
+        self.left_x_btn.clicked.connect(self.rotate_left_x)
+        self.right_2x_btn.clicked.connect(self.rotate_and_capture_2x)
 
     def update_crop_value(self, value):
         """更新裁剪滑块的标签文本，并确保上下左右边界的逻辑正确性。"""
@@ -225,8 +240,8 @@ class UltrasoundTab(QWidget):
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.save_btn.setEnabled(True)
-        self.left_45_btn.setEnabled(True)
-        self.right_90_btn.setEnabled(True)
+        self.left_x_btn.setEnabled(True)
+        self.right_2x_btn.setEnabled(True)
         self.image_label.setText("正在捕获图像...")
 
     def stop_capture(self):
@@ -238,8 +253,8 @@ class UltrasoundTab(QWidget):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.save_btn.setEnabled(False)
-        self.left_45_btn.setEnabled(False)
-        self.right_90_btn.setEnabled(False)
+        self.left_x_btn.setEnabled(False)
+        self.right_2x_btn.setEnabled(False)
         self.image_label.setText("已停止捕获。")
     
     def update_frame(self):
@@ -298,93 +313,43 @@ class UltrasoundTab(QWidget):
     def cleanup(self):
         """在窗口关闭时进行清理。"""
         self.stop_capture()
-
-    def rotate_left_45(self):
-        """发送指令，使超声探头左转45度。"""
-        # MoveRelJ, nRbtID, nAxisId, nDirection, dDistance;
-        # nRbtID=0, nAxisId=5 (关节六), nDirection=0 (反向), dDistance=45
-        command = "MoveRelJ,0,5,0,45;"
-        if self.tcp_manager and self.tcp_manager.is_connected:
-            self.tcp_manager.send_command(command)
-            QMessageBox.information(self, "指令已发送", "已发送左转45度指令。")
-        else:
-            QMessageBox.warning(self, "连接错误", "未连接到机器人或TCP管理器。")
-
-    def rotate_and_capture_90(self):
-        """开始90度右转，并每1度保存一张图像。"""
-        if not self.tcp_manager or not self.tcp_manager.is_connected:
-            QMessageBox.warning(self, "连接错误", "未连接到机器人或TCP管理器。")
-            return
         
-        # 禁用按钮防止重复点击
-        self.right_90_btn.setEnabled(False)
-        self.left_45_btn.setEnabled(False)
-        self.start_btn.setEnabled(False)
-        self.stop_btn.setEnabled(False)
+    def _reset_rotation_buttons(self):
+        """重新启用旋转相关的按钮。"""
+        self.right_2x_btn.setEnabled(True)
+        self.left_x_btn.setEnabled(True)
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(True)
 
-        # 1. 定义 'image' 根目录
-        base_dir = os.path.join(os.getcwd(), "image")
-        
-        # 2. 只有在 'image' 目录不存在时才创建它和 .gitignore 文件
-        if not os.path.isdir(base_dir):
-            try:
-                os.makedirs(base_dir)
-            except OSError as e:
-                QMessageBox.critical(self, "文件系统错误", f"无法创建根保存目录 ('image'): {e}")
-                self.right_90_btn.setEnabled(True)
-                self.left_45_btn.setEnabled(True)
-                self.start_btn.setEnabled(True)
-                self.stop_btn.setEnabled(True)
-                return
-
-            # 2a. 创建 .gitignore 文件 (只在首次创建目录时执行)
-            gitignore_path = os.path.join(base_dir, ".gitignore")
-            try:
-                # 写入一个简单的规则以忽略图像文件
-                with open(gitignore_path, 'w') as f:
-                    f.write("# 忽略所有超声图像数据 (由程序自动生成)\n")
-                    # 忽略所有以 ultrasound_images_ 开头的文件夹
-                    f.write("ultrasound_images_*/\n") 
-            except Exception as e:
-                # 这是一个非关键错误，可以打印警告但继续
-                print(f"警告: 无法创建 .gitignore 文件: {e}")
-        
-        # 3. 创建带有时间戳的子文件夹，并将其保存在 'image' 目录中
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.save_folder = os.path.join(base_dir, f"ultrasound_images_{timestamp}")
-        
+    def _get_rotation_x_value(self):
+        """从输入框获取旋转范围 x 的值，并进行校验。（已更新：必须是正整数）"""
         try:
-            os.makedirs(self.save_folder, exist_ok=True)
-        except OSError as e:
-            QMessageBox.critical(self, "文件系统错误", f"无法创建保存目录: {e}")
-            # 重新启用按钮
-            self.right_90_btn.setEnabled(True)
-            self.left_45_btn.setEnabled(True)
-            self.start_btn.setEnabled(True)
-            self.stop_btn.setEnabled(True)
-            return
+            x_text = self.rotation_range_input.text()
+            # 尝试转换为整数
+            x = int(x_text) 
+            
+            # 检查是否为正整数 (大于 0)
+            if x <= 0:
+                QMessageBox.warning(self, "输入错误", "转动范围 x 必须是正整数 (大于 0)。")
+                return None
+            return x
+        except ValueError:
+            # 如果转换 int 失败，说明不是整数 (可能是小数或非数字字符)
+            QMessageBox.critical(self, "输入错误", "转动范围 x 必须是有效的正整数！")
+            return None
 
-        self.current_rotation_step = 0
-        self.is_rotating = True
-
-        # 立即发送第一条旋转指令
-        command = "MoveRelJ,0,5,1,1;"
-        self.tcp_manager.send_command(command)
-        QMessageBox.information(self, "任务开始", "超声探头开始右转并捕捉图像。")
-        
-    def continue_rotation(self):
-        """在接收到机器人反馈后，继续旋转并保存图像。"""
-        if not self.is_rotating:
-            return
-
-        # 🌟 修复点 2: 使用存储的 self.main_window 属性
-        # 而不是 self.parent()，以确保获取到 RobotControlWindow 实例
+    def _save_frame_at_step(self, step_degree):
+        """根据当前机器臂姿态保存图像，并以当前旋转度数命名。"""
         robot_control_window = self.main_window
         if not robot_control_window:
             print("错误：无法获取主窗口实例。")
-            return
-            
-        pose = robot_control_window.latest_tool_pose
+            return False
+
+        # 确保 latest_tool_pose 在主窗口中存在
+        if not hasattr(robot_control_window, 'latest_tool_pose'):
+             pose = [0.0] * 6
+        else:
+             pose = robot_control_window.latest_tool_pose
         
         # 格式化工具端位姿: (x,y,z,Rx,Ry,Rz)
         if pose and len(pose) == 6:
@@ -393,37 +358,124 @@ class UltrasoundTab(QWidget):
             pose_str = "POSE_NA"
             print("警告: 无法获取有效的工具端位姿数据。")
 
-        # 构造新的文件名: (旋转度数) + (工具端位姿) + .png
-        # 旋转度数使用三位零填充
-        rotation_step_str = f"{self.current_rotation_step:03d}"
-        
-        # 拼接文件名: "000(x,y,z,Rx,Ry,Rz).png"
+        # 构造新的文件名: (旋转度数) + (机器臂末端位姿) + .png
+        rotation_step_str = f"{step_degree:03d}"
         new_filename = f"{rotation_step_str}{pose_str}.png"
-        
         image_path = os.path.join(self.save_folder, new_filename)
 
         # 立即保存当前图像
         if self.current_frame is not None:
             try:
                 cv2.imwrite(image_path, self.current_frame)
-                # 打印新的文件名
                 print(f"已保存图像: {image_path}")
+                return True
             except Exception as e:
                 print(f"保存图像时出错: {e}")
+                return False
+        return False
 
-        # 增加旋转步数
-        self.current_rotation_step += 1
-
-        if self.current_rotation_step < 90:
-            # 继续发送下一条旋转指令
-            # 🌟 核心修改: 使用 QTimer.singleShot 实现 300ms 延时 (非阻塞)
-            # 300 毫秒后，将执行 self._send_next_rotation_command
-            QTimer.singleShot(300, self._send_next_rotation_command)            
+    def rotate_left_x(self):
+        """发送指令，使超声探头左转 x 度。"""
+        x = self._get_rotation_x_value()
+        if x is None:
+            return
+            
+        # MoveRelJ, nRbtID, nAxisId, nDirection, dDistance;
+        # nRbtID=0, nAxisId=5 (关节六), nDirection=0 (反向), dDistance=x
+        command = f"MoveRelJ,0,5,{BACKWARD},{x};"
+        if self.tcp_manager and self.tcp_manager.is_connected:
+            self.tcp_manager.send_command(command)
+            QMessageBox.information(self, "指令已发送", f"已发送左转{x}度指令。")
         else:
+            QMessageBox.warning(self, "连接错误", "未连接到机器人或TCP管理器。")
+
+    def rotate_and_capture_2x(self):
+        """开始 2x 度右转，并每1度保存一张图像。（已更新：先保存初始图片）"""
+        x = self._get_rotation_x_value()
+        if x is None:
+            return
+            
+        total_rotation = 2 * x # Total rotation is 2x
+        
+        if not self.tcp_manager or not self.tcp_manager.is_connected:
+            QMessageBox.warning(self, "连接错误", "未连接到机器人或TCP管理器。")
+            return
+        
+        # 禁用按钮防止重复点击
+        self.right_2x_btn.setEnabled(False)
+        self.left_x_btn.setEnabled(False)
+        self.start_btn.setEnabled(False)
+        self.stop_btn.setEnabled(False)
+
+        # 1. 定义 'image' 根目录并创建子文件夹
+        base_dir = os.path.join(os.getcwd(), "image")
+        if not os.path.isdir(base_dir):
+            try:
+                os.makedirs(base_dir)
+            except OSError as e:
+                QMessageBox.critical(self, "文件系统错误", f"无法创建根保存目录 ('image'): {e}")
+                self._reset_rotation_buttons()
+                return
+
+            gitignore_path = os.path.join(base_dir, ".gitignore")
+            try:
+                with open(gitignore_path, 'w') as f:
+                    f.write("# 忽略所有超声图像数据 (由程序自动生成)\n")
+                    f.write("ultrasound_images_*/\n") 
+            except Exception as e:
+                print(f"警告: 无法创建 .gitignore 文件: {e}")
+
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.save_folder = os.path.join(base_dir, f"ultrasound_images_{timestamp}")
+        
+        try:
+            os.makedirs(self.save_folder, exist_ok=True)
+        except OSError as e:
+            QMessageBox.critical(self, "文件系统错误", f"无法创建保存目录: {e}")
+            self._reset_rotation_buttons()
+            return
+
+        # 2. 初始化步数变量
+        self.total_rotation_steps = int(total_rotation) # 存储总步数 (2x)
+        self.current_rotation_step = 0
+        self.is_rotating = True
+        
+        # 3. [新增] 立即保存第一张图片 (0度)
+        if not self._save_frame_at_step(0):
+            QMessageBox.critical(self, "保存错误", "无法在初始位置保存图像，请检查摄像头或等待图像更新。")
+            self._reset_rotation_buttons()
+            return
+
+        # 4. 发送第一条旋转指令 (1度)
+        command = f"MoveRelJ,0,5,{FORWARD},1;" # Direction: FORWARD=1 (Right turn)
+        QTimer.singleShot(300, lambda: self.tcp_manager.send_command(command))
+        
+        QMessageBox.information(self, "任务开始", f"超声探头开始右转{total_rotation}度并捕捉图像。")
+        
+    def continue_rotation(self):
+        """在接收到机器人反馈后，继续旋转并保存图像。（逻辑已更新，使用 total_rotation_steps）"""
+        if not self.is_rotating:
+            return
+
+        # 1. 移动完成后，增加旋转步数 (代表机器人现在的位置)
+        self.current_rotation_step += 1 # Now 1, 2, 3...
+
+        # 2. 检查是否达到总旋转步数 (2x)
+        if self.current_rotation_step < self.total_rotation_steps:
+            # 保存当前位置的图像
+            self._save_frame_at_step(self.current_rotation_step)
+            
+            # 继续发送下一条旋转指令 (1度)
+            command = f"MoveRelJ,0,5,{FORWARD},1;" # Direction: FORWARD=1
+            
+            # 使用 QTimer.singleShot 实现 300ms 延时 (非阻塞)
+            QTimer.singleShot(300, lambda: self.tcp_manager.send_command(command))            
+        else:
+            # 保存最后一张图像
+            self._save_frame_at_step(self.current_rotation_step)
+            
             self.is_rotating = False
             # 重新启用按钮
-            self.right_90_btn.setEnabled(True)
-            self.left_45_btn.setEnabled(True)
-            self.start_btn.setEnabled(True)
-            self.stop_btn.setEnabled(True)
-            QMessageBox.information(self, "任务完成", f"已完成右转90度并保存了{self.current_rotation_step}张图像。")
+            self._reset_rotation_buttons()
+            QMessageBox.information(self, "任务完成", f"已完成右转{self.total_rotation_steps}度并保存了{self.total_rotation_steps}张图像。")
