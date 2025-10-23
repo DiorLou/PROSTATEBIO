@@ -118,7 +118,8 @@ class RobotControlWindow(QMainWindow):
             self.ALPHA_PARAMS, 
             self.D_PARAMS, 
             self.THETA_PARAMS, 
-            self.VARIABLE_NAMES
+            self.VARIABLE_NAMES,
+            angle_AOC=np.pi/12
         )
         
         # 将 tcp_manager 和父级实例 (self) 传递给 UltrasoundTab
