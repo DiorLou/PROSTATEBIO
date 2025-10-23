@@ -442,6 +442,7 @@ class UltrasoundTab(QWidget):
         self.is_rotating = True
         
         # 3. [新增] 立即保存第一张图片 (0度)
+        # 注意: 第一次保存无需等待姿态更新，因为此时姿态已经是 MoveRelJ 之前的
         if not self._save_frame_at_step(0):
             QMessageBox.critical(self, "保存错误", "无法在初始位置保存图像，请检查摄像头或等待图像更新。")
             self._reset_rotation_buttons()
@@ -449,33 +450,46 @@ class UltrasoundTab(QWidget):
 
         # 4. 发送第一条旋转指令 (1度)
         command = f"MoveRelJ,0,5,{FORWARD},1;" # Direction: FORWARD=1 (Right turn)
-        QTimer.singleShot(300, lambda: self.tcp_manager.send_command(command))
+        QTimer.singleShot(100, lambda: self.tcp_manager.send_command(command))
         
         QMessageBox.information(self, "任务开始", f"超声探头开始右转{total_rotation}度并捕捉图像。")
-        
-    def continue_rotation(self):
-        """在接收到机器人反馈后，继续旋转并保存图像。（逻辑已更新，使用 total_rotation_steps）"""
+
+    def _continue_rotation_after_delay(self):
+        """在等待 300ms 后执行保存图像和发送下一条指令的步骤。"""
         if not self.is_rotating:
             return
 
-        # 1. 移动完成后，增加旋转步数 (代表机器人现在的位置)
-        self.current_rotation_step += 1 # Now 1, 2, 3...
-
         # 2. 检查是否达到总旋转步数 (2x)
         if self.current_rotation_step < self.total_rotation_steps:
-            # 保存当前位置的图像
+            # 2a. 保存当前位置的图像 (此时 latest_tool_pose 应该是最新的)
             self._save_frame_at_step(self.current_rotation_step)
             
-            # 继续发送下一条旋转指令 (1度)
+            # 2b. 继续发送下一条旋转指令 (1度)
             command = f"MoveRelJ,0,5,{FORWARD},1;" # Direction: FORWARD=1
             
-            # 使用 QTimer.singleShot 实现 300ms 延时 (非阻塞)
-            QTimer.singleShot(300, lambda: self.tcp_manager.send_command(command))            
+            # 使用 QTimer.singleShot 实现 300ms 延时 (非阻塞) - 确保 MoveRelJ,OK; 消息不会立即返回
+            QTimer.singleShot(100, lambda: self.tcp_manager.send_command(command))            
         else:
-            # 保存最后一张图像
+            # 2c. 保存最后一张图像
             self._save_frame_at_step(self.current_rotation_step)
             
             self.is_rotating = False
             # 重新启用按钮
             self._reset_rotation_buttons()
             QMessageBox.information(self, "任务完成", f"已完成右转{self.total_rotation_steps}度并保存了{self.total_rotation_steps}张图像。")
+
+        
+    def continue_rotation(self):
+        """
+        在接收到机器人反馈后，继续旋转并保存图像。（逻辑已更新，使用 total_rotation_steps）
+        在保存图像前引入 300ms 延时，确保姿态数据最新。
+        """
+        if not self.is_rotating:
+            return
+
+        # 1. 移动完成后，增加旋转步数 (代表机器人现在的位置)
+        self.current_rotation_step += 1 # Now 1, 2, 3...
+        
+        # --- 引入非阻塞延时 (300ms)，等待最新的机器人姿态更新 ---
+        delay_ms = 500
+        QTimer.singleShot(delay_ms, self._continue_rotation_after_delay)
