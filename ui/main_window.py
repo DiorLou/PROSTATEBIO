@@ -71,6 +71,7 @@ class RobotControlWindow(QMainWindow):
         self.init_joint_pos_btn = None # 新增初始化关节按钮成员变量
         
         self.set_tcp_o_btn = None
+        self.set_tcp_p_btn = None  # <--- 新增: TCP_P 按钮成员变量
         self.set_tcp_tip_btn = None
         self.read_tcp_o_btn = None
         self.read_tcp_tip_btn = None
@@ -88,7 +89,7 @@ class RobotControlWindow(QMainWindow):
         # 将定时器的超时信号连接到 continuous_move 方法。
         self.continuous_move_timer.timeout.connect(self.continuous_move)
         
-        # 新增：用于延迟2秒启动连续模式的单次定时器
+        # 新增用于延迟2秒启动连续模式的单次定时器
         self.start_continuous_move_timer = QTimer(self)
         self.start_continuous_move_timer.setSingleShot(True)
         self.start_continuous_move_timer.timeout.connect(self._start_joint_continuous_mode)
@@ -204,6 +205,7 @@ class RobotControlWindow(QMainWindow):
         self.read_cur_tcp_btn.clicked.connect(self.request_cur_tcp_info)
         self.read_tcp_o_btn.clicked.connect(self.read_tcp_o)
         self.set_tcp_o_btn.clicked.connect(self.set_tcp_o)
+        self.set_tcp_p_btn.clicked.connect(self.set_tcp_p) # <--- 新增连接
         self.read_tcp_tip_btn.clicked.connect(self.read_tcp_tip)
         self.set_tcp_tip_btn.clicked.connect(self.set_tcp_tip)
         self.get_suitable_tcp_btn.clicked.connect(self.get_suitable_tcp)
@@ -1181,11 +1183,13 @@ class RobotControlWindow(QMainWindow):
         button_layout = QHBoxLayout()
         self.set_cur_tcp_btn = QPushButton("设置Cur TCP")
         self.set_tcp_o_btn = QPushButton("切换TCP_O")
+        self.set_tcp_p_btn = QPushButton("切换TCP_P") # <--- 新增按钮
         self.set_tcp_tip_btn = QPushButton("切换TCP_tip")
         self.get_suitable_tcp_btn = QPushButton("获取合适的Tar_Tcp_Z以及更新O点位置")
         
         button_layout.addWidget(self.set_cur_tcp_btn)
         button_layout.addWidget(self.set_tcp_o_btn)
+        button_layout.addWidget(self.set_tcp_p_btn) # <--- 插入新按钮
         button_layout.addWidget(self.set_tcp_tip_btn)
         button_layout.addWidget(self.get_suitable_tcp_btn)
         
@@ -1199,6 +1203,12 @@ class RobotControlWindow(QMainWindow):
         self.log_message("SetTCPByName,0,TCP_O;")
         self.tcp_manager.send_command("SetTCPByName,0,TCP_O;")
         self.status_bar.showMessage("状态: 已发送设置TCP_O的命令。")
+
+    def set_tcp_p(self):
+        """发送设置TCP_P的命令。"""
+        self.log_message("SetTCPByName,0,TCP_P;")
+        self.tcp_manager.send_command("SetTCPByName,0,TCP_P;")
+        self.status_bar.showMessage("状态: 已发送设置TCP_P的命令。")
 
     def set_tcp_tip(self):
         """发送设置TCP_tip的命令。"""
