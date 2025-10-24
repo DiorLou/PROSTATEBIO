@@ -924,45 +924,77 @@ class RobotControlWindow(QMainWindow):
         group = QGroupBox("机器人工具端实时状态")
         group_layout = QGridLayout(group)
         self.tool_pose_labels = {}
-        # 定义工具端姿态参数。
+        # 定义工具端姿态参数。格式: (基础标签文本, 变量键, 附加标签文本/None)
         tool_pose_info = [
-            ("Tcp_X", "Tcp_X"), ("Tcp_Y", "Tcp_Y"), ("Tcp_Z", "Tcp_Z"),
-            ("Tcp_Rx", "Tcp_Rx"), ("Tcp_Ry", "Tcp_Ry"), ("Tcp_Rz", "Tcp_Rz")
+            ("Tcp_X", "Tcp_X", None), 
+            ("Tcp_Y", "Tcp_Y", None), 
+            ("Tcp_Z", "Tcp_Z", None),
+            ("Tcp_Rx", "Tcp_Rx", "Roll"), 
+            ("Tcp_Ry", "Tcp_Ry", "Pitch"), 
+            ("Tcp_Rz", "Tcp_Rz", "Yaw")
         ]
-        for i, (label_text, var_key) in enumerate(tool_pose_info):
-            row = 0 if i < 3 else 2
-            col = i % 3 * 2
-            # 添加标签和显示值。
-            label = QLabel(label_text)
+        
+        # Row 索引: 0 (X, Y, Z标签/值), 1 (X, Y, Z按钮), 2 (Rx, Ry, Rz标签/值), 3 (Rx, Ry, Rz按钮)
+        for i, (base_label_text, var_key, additional_label_text) in enumerate(tool_pose_info):
+            
+            # 确定行索引
+            if i < 3: # X, Y, Z (位置参数)
+                row_value = 0
+                row_buttons = 1
+            else: # Rx, Ry, Rz (姿态参数)
+                row_value = 2
+                row_buttons = 3 
+            
+            col_start = i % 3 * 2 # 0, 2, 4
+            
+            # 1. 构建最终的标签文本 (使用 \n 换行)
+            final_label_text = base_label_text
+            if additional_label_text:
+                final_label_text += f"\n({additional_label_text})"
+            
+            # 2. 创建并配置 QLabel (标签部分)
+            label = QLabel(final_label_text)
+            label.setAlignment(Qt.AlignCenter)
+            
+            # 3. 创建并配置 QLabel (值显示部分)
             value_label = QLabel("0.00")
             value_label.setFixedWidth(70)
-            value_label.setAlignment(Qt.AlignRight)
+            
+            # ***** 关键修改: 强制设置固定高度，防止被多行标签拉伸 *****
+            value_label.setFixedHeight(25) 
+            
+            # 居左对齐，并保持垂直居中
+            value_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter) 
+            
             value_label.setStyleSheet("background-color: lightgrey; border: 1px inset grey;")
             self.tool_pose_labels[var_key] = value_label
-            # 添加微调减小按钮。
+            
+            # 4. 创建微调按钮布局
             btn_minus = QPushButton("-")
             btn_minus.setFixedWidth(30)
             btn_minus.pressed.connect(lambda idx=i: self.start_tcp_move(idx, BACKWARD))
-            btn_minus.released.connect(self.stop_tcp_move)
-            # 添加微调增加按钮。
+            # 修正：确保 TCP 按钮调用的是 stop_tcp_move
+            btn_minus.released.connect(self.stop_tcp_move) 
             btn_plus = QPushButton("+")
             btn_plus.setFixedWidth(30)
             btn_plus.pressed.connect(lambda idx=i: self.start_tcp_move(idx, FORWARD))
+            # 修正：确保 TCP 按钮调用的是 stop_tcp_move
             btn_plus.released.connect(self.stop_tcp_move)
+            
             btn_layout = QHBoxLayout()
             btn_layout.addStretch()
             btn_layout.addWidget(btn_minus)
             btn_layout.addWidget(btn_plus)
             btn_layout.addStretch()
-            # 将控件添加到网格布局。
-            group_layout.addWidget(label, row, col, alignment=Qt.AlignCenter)
-            group_layout.addWidget(value_label, row, col + 1, alignment=Qt.AlignRight)
-            group_layout.addLayout(btn_layout, row + 1, col, 1, 2)
+            
+            # 5. 将控件添加到网格布局
+            group_layout.addWidget(label, row_value, col_start, alignment=Qt.AlignCenter)
+            # 在添加到布局时指定居左对齐
+            group_layout.addWidget(value_label, row_value, col_start + 1, alignment=Qt.AlignLeft) 
+            group_layout.addLayout(btn_layout, row_buttons, col_start, 1, 2)
         
-        # ***** 关键修改: 添加 Tool 坐标系复选框 *****
-        # 将复选框放在最后一行，跨越所有列
+        # 6. 添加 Tool 坐标系复选框 (放在下一行，即第 4 行，跨越所有列)
         self.tool_coord_checkbox = QCheckBox("Tool 坐标系")
-        # 默认不勾选，即在 Base 坐标系下运动 (nToolMotion=0)
         group_layout.addWidget(self.tool_coord_checkbox, 4, 0, 1, 6, alignment=Qt.AlignCenter)
 
         layout.addWidget(group)
