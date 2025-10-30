@@ -493,8 +493,8 @@ class BeckhoffTab(QWidget):
             QMessageBox.warning(self, "警告", "正在执行运动监控任务，请稍候。")
             return
 
-        RESET_J2 = 76.46
-        RESET_J3 = 16.34
+        RESET_J2 = 71.46
+        RESET_J3 = 23.9
         
         # 立即更新 QLineEdit 文本
         self.result_labels["J2"].setText(f"{RESET_J2:.4f}")
