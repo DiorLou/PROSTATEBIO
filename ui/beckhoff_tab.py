@@ -24,11 +24,11 @@ START_BOOL = "MAIN.Position_5"
 MOTION_TIME = "MAIN.t5"   
 
 # 新增：当前位置变量名 (从 WriteTest.py 复制)
-POS1_PV = "MAIN.MotorCmdPos[2]"   # 只读：当前位置1 (LREAL)
-POS2_PV = "MAIN.MotorCmdPos[3]"   # 只读：当前位置2 (LREAL)
+POS1_PV = "MAIN.MotorCurPos[2]"   # 只读：当前位置1 (LREAL)
+POS2_PV = "MAIN.MotorCurPos[3]"   # 只读：当前位置2 (LREAL)
 
 # 目标与判据
-DONE_TOL   = 0.05                  # 判定完成阈值 (从 WriteTest.py 复制)
+# DONE_TOL   = 0.05                  # 判定完成阈值 (已移除)
 READ_LREAL_T   = pyads.PLCTYPE_LREAL
 WRITE_LREAL_T  = pyads.PLCTYPE_LREAL
 WRITE_INT_T    = pyads.PLCTYPE_INT
@@ -74,6 +74,11 @@ class ADS:
     def write_bool(self, name: str, val: bool):
         with self.lock:
             self._c.write_by_name(name, bool(val), pyads.PLCTYPE_BOOL)
+            
+    def read_bool(self, name: str) -> bool:
+        with self.lock:
+            # pyads 读取 PLCTYPE_BOOL 类型时返回 Python 布尔值
+            return bool(self._c.read_by_name(name, pyads.PLCTYPE_BOOL))
 
 # ====================================================================
 # 新增：ADS 轮询线程 (负责实时读取位置和运动监控)
@@ -90,7 +95,7 @@ class ADSPollThread(QThread):
         self.ads = ads_client
         self.is_running = True
         self.moving = False          # 标记是否正在监控运动
-        self._stable_cnt = 0         # 到位计数器
+        # self._stable_cnt = 0       # 已移除
         
         # 目标值 (由 BeckhoffTab 在触发运动前设置)
         self.target_j2 = 0.0
@@ -98,11 +103,10 @@ class ADSPollThread(QThread):
         self.motion_time = 0.0
 
     def start_monitoring_move(self, target_j2, target_j3):
-        """设置目标值，并开始监控运动。"""
+        """设置目标值，并开始监控运动。（已移除 _stable_cnt 重置）"""
         self.target_j2 = target_j2
         self.target_j3 = target_j3
         self.moving = True
-        self._stable_cnt = 0
 
     def run(self):
         last_status = ""
@@ -116,24 +120,12 @@ class ADSPollThread(QThread):
                 self.position_update.emit(p1, p2)
 
                 if self.moving:
-                    # 3. 判定到位（两轴都在阈值内）
-                    done1 = abs(p1 - self.target_j2) <= DONE_TOL
-                    done2 = abs(p2 - self.target_j3) <= DONE_TOL
+                    # 3. 判定到位：读取 PLC 中的 START_BOOL (MAIN.Position_5)
+                    is_moving_flag = self.ads.read_bool(START_BOOL)
                     
-                    if done1 and done2:
-                        self._stable_cnt += 1
-                    else:
-                        self._stable_cnt = 0
-
-                    if self._stable_cnt >= 2: # 连续两次稳定判定为到位
-                        # 4. 到位：立即把 Position_5 置回 False，并结束
-                        try:
-                            self.ads.write_bool(START_BOOL, False)
-                        except Exception as e:
-                            self.movement_status_update.emit(f"置位回落失败：{e}")
-                        
+                    if not is_moving_flag:
+                        # 4. 到位：PLC 已将 Position_5 置回 False，运动完成。
                         self.moving = False
-                        self._stable_cnt = 0
                         self.movement_status_update.emit("运动完成")
                         
                     else:
@@ -428,16 +420,9 @@ class BeckhoffTab(QWidget):
             self._start_poll() # 启动轮询线程
 
     def disconnect_ads(self):
-        """断开 ADS 连接。（新增：停止轮询线程并清理显示）"""
+        """断开 ADS 连接。（已移除强制回落 START_BOOL 的代码）"""
         self._stop_poll() # 停止轮询线程
 
-        try:
-            # 尝试在断开前将 Position_5 置回 False
-            if self.ads_client.connected:
-                 self.ads_client.write_bool(START_BOOL, False)
-        except Exception:
-            pass 
-            
         self.ads_client.close()
         self.ads_status_label.setText("ADS: 已断开")
         self.connect_ads_btn.setEnabled(True)
