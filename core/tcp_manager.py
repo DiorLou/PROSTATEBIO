@@ -19,9 +19,13 @@ class TCPManager(QObject):
         self.client_socket = None
         self.receive_thread = None
         
-        # QTimer 用于定时向机器人发送请求实时数据的指令。
-        self.real_time_update_timer = QTimer(self)
-        self.real_time_update_timer.timeout.connect(self.request_real_time_data)
+        # QTimer 用于定时向机器人发送请求实时数据的指令（ReadActPos），频率：50ms。
+        self.actpos_update_timer = QTimer(self)
+        self.actpos_update_timer.timeout.connect(self.request_actpos_data)
+        
+        # QTimer 用于定时请求机器人状态数据（ReadRobotState），频率：300ms。
+        self.robotstate_update_timer = QTimer(self)
+        self.robotstate_update_timer.timeout.connect(self.request_robot_state_data)
         
         # QTimer用于定时请求急停信息
         self.emergency_update_timer = QTimer(self)
@@ -53,9 +57,13 @@ class TCPManager(QObject):
             self.receive_thread.connection_lost.connect(self.disconnect)
             self.receive_thread.start()
 
-            # 启动实时更新定时器。
-            self.real_time_update_timer.start(100)
-            self.request_real_time_data()  # 立即请求一次数据，快速更新UI。
+            # 启动实时更新定时器 (ReadActPos)，50ms。
+            self.actpos_update_timer.start(50)
+            self.request_actpos_data()  # 立即请求一次数据，快速更新UI。
+            
+            # 启动机器人状态定时器 (ReadRobotState)，300ms。
+            self.robotstate_update_timer.start(300)
+            self.request_robot_state_data() # 立即请求一次数据。
             
             # 启动紧急状态更新定时器。
             self.emergency_update_timer.start(200)
@@ -82,7 +90,8 @@ class TCPManager(QObject):
             return
 
         self.is_connected = False
-        self.real_time_update_timer.stop()
+        self.actpos_update_timer.stop()
+        self.robotstate_update_timer.stop() 
         self.emergency_update_timer.stop()
         self.override_update_timer.stop()
         
@@ -114,10 +123,12 @@ class TCPManager(QObject):
             self.message_received.emit(f"UR指令发送失败: {e}")
             self.disconnect()
 
-    def request_real_time_data(self):
-        """定时向机器人发送指令，请求获取实时关节和末端坐标数据。"""
-        # 这个方法由 real_time_update_timer 定时调用。
+    def request_actpos_data(self):
+        """定时向机器人发送指令，请求获取实时关节和末端坐标数据 (ReadActPos)。 (50ms)"""
         self.send_command("ReadActPos,0;")
+
+    def request_robot_state_data(self):
+        """定时向机器人发送指令，请求获取机器人状态数据 (ReadRobotState)。 (300ms)"""
         self.send_command("ReadRobotState,0;")
     
     def request_emergency_info(self):
