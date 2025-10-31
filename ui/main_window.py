@@ -72,6 +72,8 @@ class RobotControlWindow(QMainWindow):
         
         self.set_tcp_o_btn = None
         self.set_tcp_p_btn = None  # <--- 新增: TCP_P 按钮成员变量
+        self.set_tcp_u_btn = None  # <--- 新增: TCP_U 按钮成员变量
+        self.set_tcp_e_btn = None  # <--- 新增: TCP_E 按钮成员变量
         self.set_tcp_tip_btn = None
         self.read_tcp_o_btn = None
         self.read_tcp_tip_btn = None
@@ -206,6 +208,8 @@ class RobotControlWindow(QMainWindow):
         self.read_tcp_o_btn.clicked.connect(self.read_tcp_o)
         self.set_tcp_o_btn.clicked.connect(self.set_tcp_o)
         self.set_tcp_p_btn.clicked.connect(self.set_tcp_p) # <--- 新增连接
+        self.set_tcp_u_btn.clicked.connect(self.set_tcp_u) # <--- 新增连接
+        self.set_tcp_e_btn.clicked.connect(self.set_tcp_e) # <--- 新增连接
         self.read_tcp_tip_btn.clicked.connect(self.read_tcp_tip)
         self.set_tcp_tip_btn.clicked.connect(self.set_tcp_tip)
         self.get_suitable_tcp_btn.clicked.connect(self.get_suitable_tcp)
@@ -1157,7 +1161,10 @@ class RobotControlWindow(QMainWindow):
         layout.addWidget(group)
 
     def create_set_tcp_group(self, layout):
-        """新增：将工具坐标系设置移出并做成独立的Groupbox。"""
+        """
+        新增：将工具坐标系设置移出并做成独立的Groupbox。
+        已修改：将按钮分为两行。
+        """
         tcp_group = QGroupBox("工具坐标系设置 (TCP)")
         
         # 使用垂直布局作为主布局
@@ -1179,22 +1186,33 @@ class RobotControlWindow(QMainWindow):
         # 添加网格布局到主垂直布局中
         main_v_layout.addLayout(tcp_grid_layout)
 
-        # 创建一个水平布局来放置并居中按钮
-        button_layout = QHBoxLayout()
-        self.set_cur_tcp_btn = QPushButton("设置Cur TCP")
+        # --- 按钮布局调整 ---
+        
+        # 1. TCP 切换按钮 (第一排)
+        button_row1 = QHBoxLayout()
         self.set_tcp_o_btn = QPushButton("切换TCP_O")
-        self.set_tcp_p_btn = QPushButton("切换TCP_P") # <--- 新增按钮
+        self.set_tcp_p_btn = QPushButton("切换TCP_P")
+        self.set_tcp_u_btn = QPushButton("切换TCP_U")
+        self.set_tcp_e_btn = QPushButton("切换TCP_E")
         self.set_tcp_tip_btn = QPushButton("切换TCP_tip")
+        
+        button_row1.addWidget(self.set_tcp_o_btn)
+        button_row1.addWidget(self.set_tcp_p_btn) 
+        button_row1.addWidget(self.set_tcp_u_btn)
+        button_row1.addWidget(self.set_tcp_e_btn)
+        button_row1.addWidget(self.set_tcp_tip_btn)
+        
+        main_v_layout.addLayout(button_row1)
+        
+        # 2. 操作按钮 (第二排)
+        button_row2 = QHBoxLayout()
+        self.set_cur_tcp_btn = QPushButton("设置Cur TCP")
         self.get_suitable_tcp_btn = QPushButton("获取合适的Tar_Tcp_Z以及更新O点位置")
         
-        button_layout.addWidget(self.set_cur_tcp_btn)
-        button_layout.addWidget(self.set_tcp_o_btn)
-        button_layout.addWidget(self.set_tcp_p_btn) # <--- 插入新按钮
-        button_layout.addWidget(self.set_tcp_tip_btn)
-        button_layout.addWidget(self.get_suitable_tcp_btn)
+        button_row2.addWidget(self.set_cur_tcp_btn)
+        button_row2.addWidget(self.get_suitable_tcp_btn)
         
-        # 将按钮布局添加到主垂直布局的底部
-        main_v_layout.addLayout(button_layout)
+        main_v_layout.addLayout(button_row2)
         
         layout.addWidget(tcp_group)
 
@@ -1209,6 +1227,18 @@ class RobotControlWindow(QMainWindow):
         self.log_message("SetTCPByName,0,TCP_P;")
         self.tcp_manager.send_command("SetTCPByName,0,TCP_P;")
         self.status_bar.showMessage("状态: 已发送设置TCP_P的命令。")
+
+    def set_tcp_u(self):
+        """发送设置TCP_U的命令。"""
+        self.log_message("SetTCPByName,0,TCP_U;")
+        self.tcp_manager.send_command("SetTCPByName,0,TCP_U;")
+        self.status_bar.showMessage("状态: 已发送设置TCP_U的命令。")
+
+    def set_tcp_e(self):
+        """发送设置TCP_E的命令。"""
+        self.log_message("SetTCPByName,0,TCP_E;")
+        self.tcp_manager.send_command("SetTCPByName,0,TCP_E;")
+        self.status_bar.showMessage("状态: 已发送设置TCP_E的命令。")
 
     def set_tcp_tip(self):
         """发送设置TCP_tip的命令。"""
