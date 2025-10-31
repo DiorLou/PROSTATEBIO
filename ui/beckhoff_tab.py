@@ -20,14 +20,18 @@ J3_PV   = "MAIN.J3"
 # 运动使能变量名：需要持续 True，完成后置回 False
 START_BOOL = "MAIN.Position_5"    
 
+# 设置运动时间
+MOTION_TIME = "MAIN.t5"   
+
 # 新增：当前位置变量名 (从 WriteTest.py 复制)
 POS1_PV = "MAIN.MotorCmdPos[2]"   # 只读：当前位置1 (LREAL)
 POS2_PV = "MAIN.MotorCmdPos[3]"   # 只读：当前位置2 (LREAL)
 
 # 目标与判据
 DONE_TOL   = 0.05                  # 判定完成阈值 (从 WriteTest.py 复制)
-READ_T     = pyads.PLCTYPE_LREAL
-WRITE_T    = pyads.PLCTYPE_LREAL
+READ_LREAL_T   = pyads.PLCTYPE_LREAL
+WRITE_LREAL_T  = pyads.PLCTYPE_LREAL
+WRITE_INT_T    = pyads.PLCTYPE_INT
 # ----------------------------------------------------
 
 class ADS:
@@ -57,11 +61,15 @@ class ADS:
 
     def read_lreal(self, name: str) -> float:
         with self.lock:
-            return float(self._c.read_by_name(name, READ_T))
+            return float(self._c.read_by_name(name, READ_LREAL_T))
 
     def write_lreal(self, name: str, val: float):
         with self.lock:
-            self._c.write_by_name(name, float(val), WRITE_T)
+            self._c.write_by_name(name, float(val), WRITE_LREAL_T)
+            
+    def write_int(self, name: str, val: int):
+        with self.lock:
+            self._c.write_by_name(name, int(val), WRITE_INT_T)
 
     def write_bool(self, name: str, val: bool):
         with self.lock:
@@ -87,6 +95,7 @@ class ADSPollThread(QThread):
         # 目标值 (由 BeckhoffTab 在触发运动前设置)
         self.target_j2 = 0.0
         self.target_j3 = 0.0
+        self.motion_time = 0.0
 
     def start_monitoring_move(self, target_j2, target_j3):
         """设置目标值，并开始监控运动。"""
@@ -158,18 +167,21 @@ class ADSThread(QThread):
     """一个独立的线程用于执行 ADS 运动命令的发送。"""
     movement_status_update = pyqtSignal(str) # 负责发送执行状态
 
-    def __init__(self, ads_client, target_j2, target_j3, parent=None):
+    def __init__(self, ads_client, target_j2, target_j3, target_time, parent=None):
         super().__init__(parent)
         self.ads = ads_client
         self.target_j2 = target_j2
         self.target_j3 = target_j3
+        self.motion_time = target_time # 此处 target_time 期望为毫秒 (ms)
 
     def run(self):
         self.movement_status_update.emit("下发目标中...")
         try:
-            # 1. 写入目标 J2/J3
+            # 1. 写入目标 J2/J3/TIME
             self.ads.write_lreal(J2_PV, self.target_j2)
             self.ads.write_lreal(J3_PV, self.target_j3)
+            # MOTION_TIME (MAIN.t5) 期望单位为毫秒 (ms)
+            self.ads.write_int(MOTION_TIME, self.motion_time) 
             
             # 2. 启动运动 (Position_5 = True)
             self.ads.write_bool(START_BOOL, True)
@@ -200,6 +212,7 @@ class BeckhoffTab(QWidget):
         self.result_labels = {}         
         self.ads_status_label = QLabel("ADS: 未连接") 
         self.pos_labels = {}            # 新增：实时位置显示标签
+        self.motion_time_input = None   # 新增：目标运动时间输入框
         
         # 存储计算出的 J2, J3 值 (用于暂存，但实际目标以 QLineEdit 为准)
         self.latest_j2 = 0.0
@@ -250,10 +263,13 @@ class BeckhoffTab(QWidget):
         # 目标位置显示 (改为 QLineEdit 实现可读写)
         result_labels = ["目标 J2 (度):", "目标 J3 (度):"]
         result_keys = ["J2", "J3"]
+        
+        # 行索引
+        row = 0
         for i, label_text in enumerate(result_labels):
             label = QLabel(label_text)
-            # 设置标签右对齐，使其紧贴输入框
-            label.setAlignment(Qt.AlignRight | Qt.AlignVCenter) 
+            # 确保标签左对齐
+            label.setAlignment(Qt.AlignVCenter) 
             
             # 目标输入框：设置固定宽度
             value_input = QLineEdit("0.00") 
@@ -263,23 +279,46 @@ class BeckhoffTab(QWidget):
             self.result_labels[result_keys[i]] = value_input
             
             # Column 0: Target Label
-            result_layout.addWidget(label, i, 0)
+            result_layout.addWidget(label, row, 0)
             # Column 1: Target Input
-            result_layout.addWidget(value_input, i, 1) 
+            result_layout.addWidget(value_input, row, 1) 
+            row += 1 # 递增行索引
+            
+        # *********** 根据用户要求新增：目标运动时间输入框 (在 J3 正下方) ***********
+        
+        # 目标运动时间输入
+        time_label = QLabel("目标运动时间 (ms):")
+        # 确保标签左对齐
+        time_label.setAlignment(Qt.AlignVCenter) 
+        
+        self.motion_time_input = QLineEdit("500") # 默认 500ms
+        self.motion_time_input.setReadOnly(False)
+        self.motion_time_input.setFixedWidth(100)
+        self.motion_time_input.setStyleSheet("background-color: white; border: 1px inset grey;")
+        
+        # Row 2, Col 0: Label (此时 row = 2)
+        result_layout.addWidget(time_label, row, 0)
+        # Row 2, Col 1: Input
+        result_layout.addWidget(self.motion_time_input, row, 1) 
+        row += 1 # 递增行索引
+        
+        # *************************************************************************
 
         # *** 新增固定间隔列 (Column 2) ***
         spacer_label = QLabel(" ")
         spacer_label.setFixedWidth(100) # 100像素的间隔
-        result_layout.addWidget(spacer_label, 0, 2)
-        result_layout.addWidget(QLabel(" "), 1, 2) 
-
-        # 实时当前位置显示 (QLabel)
+        # 更新间隔列，以包含新增的第三行 (共 row 行)
+        for r in range(row):
+            result_layout.addWidget(QLabel(" "), r, 2) 
+            
+        # 实时当前位置显示 (QLabel) - 保持不变，仍在 Col 3/4
         pos_labels = ["当前 J2 (度):", "当前 J3 (度):"]
         pos_keys = ["CurJ2", "CurJ3"]
+        row_cur = 0
         for i, label_text in enumerate(pos_labels):
             label = QLabel(label_text)
-            # 设置标签右对齐
-            label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            # 确保标签左对齐
+            label.setAlignment(Qt.AlignVCenter)
             
             value_label = QLabel("--")
             
@@ -290,9 +329,10 @@ class BeckhoffTab(QWidget):
             self.pos_labels[pos_keys[i]] = value_label
             
             # Column 3: Current Label 
-            result_layout.addWidget(label, i, 3)
+            result_layout.addWidget(label, row_cur, 3)
             # Column 4: Current Value
-            result_layout.addWidget(value_label, i, 4)
+            result_layout.addWidget(value_label, row_cur, 4)
+            row_cur += 1
             
         # 将 result_layout (QGridLayout) 添加到 result_content_layout (QHBoxLayout) 中
         result_content_layout.addLayout(result_layout)
@@ -455,7 +495,7 @@ class BeckhoffTab(QWidget):
         self.movement_status_label.setText(f"运动状态: {msg}")
 
 # ====================================================================
-# 修改：运动触发方法 (读取 QLineEdit 的值)
+# 修改：运动触发方法 (直接读取并使用 ms 值)
 # ====================================================================
     def trigger_j2j3_move(self):
         """触发 J2/J3 关节运动。"""
@@ -475,9 +515,18 @@ class BeckhoffTab(QWidget):
         except ValueError:
             QMessageBox.critical(self, "输入错误", "目标 J2/J3 必须是有效数字。")
             return
+            
+        # 2. 读取运动时间（ms），并直接使用
+        try:
+            target_time = float(self.motion_time_input.text())
+            if target_time <= 0:
+                raise ValueError("运动时间必须大于零。")
+        except ValueError as e:
+            QMessageBox.critical(self, "输入错误", "目标运动时间（毫秒）必须是有效数字且大于零！")
+            return
         
-        # 2. 启动 ADS 写入线程 (发送指令)
-        self.ads_command_thread = ADSThread(self.ads_client, target_j2, target_j3)
+        # 3. 启动 ADS 写入线程 (发送指令)
+        self.ads_command_thread = ADSThread(self.ads_client, target_j2, target_j3, target_time) # 直接传递毫秒值
         self.ads_command_thread.movement_status_update.connect(self.update_movement_status)
         # 关键：指令线程结束后，启动轮询线程的运动监控
         self.ads_command_thread.finished.connect(lambda: self._start_poll_monitoring(target_j2, target_j3))
@@ -496,12 +545,21 @@ class BeckhoffTab(QWidget):
         RESET_J2 = 71.46
         RESET_J3 = 23.9
         
-        # 立即更新 QLineEdit 文本
+        # 1. 读取运动时间（ms），并直接使用
+        try:
+            target_time = float(self.motion_time_input.text())
+            if target_time <= 0:
+                raise ValueError("运动时间必须大于零。")
+        except ValueError:
+            QMessageBox.critical(self, "输入错误", "目标运动时间（毫秒）必须是有效数字且大于零！")
+            return
+
+        # 2. 立即更新 QLineEdit 文本
         self.result_labels["J2"].setText(f"{RESET_J2:.4f}")
         self.result_labels["J3"].setText(f"{RESET_J3:.4f}")
 
-        # 启动 ADS 写入线程 (发送指令)
-        self.ads_command_thread = ADSThread(self.ads_client, RESET_J2, RESET_J3)
+        # 3. 启动 ADS 写入线程 (发送指令)
+        self.ads_command_thread = ADSThread(self.ads_client, RESET_J2, RESET_J3, target_time) # 直接传递毫秒值
         self.ads_command_thread.movement_status_update.connect(self.update_movement_status)
         self.ads_command_thread.finished.connect(lambda: self._start_poll_monitoring(RESET_J2, RESET_J3))
         self.ads_command_thread.start()
