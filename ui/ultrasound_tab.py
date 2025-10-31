@@ -5,7 +5,8 @@ import numpy as np
 import time
 from datetime import datetime
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QMessageBox, QSlider, QFileDialog, QLineEdit
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer 
+from PyQt5.QtGui import QImage, QPixmap # 已修正：QImage 和 QPixmap 应该从 QtGui 导入
 
 # Constants for motion direction (来自 main_window.py)
 FORWARD = 1
@@ -32,7 +33,17 @@ class UltrasoundTab(QWidget):
         self.image_label = QLabel("正在等待超声图像...")
         self.start_btn = QPushButton("开启超声探头")
         self.stop_btn = QPushButton("关闭超声探头")
-        self.save_btn = QPushButton("保存图像")
+        
+        # --- [修改] 1. 按钮名称改为“开始保存图像” ---
+        self.save_btn = QPushButton("开始保存图像")
+        
+        # --- [新增] 实时保存相关变量和定时器 ---
+        self.is_real_time_saving = False
+        self.real_time_save_timer = QTimer(self)
+        # 2. 定时器连接到新的保存函数
+        self.real_time_save_timer.timeout.connect(self._save_real_time_frame) 
+        self.real_time_save_folder = ""
+        self.save_sequence_number = 0
         
         # --- 原始左右裁剪滑块 ---
         self.left_slider = QSlider(Qt.Horizontal)
@@ -51,7 +62,7 @@ class UltrasoundTab(QWidget):
         self.is_rotating = False
         self.current_rotation_step = 0
         self.total_rotation_steps = 0 # 新增：总旋转步数
-        self.save_folder = ""
+        self.save_folder = "" # 旋转保存的文件夹
 
         # 新增: 旋转范围输入框和按钮
         self.rotation_range_input = QLineEdit("45") # 默认值 45
@@ -64,7 +75,7 @@ class UltrasoundTab(QWidget):
     def _send_next_rotation_command(self):
         """发送下一个 1 度旋转命令，由 QTimer 延迟调用。"""
         # Direction FORWARD (1) is used for the continuous right turn
-        command = f"MoveRelJ,0,5,{FORWARD},1;" 
+        command = f"MoveRelJ,0,5,{FORWARD},1;"
         self.tcp_manager.send_command(command)
 
     def init_ui(self):
@@ -162,7 +173,8 @@ class UltrasoundTab(QWidget):
         """连接信号和槽。"""
         self.start_btn.clicked.connect(self.start_capture)
         self.stop_btn.clicked.connect(self.stop_capture)
-        self.save_btn.clicked.connect(self.save_image)
+        # --- [修改] 连接到新的 toggle 函数 ---
+        self.save_btn.clicked.connect(self.toggle_real_time_save) 
         
         # 连接水平裁剪滑块
         self.left_slider.valueChanged.connect(self.update_crop_value)
@@ -209,6 +221,8 @@ class UltrasoundTab(QWidget):
             self.stop_btn.setEnabled(False)
             self.start_btn.setEnabled(True)
             self.save_btn.setEnabled(False)
+            self.left_x_btn.setEnabled(False)
+            self.right_2x_btn.setEnabled(False)
             self.image_label.setText("无法打开摄像头。")
             self.camera = None
             return
@@ -247,6 +261,11 @@ class UltrasoundTab(QWidget):
     def stop_capture(self):
         """停止图像捕获。"""
         self.image_timer.stop()
+        
+        # [新增] 停止捕获时，如果正在实时保存，则停止
+        if self.is_real_time_saving:
+            self._stop_real_time_save()
+
         if self.camera:
             self.camera.release()
             self.camera = None
@@ -290,6 +309,101 @@ class UltrasoundTab(QWidget):
         )
         self.image_label.setPixmap(pixmap)
 
+    # --- [修改/新增] 实时保存逻辑 START ---
+    
+    def toggle_real_time_save(self):
+        """切换实时图像保存状态。"""
+        if not self.is_real_time_saving:
+            self._start_real_time_save()
+        else:
+            self._stop_real_time_save()
+
+    def _start_real_time_save(self):
+        """开始实时图像保存：创建文件夹，设置序列号，启动定时器。"""
+        if self.current_frame is None:
+            QMessageBox.warning(self, "警告", "没有可保存的图像。请先开启超声探头。")
+            return
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # 3. 新建文件夹名为“实时图像保存：{当前的时间}”
+        base_dir = os.path.join(os.getcwd(), "image") 
+        if not os.path.isdir(base_dir):
+            try:
+                os.makedirs(base_dir, exist_ok=True)
+            except OSError as e:
+                QMessageBox.critical(self, "文件系统错误", f"无法创建根保存目录 ('image'): {e}")
+                return
+
+        # 使用中文冒号替换为下划线，以确保跨平台兼容性
+        self.real_time_save_folder = os.path.join(base_dir, f"实时图像保存_{timestamp}")
+        try:
+            os.makedirs(self.real_time_save_folder, exist_ok=True)
+        except OSError as e:
+            QMessageBox.critical(self, "文件系统错误", f"无法创建保存目录: {e}")
+            return
+            
+        self.save_sequence_number = 0
+        self.is_real_time_saving = True
+        
+        # 2. 按钮名字变为“停止保存图像”，并改变颜色
+        self.save_btn.setText("停止保存图像") 
+        self.save_btn.setStyleSheet("background-color: salmon;") 
+        
+        # 2. 每隔300ms保存一张图片
+        self.real_time_save_timer.start(300) 
+        self.main_window.status_bar.showMessage(f"状态: 已开始实时保存图像至: {self.real_time_save_folder}")
+
+    def _stop_real_time_save(self):
+        """停止实时图像保存：停止定时器，恢复按钮状态。"""
+        self.real_time_save_timer.stop()
+        self.is_real_time_saving = False
+        
+        # 2. 按钮变回“开始保存图像”
+        self.save_btn.setText("开始保存图像") 
+        self.save_btn.setStyleSheet("")
+        self.main_window.status_bar.showMessage("状态: 已停止实时保存图像。")
+
+    def _save_real_time_frame(self):
+        """定时器超时时调用，保存当前帧。"""
+        if self.current_frame is None:
+            print("警告: 实时保存时没有可用的图像帧。")
+            return
+
+        robot_control_window = self.main_window
+        # 确保获取主窗口实例，并且它有 latest_tool_pose 属性
+        if not robot_control_window or not hasattr(robot_control_window, 'latest_tool_pose'):
+             pose = [0.0] * 6
+             print("警告: 无法获取最新的工具端姿态。使用默认姿态。")
+        else:
+             pose = robot_control_window.latest_tool_pose
+        
+        # 格式化工具端位姿: (x,y,z,Rx,Ry,Rz)
+        if pose and len(pose) == 6:
+            # 4. 图片命名方式是当前工具端的六个姿态+(序列号)
+            # 使用下划线连接所有姿态值，并保留小数点
+            sanitized_pose_str = "_".join([f"{p:.2f}" for p in pose])
+        else:
+            sanitized_pose_str = "POSE_NA"
+            print("警告: 无法获取有效的工具端位姿数据。")
+
+        # 序列号格式化，例如 0000, 0001, ...
+        sequence_str = f"_{self.save_sequence_number:04d}"
+        
+        # 构造新的文件名: (机器臂末端位姿) + (序列号) + .png
+        new_filename = f"P_{sanitized_pose_str}{sequence_str}.png"
+        image_path = os.path.join(self.real_time_save_folder, new_filename)
+
+        if cv2.imwrite(image_path, self.current_frame):
+            # print(f"已实时保存图像: {new_filename}")
+            self.save_sequence_number += 1
+        else:
+            print(f"实时保存图像失败: {image_path}")
+            self._stop_real_time_save() # 保存失败则停止
+            QMessageBox.critical(self, "保存错误", "实时图像保存失败，已停止保存。")
+            
+    # --- [修改/新增] 实时保存逻辑 END ---
+
+
     def save_image(self):
         """保存当前裁剪后的图像。"""
         if self.current_frame is None:
@@ -313,6 +427,8 @@ class UltrasoundTab(QWidget):
     def cleanup(self):
         """在窗口关闭时进行清理。"""
         self.stop_capture()
+        # [新增] 确保实时保存定时器停止
+        self.real_time_save_timer.stop() 
         
     def _reset_rotation_buttons(self):
         """重新启用旋转相关的按钮。"""
@@ -422,6 +538,8 @@ class UltrasoundTab(QWidget):
                 with open(gitignore_path, 'w') as f:
                     f.write("# 忽略所有超声图像数据 (由程序自动生成)\n")
                     f.write("ultrasound_images_*/\n") 
+                    # [新增] 忽略实时保存文件夹
+                    f.write("实时图像保存_*/\n") 
             except Exception as e:
                 print(f"警告: 无法创建 .gitignore 文件: {e}")
 
