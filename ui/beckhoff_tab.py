@@ -20,6 +20,9 @@ J3_PV   = "MAIN.J3"
 # 运动使能变量名：需要持续 True，完成后置回 False
 START_BOOL = "MAIN.Position_5"    
 
+# 新增：Beckhoff 电机使能变量
+ENABLE_STATUS = "MAIN.MotorButtonEnable"
+
 # 设置运动时间
 MOTION_TIME = "MAIN.t5"   
 
@@ -36,6 +39,7 @@ WRITE_INT_T    = pyads.PLCTYPE_INT
 
 class ADS:
     def __init__(self, ams, port, ip):
+        super().__init__() # pyads.Connection 继承自 threading.Thread，但这里不显式调用
         self._c = pyads.Connection(ams, port, ip)
         self.connected = False
         self.lock = threading.Lock()
@@ -89,13 +93,14 @@ class ADSPollThread(QThread):
     position_update = pyqtSignal(float, float)
     # 信号2：运动状态更新 (例如：就绪, 运动中, 运动完成)
     movement_status_update = pyqtSignal(str)
+    # 信号3：新增使能状态更新
+    enable_status_update = pyqtSignal(bool)
     
     def __init__(self, ads_client, parent=None):
         super().__init__(parent)
         self.ads = ads_client
         self.is_running = True
         self.moving = False          # 标记是否正在监控运动
-        # self._stable_cnt = 0       # 已移除
         
         # 目标值 (由 BeckhoffTab 在触发运动前设置)
         self.target_j2 = 0.0
@@ -119,8 +124,12 @@ class ADSPollThread(QThread):
                 # 2. 发送信号更新 UI
                 self.position_update.emit(p1, p2)
 
+                # 3. [新增] 读取使能状态并更新 UI
+                is_enabled = self.ads.read_bool(ENABLE_STATUS)
+                self.enable_status_update.emit(is_enabled)
+
                 if self.moving:
-                    # 3. 判定到位：读取 PLC 中的 START_BOOL (MAIN.Position_5)
+                    # 4. 判定到位：读取 PLC 中的 START_BOOL (MAIN.Position_5)
                     is_moving_flag = self.ads.read_bool(START_BOOL)
                     
                     if not is_moving_flag:
@@ -205,6 +214,7 @@ class BeckhoffTab(QWidget):
         self.ads_status_label = QLabel("ADS: 未连接") 
         self.pos_labels = {}            # 新增：实时位置显示标签
         self.motion_time_input = None   # 新增：目标运动时间输入框
+        self.enable_motor_btn = None    # 新增：使能按钮
         
         # 存储计算出的 J2, J3 值 (用于暂存，但实际目标以 QLineEdit 为准)
         self.latest_j2 = 0.0
@@ -276,14 +286,14 @@ class BeckhoffTab(QWidget):
             result_layout.addWidget(value_input, row, 1) 
             row += 1 # 递增行索引
             
-        # *********** 根据用户要求新增：目标运动时间输入框 (在 J3 正下方) ***********
+        # *********** 目标运动时间输入框 ***********
         
         # 目标运动时间输入
         time_label = QLabel("目标运动时间 (ms):")
         # 确保标签左对齐
         time_label.setAlignment(Qt.AlignVCenter) 
         
-        self.motion_time_input = QLineEdit("500") # 默认 500ms
+        self.motion_time_input = QLineEdit("5000") # 默认 5000ms
         self.motion_time_input.setReadOnly(False)
         self.motion_time_input.setFixedWidth(100)
         self.motion_time_input.setStyleSheet("background-color: white; border: 1px inset grey;")
@@ -349,8 +359,14 @@ class BeckhoffTab(QWidget):
         self.disconnect_ads_btn = QPushButton("断开 ADS")
         self.disconnect_ads_btn.setEnabled(False)
         
+        # [新增] 使能按钮
+        self.enable_motor_btn = QPushButton("使能")
+        self.enable_motor_btn.setEnabled(False)
+        self.enable_motor_btn.setStyleSheet("background-color: lightgray;")
+        
         conn_layout.addWidget(self.connect_ads_btn)
         conn_layout.addWidget(self.disconnect_ads_btn)
+        conn_layout.addWidget(self.enable_motor_btn) # 添加使能按钮
         conn_layout.addWidget(self.ads_status_label)
         beckhoff_comm_layout.addLayout(conn_layout)
 
@@ -381,6 +397,9 @@ class BeckhoffTab(QWidget):
         self.disconnect_ads_btn.clicked.connect(self.disconnect_ads)
         self.trigger_j2j3_btn.clicked.connect(self.trigger_j2j3_move)
         self.reset_j2j3_btn.clicked.connect(self.trigger_j2j3_reset)
+        
+        # [新增] 使能按钮连接
+        self.enable_motor_btn.clicked.connect(self.toggle_motor_enable)
 
 # ====================================================================
 # 新增：轮询管理方法
@@ -392,6 +411,7 @@ class BeckhoffTab(QWidget):
             # 连接轮询线程的信号
             self.ads_poll_thread.position_update.connect(self._update_current_positions)
             self.ads_poll_thread.movement_status_update.connect(self.update_movement_status)
+            self.ads_poll_thread.enable_status_update.connect(self._update_enable_button) # [新增] 连接使能状态更新
             self.ads_poll_thread.start()
 
     def _stop_poll(self):
@@ -405,6 +425,15 @@ class BeckhoffTab(QWidget):
         # 实时显示当前位置
         self.pos_labels["CurJ2"].setText(f"{j2_pos:.3f}")
         self.pos_labels["CurJ3"].setText(f"{j3_pos:.3f}")
+        
+    def _update_enable_button(self, is_enabled: bool):
+        """槽函数：接收使能状态并更新按钮颜色和文本。"""
+        if is_enabled:
+            self.enable_motor_btn.setText("已使能")
+            self.enable_motor_btn.setStyleSheet("background-color: lightgreen;")
+        else:
+            self.enable_motor_btn.setText("使能")
+            self.enable_motor_btn.setStyleSheet("background-color: lightgray;")
 
 
     def connect_ads(self):
@@ -415,6 +444,7 @@ class BeckhoffTab(QWidget):
         self.disconnect_ads_btn.setEnabled(ok)
         self.trigger_j2j3_btn.setEnabled(ok)
         self.reset_j2j3_btn.setEnabled(ok)
+        self.enable_motor_btn.setEnabled(ok) # [新增] 连接成功后启用使能按钮
         
         if ok:
             self._start_poll() # 启动轮询线程
@@ -429,10 +459,33 @@ class BeckhoffTab(QWidget):
         self.disconnect_ads_btn.setEnabled(False)
         self.trigger_j2j3_btn.setEnabled(False)
         self.reset_j2j3_btn.setEnabled(False)
+        self.enable_motor_btn.setEnabled(False) # [新增] 断开连接后禁用使能按钮
         
         # 清除当前位置显示
         self.pos_labels["CurJ2"].setText("--")
         self.pos_labels["CurJ3"].setText("--")
+
+    def toggle_motor_enable(self):
+        """点击使能按钮，根据当前状态切换 ENABLE_STATUS 的布尔值。"""
+        if not self.ads_client.connected:
+            QMessageBox.warning(self, "警告", "ADS 未连接。请先连接 Beckhoff PLC。")
+            return
+            
+        try:
+            # 1. 读取当前使能状态
+            current_state = self.ads_client.read_bool(ENABLE_STATUS)
+            
+            # 2. 切换状态：如果已使能则置为 False (去使能)，否则置为 True (使能)
+            new_state = not current_state
+            
+            # 3. 写入新的状态
+            self.ads_client.write_bool(ENABLE_STATUS, new_state)
+            
+            action = "去使能" if not new_state else "使能"
+            self.movement_status_label.setText(f"运动状态: 已发送 {action} 指令 ({new_state})")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "ADS 写入错误", f"发送使能/去使能指令失败: {e}")
 
     def calculate_joint_values(self):
         """读取 Vector 值，计算 J2 和 J3 关节角，并显示结果。"""
