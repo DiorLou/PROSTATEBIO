@@ -5,7 +5,7 @@ def calculate_ultrasound_plane_normal(tcp_rx_deg, tcp_ry_deg, tcp_rz_deg):
     """
     根据工具末端的欧拉角，计算超声平面的法向量。
 
-    超声平面的法向量位于工具端X-Y平面上，与工具端Y轴夹角为22.5度。
+    定义：超声平面的法向量为当前TCP姿态的Y轴的反方向。
 
     Args:
         tcp_rx_deg (float): 工具端 Roll 角（绕世界X轴旋转），单位为度。
@@ -13,30 +13,34 @@ def calculate_ultrasound_plane_normal(tcp_rx_deg, tcp_ry_deg, tcp_rz_deg):
         tcp_rz_deg (float): 工具端 Yaw 角（绕世界Z轴旋转），单位为度。
 
     Returns:
-        np.ndarray: 超声平面的法向量在世界坐标系中的表示 (3,).
+        np.ndarray: 超声平面的法向量（TCP Y轴的反方向）在世界坐标系中的表示 (3,).
     """
+
     # 1. 将输入的欧拉角从度转换为弧度
     euler_angles_rad = np.deg2rad([tcp_rx_deg, tcp_ry_deg, tcp_rz_deg])
     
     # 2. 将欧拉角转换为工具末端在世界坐标系中的旋转矩阵
-    # 使用你提供的参数格式进行调用：
-    # e: 欧拉角数组（弧度）
-    # i, j, k: 旋转轴的索引 (0=X, 1=Y, 2=Z)
-    # extrinsic: True 表示外部旋转
-    # 假设旋转顺序是 Roll (X), Pitch (Y), Yaw (Z)
+    # 假设旋转顺序是 Roll (X), Pitch (Y), Yaw (Z) (SXYZ 外部旋转)
     tool_rotation_matrix = pyrot.matrix_from_euler(euler_angles_rad, 0, 1, 2, extrinsic=True)
-
-    # 3. 定义超声平面的法向量在工具坐标系中的表示
-    # 法向量位于X-Y平面，与Y轴夹角为22.5度。
-    # 这意味着它绕工具坐标系的Z轴旋转了22.5度，从Y轴方向偏转。
-    # x分量为 sin(22.5), y分量为 cos(22.5)
     
-    angle_offset_rad = np.deg2rad(22.5)
-    ultrasound_normal_in_tool_frame = np.array([np.sin(angle_offset_rad), np.cos(angle_offset_rad), 0.0])
+    # 定义旋转角度（弧度）
+    angle_offset_rad = np.deg2rad(-22.5) 
+    
+    # 3. 构造绕自身Z轴的旋转矩阵 (R_Z)
+    # 旋转轴为 [0, 0, 1] (工具Z轴)
+    z_axis_angle = np.array([0, 0, 1, angle_offset_rad])
+    rotation_delta_matrix = pyrot.matrix_from_axis_angle(z_axis_angle)
 
-    # 4. 将法向量从工具坐标系转换到世界坐标系
-    # 这通过将向量与工具的旋转矩阵相乘来实现
-    ultrasound_normal_in_world_frame = np.dot(tool_rotation_matrix, ultrasound_normal_in_tool_frame)
+    # 4. 右乘：将旋转应用到自身坐标系 (R_new = R_base * R_delta)
+    # R_new 代表了新的超声平面姿态
+    new_ultrasound_rotation_matrix = np.dot(tool_rotation_matrix, rotation_delta_matrix)
+    
+    # 3. 提取工具坐标系Y轴在世界坐标系中的方向向量
+    # Y轴向量是旋转矩阵的第二列 (索引为 1)
+    tool_y_axis_in_world_frame = new_ultrasound_rotation_matrix[:, 1]
+
+    # 4. 超声平面的法向量 = 工具Y轴的反方向
+    ultrasound_normal_in_world_frame = tool_y_axis_in_world_frame
 
     return ultrasound_normal_in_world_frame
 
@@ -95,6 +99,8 @@ def calculate_new_rpy_for_b_point(a_point, o_point, b_point, initial_rpy_deg):
     计算使超声平面包含病灶点B所需的新工具姿态（欧拉角）。
 
     该函数通过绕OA轴旋转超声平面来计算新的姿态。
+    修改后的逻辑：旋转超声平面法向量，使其对齐 OAB 平面法向量在旋转平面上的投影。
+    
     Args:
         a_point (np.ndarray): 机器人 A 点的坐标 (3,).
         o_point (np.ndarray): 机器人 O 点（即 TCP 点）的坐标 (3,).
@@ -120,68 +126,70 @@ def calculate_new_rpy_for_b_point(a_point, o_point, b_point, initial_rpy_deg):
     ultrasound_normal = calculate_ultrasound_plane_normal(
         initial_rpy_deg[0], initial_rpy_deg[1], initial_rpy_deg[2])
     
-    # 3. 计算从O点到B点的向量
+    # 3. 计算 OAB 平面法向量作为目标（N_OAB = OB x OA）
     ob_vector = b_point - o_point
+    
     if np.linalg.norm(ob_vector) < 1e-6:
+        return initial_rpy_deg # B点与O点重合，无需旋转
+
+    # N_OAB 是 OAB 平面的法向量，使用用户建议的顺序：OB x OA
+    n_oab_vector = np.cross(oa_vector, ob_vector)
+    
+    if np.linalg.norm(n_oab_vector) < 1e-6:
+        # O, A, B 三点共线，OAB 平面法向量为零，无需旋转
         return initial_rpy_deg
 
     # 4. 计算旋转所需的角度
-    # 将超声平面法向量和OB向量投影到垂直于OA轴的平面上
+    # 将超声平面法向量和 OAB 法向量投影到垂直于OA轴的平面上
     projected_ultrasound_normal = ultrasound_normal - np.dot(ultrasound_normal, oa_unit_vector) * oa_unit_vector
-    projected_ob_vector = ob_vector - np.dot(ob_vector, oa_unit_vector) * oa_unit_vector
-
-    if np.linalg.norm(projected_ultrasound_normal) < 1e-6 or np.linalg.norm(projected_ob_vector) < 1e-6:
+    
+    # 投影目标向量 (OAB平面法向量)
+    projected_target_vector = n_oab_vector - np.dot(n_oab_vector, oa_unit_vector) * oa_unit_vector
+    
+    # 检查投影向量是否为零
+    if np.linalg.norm(projected_ultrasound_normal) < 1e-6 or np.linalg.norm(projected_target_vector) < 1e-6:
         raise ValueError("投影向量为零，无法计算旋转。")
 
     # 使用反正切函数计算带方向的旋转角度
     y_axis_in_plane = np.cross(oa_unit_vector, projected_ultrasound_normal)
     
-    x_component = np.dot(projected_ob_vector, projected_ultrasound_normal)
-    y_component = np.dot(projected_ob_vector, y_axis_in_plane)
+    x_component = np.dot(projected_target_vector, projected_ultrasound_normal)
+    y_component = np.dot(projected_target_vector, y_axis_in_plane)
 
     # np.arctan2 能够计算出绕OA轴的旋转角度
     rotation_angle_rad = np.arctan2(y_component, x_component)
-
-    # 5. 应用旋转到初始姿态上
-    initial_rpy_rad = np.deg2rad(initial_rpy_deg)
-    initial_rotation_matrix = pyrot.matrix_from_euler(initial_rpy_rad, 0, 1, 2, extrinsic=True)
+    print(np.rad2deg(rotation_angle_rad))
 
     # 绕OA向量旋转指定角度
-    rotation_axis_angle = np.array([oa_unit_vector[0], oa_unit_vector[1], oa_unit_vector[2], rotation_angle_rad])
+    # 1. 将输入的欧拉角从度转换为弧度
+    euler_angles_rad = np.deg2rad([initial_rpy_deg[0], initial_rpy_deg[1], initial_rpy_deg[2]])
+    
+    # 2. 将欧拉角转换为工具末端在世界坐标系中的旋转矩阵
+    # 假设旋转顺序是 Roll (X), Pitch (Y), Yaw (Z) (SXYZ 外部旋转)
+    tool_rotation_matrix = pyrot.matrix_from_euler(euler_angles_rad, 0, 1, 2, extrinsic=True)
+    
+    # 3. 使用 Tool Frame 轴构造旋转矩阵：
+    rotation_axis_angle = np.array([oa_vector[0], oa_vector[1], oa_vector[2], rotation_angle_rad])
     delta_rotation_matrix = pyrot.matrix_from_axis_angle(rotation_axis_angle)
-
-    # 组合旋转
-    new_rotation_matrix = np.dot(delta_rotation_matrix, initial_rotation_matrix)
     
     # 6. 将新的旋转矩阵转换回欧拉角
-    new_rpy_rad = pyrot.euler_from_matrix(new_rotation_matrix, "sxyz")
+    # i=0 (X), j=1 (Y), k=2 (Z), extrinsic=True (外部旋转)
+    # delta_rpy_rad = pyrot.euler_from_matrix(delta_rotation_matrix, 0, 1, 2, extrinsic=True)
     
-    return np.rad2deg(new_rpy_rad)
+    return delta_rotation_matrix
+
+def get_final_tcp_e_position_after_delta_rotation(initial_tcp_pose, delta_rotation_matrix, o_vars):
+    
+    small_p0 = initial_tcp_pose
+    big_p0 =o_vars
+
+    # 手动实现向量减法
+    diff = [small_p0[i] - big_p0[i] for i in range(len(small_p0))]
+
+    P_final = np.dot(delta_rotation_matrix, diff) + big_p0
+    return P_final
+    
 
 if __name__ == '__main__':
-    # --- 演示如何使用此函数 ---
-
-    print("--- 演示1：工具姿态为零（与世界坐标系对齐）---")
-    # 当工具姿态为零时，超声法向量应为 [sin(22.5), cos(22.5), 0]
-    rx, ry, rz = 0.0, 0.0, 0.0
-    normal_vector_1 = calculate_ultrasound_plane_normal(rx, ry, rz)
-    print(f"输入欧拉角 (Rx, Ry, Rz): {rx}, {ry}, {rz}")
-    print(f"超声平面的法向量: {normal_vector_1}")
-    print(f"验证: np.sin(np.deg2rad(22.5)) = {np.sin(np.deg2rad(22.5)):.6f}")
-    print(f"验证: np.cos(np.deg2rad(22.5)) = {np.cos(np.deg2rad(22.5)):.6f}")
-
-    print("\n--- 演示2：工具绕世界Z轴旋转90度 ---")
-    # 当工具绕世界Z轴旋转90度时，工具的X轴变为世界坐标系的Y轴，Y轴变为世界坐标系的-X轴。
-    # 此时，超声法向量应为 [-cos(22.5), sin(22.5), 0]
-    rx, ry, rz = 0.0, 0.0, 90.0
-    normal_vector_2 = calculate_ultrasound_plane_normal(rx, ry, rz)
-    print(f"输入欧拉角 (Rx, Ry, Rz): {rx}, {ry}, {rz}")
-    print(f"超声平面的法向量: {normal_vector_2}")
-
-    print("\n--- 演示3：工具绕世界X轴旋转90度 ---")
-    # 当工具绕世界X轴旋转90度时，工具的Y轴变为世界坐标系的Z轴。
-    # 超声平面的法向量会从XY平面转到XZ平面。
-    rx, ry, rz = 90.0, 0.0, 0.0
-    normal_vector_3 = calculate_ultrasound_plane_normal(rx, ry, rz)
-    print(f"输入欧拉角 (Rx, Ry, Rz): {rx}, {ry}, {rz}")
-    print(f"超声平面的法向量: {normal_vector_3}")
+    # --- 演示代码省略 ---
+    pass
