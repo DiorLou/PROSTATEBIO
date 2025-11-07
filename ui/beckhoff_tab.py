@@ -216,6 +216,10 @@ class BeckhoffTab(QWidget):
         self.motion_time_input = None   # 新增：目标运动时间输入框
         self.enable_motor_btn = None    # 新增：使能按钮
         
+        self.inc_j2_input = None        # 增加 J2 输入框
+        self.inc_j3_input = None        # 增加 J3 输入框
+        self.apply_inc_btn = None       # 应用增量按钮
+        
         # 存储计算出的 J2, J3 值 (用于暂存，但实际目标以 QLineEdit 为准)
         self.latest_j2 = 0.0
         self.latest_j3 = 0.0
@@ -308,12 +312,13 @@ class BeckhoffTab(QWidget):
 
         # *** 新增固定间隔列 (Column 2) ***
         spacer_label = QLabel(" ")
-        spacer_label.setFixedWidth(100) # 100像素的间隔
+        spacer_label.setFixedWidth(20) # 减小间隔
         # 更新间隔列，以包含新增的第三行 (共 row 行)
+        # 此时 row = 2
         for r in range(row):
             result_layout.addWidget(QLabel(" "), r, 2) 
             
-        # 实时当前位置显示 (QLabel) - 保持不变，仍在 Col 3/4
+        # 实时当前位置显示 (QLineEdit) - 保持不变，仍在 Col 3/4
         pos_labels = ["当前 J2 (度):", "当前 J3 (度):"]
         pos_keys = ["CurJ2", "CurJ3"]
         row_cur = 0
@@ -322,21 +327,45 @@ class BeckhoffTab(QWidget):
             # 确保标签左对齐
             label.setAlignment(Qt.AlignVCenter)
             
+            # 使用 QLineEdit 替换 QLabel，以实现可选中和复制
             value_label = QLineEdit("--")
-            value_label.setReadOnly(True)
-            
-            # 当前值标签：设置固定宽度
+            value_label.setReadOnly(True) 
             value_label.setFixedWidth(100) 
-            
             value_label.setStyleSheet("background-color: #D4EDF7; border: 1px inset grey;") 
             self.pos_labels[pos_keys[i]] = value_label
             
             # Column 3: Current Label 
             result_layout.addWidget(label, row_cur, 3)
-            # Column 4: Current Value
+            # Column 4: Current Value (QLineEdit)
             result_layout.addWidget(value_label, row_cur, 4)
             row_cur += 1
-            
+
+        # --- [新增] 增量输入列 (Column 5/6) ---
+        
+        # 增加 J2 增量输入
+        inc_j2_label = QLabel("增加 J2 (度):")
+        inc_j2_label.setAlignment(Qt.AlignVCenter)
+        self.inc_j2_input = QLineEdit("0.00") # 增量输入框
+        self.inc_j2_input.setFixedWidth(100)
+        
+        result_layout.addWidget(inc_j2_label, 0, 5) # Row 0, Col 5
+        result_layout.addWidget(self.inc_j2_input, 0, 6) # Row 0, Col 6
+        
+        # 增加 J3 增量输入
+        inc_j3_label = QLabel("增加 J3 (度):")
+        inc_j3_label.setAlignment(Qt.AlignVCenter)
+        self.inc_j3_input = QLineEdit("0.00") # 增量输入框
+        self.inc_j3_input.setFixedWidth(100)
+        
+        result_layout.addWidget(inc_j3_label, 1, 5) # Row 1, Col 5
+        result_layout.addWidget(self.inc_j3_input, 1, 6) # Row 1, Col 6
+        
+        # --- [新增] 应用增量按钮 (修正位置) ---
+        self.apply_inc_btn = QPushButton("应用该增量")
+        # 关键修正：使用 row - 1 来确保按钮位于 '目标运动时间' (row 2) 所在的行
+        # 此时 row = 3，使用 row - 1 = 2 即可定位到正确行
+        result_layout.addWidget(self.apply_inc_btn, row - 1, 5, 1, 2) 
+        
         # 将 result_layout (QGridLayout) 添加到 result_content_layout (QHBoxLayout) 中
         result_content_layout.addLayout(result_layout)
         # 添加 stretch，将 QGridLayout 推到左侧
@@ -398,8 +427,7 @@ class BeckhoffTab(QWidget):
         self.disconnect_ads_btn.clicked.connect(self.disconnect_ads)
         self.trigger_j2j3_btn.clicked.connect(self.trigger_j2j3_move)
         self.reset_j2j3_btn.clicked.connect(self.trigger_j2j3_reset)
-        
-        # [新增] 使能按钮连接
+        self.apply_inc_btn.clicked.connect(self.apply_joint_increment)
         self.enable_motor_btn.clicked.connect(self.toggle_motor_enable)
 
 # ====================================================================
@@ -622,3 +650,40 @@ class BeckhoffTab(QWidget):
         self.disconnect_ads()
         if self.ads_command_thread and self.ads_command_thread.isRunning():
             self.ads_command_thread.wait() # 确保指令线程结束
+            
+    def apply_joint_increment(self):
+        """
+        点击“应用该增量”按钮时调用。
+        将“当前 J2/J3”值加上“增加 J2/J3”值，并将结果输入到“目标 J2/J3”中。
+        """
+        try:
+            # 1. 读取当前位置 (CurJ2/CurJ3)
+            # 检查是否有实时数据，若无则默认为 0.00
+            cur_j2_text = self.pos_labels["CurJ2"].text()
+            cur_j3_text = self.pos_labels["CurJ3"].text()
+            
+            if cur_j2_text == "--" or cur_j3_text == "--":
+                 QMessageBox.warning(self, "警告", "当前 J2/J3 数据无效，请确保 ADS 已连接且正在接收实时数据。")
+                 return
+
+            cur_j2 = float(cur_j2_text)
+            cur_j3 = float(cur_j3_text)
+
+            # 2. 读取增量值 (IncJ2/IncJ3)
+            inc_j2 = float(self.inc_j2_input.text())
+            inc_j3 = float(self.inc_j3_input.text())
+
+            # 3. 计算新的目标值
+            new_target_j2 = cur_j2 + inc_j2
+            new_target_j3 = cur_j3 + inc_j3
+
+            # 4. 更新目标输入框 (Target J2/Target J3)
+            self.result_labels["J2"].setText(f"{new_target_j2:.4f}")
+            self.result_labels["J3"].setText(f"{new_target_j3:.4f}")
+            
+            self.movement_status_label.setText("运动状态: 目标关节值已通过增量计算更新。")
+            
+        except ValueError:
+            QMessageBox.critical(self, "输入错误", "当前位置或增量值必须是有效数字！")
+        except Exception as e:
+            QMessageBox.critical(self, "计算错误", f"应用增量时发生错误: {e}")
