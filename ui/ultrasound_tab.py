@@ -34,6 +34,9 @@ class UltrasoundTab(QWidget):
         self.start_btn = QPushButton("开启超声探头")
         self.stop_btn = QPushButton("关闭超声探头")
         
+        # --- [新增] 单次保存按钮 ---
+        self.single_save_btn = QPushButton("保存单次图像")
+        
         # --- [修改] 1. 按钮名称改为“开始保存图像” ---
         self.save_btn = QPushButton("开始保存图像")
         
@@ -139,6 +142,10 @@ class UltrasoundTab(QWidget):
         self.save_btn.setFixedSize(120, 40)
         self.save_btn.setEnabled(False)
         
+        # [新增] 单次保存按钮的设置
+        self.single_save_btn.setFixedSize(120, 40)
+        self.single_save_btn.setEnabled(False) 
+        
         # 旋转范围输入布局
         rotation_input_layout = QHBoxLayout()
         rotation_input_layout.addWidget(QLabel("转动范围 x 度:"))
@@ -156,6 +163,11 @@ class UltrasoundTab(QWidget):
         btn_layout.addSpacing(10)
         btn_layout.addWidget(self.stop_btn)
         btn_layout.addSpacing(10)
+        
+        # [新增] 添加保存单次图像按钮
+        btn_layout.addWidget(self.single_save_btn) 
+        btn_layout.addSpacing(10)
+        
         btn_layout.addWidget(self.save_btn)
         
         # 添加旋转控制组
@@ -173,6 +185,8 @@ class UltrasoundTab(QWidget):
         """连接信号和槽。"""
         self.start_btn.clicked.connect(self.start_capture)
         self.stop_btn.clicked.connect(self.stop_capture)
+        # --- [新增] 单次保存按钮连接 ---
+        self.single_save_btn.clicked.connect(self.save_image) 
         # --- [修改] 连接到新的 toggle 函数 ---
         self.save_btn.clicked.connect(self.toggle_real_time_save) 
         
@@ -221,6 +235,7 @@ class UltrasoundTab(QWidget):
             self.stop_btn.setEnabled(False)
             self.start_btn.setEnabled(True)
             self.save_btn.setEnabled(False)
+            self.single_save_btn.setEnabled(False)
             self.left_x_btn.setEnabled(False)
             self.right_2x_btn.setEnabled(False)
             self.image_label.setText("无法打开摄像头。")
@@ -254,6 +269,7 @@ class UltrasoundTab(QWidget):
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.save_btn.setEnabled(True)
+        self.single_save_btn.setEnabled(True)
         self.left_x_btn.setEnabled(True)
         self.right_2x_btn.setEnabled(True)
         self.image_label.setText("正在捕获图像...")
@@ -272,6 +288,7 @@ class UltrasoundTab(QWidget):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.save_btn.setEnabled(False)
+        self.single_save_btn.setEnabled(False)
         self.left_x_btn.setEnabled(False)
         self.right_2x_btn.setEnabled(False)
         self.image_label.setText("已停止捕获。")
@@ -522,6 +539,7 @@ class UltrasoundTab(QWidget):
         self.left_x_btn.setEnabled(False)
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(False)
+        self.single_save_btn.setEnabled(False)
 
         # 1. 定义 'image' 根目录并创建子文件夹
         base_dir = os.path.join(os.getcwd(), "image")
