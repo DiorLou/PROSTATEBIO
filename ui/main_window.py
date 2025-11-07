@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt5.QtGui import QCloseEvent, QFont, QImage, QPixmap
 from core.tcp_manager import TCPManager
-from core.ultrasound_plane import calculate_rotation_for_plane_alignment, calculate_new_rpy_for_b_point
+from core.ultrasound_plane import calculate_rotation_for_plane_alignment, calculate_new_rpy_for_b_point, get_final_tcp_e_position_after_delta_rotation
 from ui.ultrasound_tab import UltrasoundTab
 from kinematics.prostate_biopsy_robot_kinematics import RobotKinematics
 from ui.beckhoff_tab import BeckhoffTab
@@ -108,6 +108,9 @@ class RobotControlWindow(QMainWindow):
         # 一个列表，用于存储用于设置TCP参数的 QLineEdit 控件的引用。
         self.tcp_input_entries = []
 
+        # 新增：记录当前正在使用的TCP名称
+        self.current_tcp_name = "TCP_E" 
+        
         # --- 2. 初始化业务逻辑变量 ---
         self.power_state = 0  # 机器人的电源状态：0为未上电，1为已上电。
         self.enable_state = 0 # 机器人的使能状态：0为未使能，1为已使能。
@@ -302,7 +305,7 @@ class RobotControlWindow(QMainWindow):
     def send_set_tcp_command(self):
         """
         根据用户在输入框中输入的六个参数，格式化并发送设置TCP的指令。
-        指令格式：SetCurTCP,0,Tcp_X,Tcp_Y,Tcp_Z,Tcp_Rx,Tcp_Ry,Tcp_Rz;
+        指令格式：ConfigTCP,nRbtID,sTcpName,dTcp_X,dTcp_Y,dTcp_Z,dTcp_Rx,dTcp_Ry,dTcp_Rz;
         """
         try:
             # 尝试将每个输入框的文本转换为浮点数。
@@ -310,10 +313,16 @@ class RobotControlWindow(QMainWindow):
             tcp_x, tcp_y, tcp_z, tcp_rx, tcp_ry, tcp_rz = params
 
             # 格式化指令字符串，并保留两位小数。
-            command = f"SetCurTCP,0,{tcp_x:.2f},{tcp_y:.2f},{tcp_z:.2f},{tcp_rx:.2f},{tcp_ry:.2f},{tcp_rz:.2f};"
+            # 使用新的 ConfigTCP 命令格式和 self.current_tcp_name
+            sTcpName = self.current_tcp_name
+            command = (
+                f"ConfigTCP,0,{sTcpName},{tcp_x:.2f},{tcp_y:.2f},{tcp_z:.2f},"
+                f"{tcp_rx:.2f},{tcp_ry:.2f},{tcp_rz:.2f};"
+            )
+            
             self.log_message(command)
             self.tcp_manager.send_command(command)
-            self.status_bar.showMessage("状态: TCP参数已发送。")
+            self.status_bar.showMessage(f"状态: TCP参数已发送到 {sTcpName}。")
         except ValueError:
             QMessageBox.critical(self, "输入错误", "TCP参数必须是有效的数字！")
         except IndexError:
@@ -538,57 +547,75 @@ class RobotControlWindow(QMainWindow):
 
         try:
             # 计算新的欧拉角姿态
-            new_rpy_deg = calculate_new_rpy_for_b_point(a_point, o_point, b_point, initial_tcp_pose[3:])
-            current_rpy_deg = initial_tcp_pose[3:]
+            delta_rotation_matrix = calculate_new_rpy_for_b_point(a_point, o_point, b_point, initial_tcp_pose[3:])
+            # 1. 将输入的欧拉角从度转换为弧度
+            euler_angles_rad = np.deg2rad([initial_tcp_pose[3], initial_tcp_pose[4], initial_tcp_pose[5]])
+    
+            # 2. 将欧拉角转换为工具末端在世界坐标系中的旋转矩阵
+            # 假设旋转顺序是 Roll (X), Pitch (Y), Yaw (Z) (SXYZ 外部旋转)
+            tool_rotation_matrix = pyrot.matrix_from_euler(euler_angles_rad, 0, 1, 2, extrinsic=True)
 
-            # 计算每个欧拉角的增量
-            delta_rpy_deg = new_rpy_deg - current_rpy_deg
+            R_final = np.dot(delta_rotation_matrix, tool_rotation_matrix)
             
-            # 构造 WayPointRel 命令
+            final_rpy_rad = pyrot.euler_from_matrix(R_final, 0, 1, 2, extrinsic=True)
+            
+            final_rpy_deg = np.rad2deg(final_rpy_rad)
+            
+            P_final = get_final_tcp_e_position_after_delta_rotation([initial_tcp_pose[0], initial_tcp_pose[1], initial_tcp_pose[2]], delta_rotation_matrix, [o_point[0], o_point[1], o_point[2]])
+                        
+            # print(delta_rpy_deg)
+            
+            # 3. 构造 WayPoint 命令 (绝对运动)
+            
             nRbtID = 0
-            nType = 1  # 1代表直线运动
-            nPointList = 0
             
-            # dPos_X, dPos_Y, dPos_Z, dPos_Rx, dPos_Ry, dPos_Rz, dPos_J1, ..., dPos_J6
-            # 在不使用点位列表的情况下，这12个参数都为0
-            dPos = ",".join(["0.00"] * 12)
+            # dX, dY, dZ, dRx, dRy, dRz 
+            dX_dY_dZ = P_final
+            dRx_dRy_dRz = final_rpy_deg
             
-            nrelMoveType = 1 # 1表示叠加作用
+            # dJ1, dJ2, dJ3, dJ4, dJ5, dJ6 (全为0)
+            dJ_zero = ",".join(["0.00"] * 6)
             
-            # nAxisMask_1, nAxisMask_2, ...
-            # Rx, Ry, Rz 运动，其他为0
-            nAxisMask = [0, 0, 0] + [1 if abs(angle) > 0.01 else 0 for angle in delta_rpy_deg]
-            nAxisMask_str = ",".join([str(val) for val in nAxisMask])
+            # dX, dY, dZ, dRx, dRy, dRz 字符串
+            pos_str = ",".join([f"{val:.2f}" for val in dX_dY_dZ])
+            rpy_str = ",".join([f"{val:.2f}" for val in dRx_dRy_dRz])
             
-            # dTarget_1, dTarget_2, ...
-            # X, Y, Z 的移动量为0，Rx, Ry, Rz的移动量为计算出的角度增量
-            dTarget = [0, 0, 0] + list(delta_rpy_deg)
-            dTarget_str = ",".join([f"{val:.2f}" for val in dTarget])
+            # 拼接 6个位置参数 + 6个姿态参数
+            pos_rpy_str = f"{pos_str},{rpy_str}"
             
-            sTcpName = "TCP_O"
+            sTcpName = "TCP"
             sUcsName = "Base"
             dVelocity = 50
             dAcc = 250
             dRadius = 50
-            nIsUseJoint = 0
+            nMoveType = 1 # 1代表直线运动 (Linear movement)
+            nIsUseJoint = 0 # 关键：不使用关节值模式
             nIsSeek = 0
             nIOBit = 0
             nIOState = 0
             strCmdID = "ID1"
             
-            # 拼接完整的命令
+            # WayPoint 命令格式: WayPoint,nRbtID,dX,dY,dZ,dRx,dRy,dRz,dJ1...dJ6,sTcpName,sUcsName,dVelocity,dAcc,dRadius,nMoveType,nIsUseJoint,nIsSeek,nIOBit,nIOState,strCmdID;
             command = (
-                f"WayPointRel,{nRbtID},{nType},{nPointList},{dPos},{nrelMoveType},{nAxisMask_str},{dTarget_str},"
-                f"{sTcpName},{sUcsName},{dVelocity},{dAcc},{dRadius},{nIsUseJoint},{nIsSeek},{nIOBit},{nIOState},"
-                f"{strCmdID};"
+                f"WayPoint,{nRbtID},{pos_rpy_str},{dJ_zero},"
+                f"{sTcpName},{sUcsName},{dVelocity},{dAcc},{dRadius},{nMoveType},"
+                f"{nIsUseJoint},{nIsSeek},{nIOBit},{nIOState},{strCmdID};"
             )
             
+            self.log_message(f"Final WayPoint Command: {command}") # FINAL COMMAND LOG
+
             # 发送指令
-            self.tcp_manager.send_command(command)
-            self.status_bar.showMessage("状态: 已发送指令，使超声平面包含B点。")
+            # self.tcp_manager.send_command(command)
+            print(pos_rpy_str)
+            self.status_bar.showMessage("状态: 已发送指令，使超声平面包含B点 (WayPoint)。")
 
         except ValueError as e:
             self.status_bar.showMessage(f"错误: {e}")
+            self.log_message(f"CALCULATION ERROR (ValueError): {e}") # ERROR LOG
+        except Exception as e:
+             self.status_bar.showMessage(f"致命错误: 姿态计算失败: {e}")
+             self.log_message(f"FATAL ERROR: Calculation or command preparation failed: {e}") # FATAL LOG
+        self.log_message("--- 绕AO旋转超声平面至B点功能结束 ---") # END LOG
         
     def handle_read_tcp_byname_message(self, message):
         """解析 'ReadTCPByName' 消息，并更新新的TCP显示框。"""
@@ -1218,30 +1245,35 @@ class RobotControlWindow(QMainWindow):
 
     def set_tcp_o(self):
         """发送设置TCP_O的命令。"""
+        self.current_tcp_name = "TCP_O" 
         self.log_message("SetTCPByName,0,TCP_O;")
         self.tcp_manager.send_command("SetTCPByName,0,TCP_O;")
         self.status_bar.showMessage("状态: 已发送设置TCP_O的命令。")
 
     def set_tcp_p(self):
         """发送设置TCP_P的命令。"""
+        self.current_tcp_name = "TCP_P" 
         self.log_message("SetTCPByName,0,TCP_P;")
         self.tcp_manager.send_command("SetTCPByName,0,TCP_P;")
         self.status_bar.showMessage("状态: 已发送设置TCP_P的命令。")
 
     def set_tcp_u(self):
         """发送设置TCP_U的命令。"""
+        self.current_tcp_name = "TCP_U" 
         self.log_message("SetTCPByName,0,TCP_U;")
         self.tcp_manager.send_command("SetTCPByName,0,TCP_U;")
         self.status_bar.showMessage("状态: 已发送设置TCP_U的命令。")
 
     def set_tcp_e(self):
         """发送设置TCP_E的命令。"""
+        self.current_tcp_name = "TCP_E" 
         self.log_message("SetTCPByName,0,TCP_E;")
         self.tcp_manager.send_command("SetTCPByName,0,TCP_E;")
         self.status_bar.showMessage("状态: 已发送设置TCP_E的命令。")
 
     def set_tcp_tip(self):
         """发送设置TCP_tip的命令。"""
+        self.current_tcp_name = "TCP_tip" 
         self.log_message("SetTCPByName,0,TCP_tip;")
         self.tcp_manager.send_command("SetTCPByName,0,TCP_tip;")
         self.status_bar.showMessage("状态: 已发送设置TCP_tip的命令。")
