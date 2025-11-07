@@ -881,9 +881,11 @@ class RobotControlWindow(QMainWindow):
             row_layout = QHBoxLayout()
             row_layout.addStretch()
             label = QLabel(f"关节 {i+1} (q{i+1}):")
-            value_label = QLabel("0.00")
+            value_label = QLineEdit("0.00")
+            value_label.setReadOnly(True)
+            value_label.setStyleSheet("background-color: lightgrey; border: 1px inset grey;")
             value_label.setFixedWidth(70)
-            value_label.setAlignment(Qt.AlignRight)
+            value_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter) # 右对齐
             self.joint_vars[i] = value_label  # 存储引用，以便后续更新显示。
             # 创建并连接“微调减小”按钮。
             btn_minus = QPushButton("-")
@@ -989,8 +991,9 @@ class RobotControlWindow(QMainWindow):
             label = QLabel(final_label_text)
             label.setAlignment(Qt.AlignCenter)
             
-            # 3. 创建并配置 QLabel (值显示部分)
-            value_label = QLabel("0.00")
+            # 3. 创建并配置 QLineEdit (值显示部分)
+            value_label = QLineEdit("0.00")
+            value_label.setReadOnly(True)
             value_label.setFixedWidth(70)
             
             # ***** 关键修改: 强制设置固定高度，防止被多行标签拉伸 *****

@@ -322,7 +322,8 @@ class BeckhoffTab(QWidget):
             # 确保标签左对齐
             label.setAlignment(Qt.AlignVCenter)
             
-            value_label = QLabel("--")
+            value_label = QLineEdit("--")
+            value_label.setReadOnly(True)
             
             # 当前值标签：设置固定宽度
             value_label.setFixedWidth(100) 
