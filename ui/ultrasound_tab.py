@@ -235,7 +235,7 @@ class UltrasoundTab(QWidget):
             self.stop_btn.setEnabled(False)
             self.start_btn.setEnabled(True)
             self.save_btn.setEnabled(False)
-            self.single_save_btn.setEnabled(False)
+            self.single_save_btn.setEnabled(False) # [修改] 启用/禁用单次保存按钮
             self.left_x_btn.setEnabled(False)
             self.right_2x_btn.setEnabled(False)
             self.image_label.setText("无法打开摄像头。")
@@ -269,7 +269,7 @@ class UltrasoundTab(QWidget):
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.save_btn.setEnabled(True)
-        self.single_save_btn.setEnabled(True)
+        self.single_save_btn.setEnabled(True) # [修改] 启用/禁用单次保存按钮
         self.left_x_btn.setEnabled(True)
         self.right_2x_btn.setEnabled(True)
         self.image_label.setText("正在捕获图像...")
@@ -288,7 +288,7 @@ class UltrasoundTab(QWidget):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.save_btn.setEnabled(False)
-        self.single_save_btn.setEnabled(False)
+        self.single_save_btn.setEnabled(False) # [修改] 启用/禁用单次保存按钮
         self.left_x_btn.setEnabled(False)
         self.right_2x_btn.setEnabled(False)
         self.image_label.setText("已停止捕获。")
@@ -341,8 +341,17 @@ class UltrasoundTab(QWidget):
             QMessageBox.warning(self, "警告", "没有可保存的图像。请先开启超声探头。")
             return
 
+        # 获取定时器间隔 (ms)
+        interval_ms = self.real_time_save_timer.interval()
+
+        # 1. 构造新的文件夹名称
+        # 名称格式: "实时保存图像_间隔300ms_20251107_HHMMSS"
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # 3. 新建文件夹名为“实时图像保存：{当前的时间}”
+        
+        # 使用下划线作为分隔符，避免系统兼容性问题
+        new_folder_name = f"Realtime_Capture_Interval_{interval_ms}ms_{timestamp}"
+        
+        # 2. 创建根目录和子目录
         base_dir = os.path.join(os.getcwd(), "image") 
         if not os.path.isdir(base_dir):
             try:
@@ -351,8 +360,8 @@ class UltrasoundTab(QWidget):
                 QMessageBox.critical(self, "文件系统错误", f"无法创建根保存目录 ('image'): {e}")
                 return
 
-        # 使用中文冒号替换为下划线，以确保跨平台兼容性
-        self.real_time_save_folder = os.path.join(base_dir, f"实时图像保存_{timestamp}")
+        # 设置最终的保存文件夹路径
+        self.real_time_save_folder = os.path.join(base_dir, new_folder_name)
         try:
             os.makedirs(self.real_time_save_folder, exist_ok=True)
         except OSError as e:
@@ -362,11 +371,11 @@ class UltrasoundTab(QWidget):
         self.save_sequence_number = 0
         self.is_real_time_saving = True
         
-        # 2. 按钮名字变为“停止保存图像”，并改变颜色
+        # 3. 按钮名字变为“停止保存图像”，并改变颜色
         self.save_btn.setText("停止保存图像") 
         self.save_btn.setStyleSheet("background-color: salmon;") 
         
-        # 2. 每隔300ms保存一张图片
+        # 4. 启动定时器 (默认 300ms)
         self.real_time_save_timer.start(300) 
         self.main_window.status_bar.showMessage(f"状态: 已开始实时保存图像至: {self.real_time_save_folder}")
 
@@ -396,18 +405,18 @@ class UltrasoundTab(QWidget):
         
         # 格式化工具端位姿: (x,y,z,Rx,Ry,Rz)
         if pose and len(pose) == 6:
-            # 4. 图片命名方式是当前工具端的六个姿态+(序列号)
-            # 使用下划线连接所有姿态值，并保留小数点
-            sanitized_pose_str = "_".join([f"{p:.2f}" for p in pose])
+            # 姿态字符串格式: (x,y,z,Rx,Ry,Rz)，与旋转捕获命名格式一致
+            pose_str = "(" + ",".join([f"{p:.2f}" for p in pose]) + ")"
         else:
-            sanitized_pose_str = "POSE_NA"
+            pose_str = "POSE_NA"
             print("警告: 无法获取有效的工具端位姿数据。")
 
-        # 序列号格式化，例如 0000, 0001, ...
-        sequence_str = f"_{self.save_sequence_number:04d}"
+        # 序列号格式化，作为文件名开头的前缀，例如 0000, 0001, ... (使用 4 位格式)
+        # 实时保存使用序列号作为“旋转度数”的位置
+        rotation_step_str = f"{self.save_sequence_number:04d}"
         
-        # 构造新的文件名: (机器臂末端位姿) + (序列号) + .png
-        new_filename = f"P_{sanitized_pose_str}{sequence_str}.png"
+        # 构造新的文件名: (序列号/步数) + (机器臂末端位姿) + .png
+        new_filename = f"{rotation_step_str}{pose_str}.png"
         image_path = os.path.join(self.real_time_save_folder, new_filename)
 
         if cv2.imwrite(image_path, self.current_frame):
@@ -416,13 +425,13 @@ class UltrasoundTab(QWidget):
         else:
             print(f"实时保存图像失败: {image_path}")
             self._stop_real_time_save() # 保存失败则停止
-            QMessageBox.critical(self, "保存错误", "实时图像保存失败，已停止保存。")
+            # 移除原始的 QMessageBox.critical 调用，防止在定时器线程中阻塞 UI
             
     # --- [修改/新增] 实时保存逻辑 END ---
 
 
     def save_image(self):
-        """保存当前裁剪后的图像。"""
+        """保存当前裁剪后的图像。（单次保存）"""
         if self.current_frame is None:
             QMessageBox.warning(self, "警告", "没有可保存的图像。请先开启超声探头。")
             return
@@ -431,10 +440,16 @@ class UltrasoundTab(QWidget):
         file_dialog.setWindowTitle("保存图像")
         file_dialog.setNameFilter("图像文件 (*.png *.jpg *.jpeg)")
         file_dialog.setAcceptMode(QFileDialog.AcceptSave)
-        file_dialog.setDirectory(os.path.expanduser('~'))
+        
+        # 默认保存到当前目录
+        file_dialog.setDirectory(os.getcwd()) 
 
         if file_dialog.exec_() == QFileDialog.Accepted:
             save_path = file_dialog.selectedFiles()[0]
+            # 确保文件名后缀
+            if not save_path.lower().endswith(('.png', '.jpg', '.jpeg')):
+                save_path += '.png' 
+                
             try:
                 cv2.imwrite(save_path, self.current_frame)
                 QMessageBox.information(self, "成功", f"图像已保存至:\n{save_path}")
@@ -453,6 +468,7 @@ class UltrasoundTab(QWidget):
         self.left_x_btn.setEnabled(True)
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(True)
+        self.single_save_btn.setEnabled(True) # [修改] 启用/禁用单次保存按钮
 
     def _get_rotation_x_value(self):
         """从输入框获取旋转范围 x 的值，并进行校验。（已更新：必须是正整数）"""
@@ -539,7 +555,7 @@ class UltrasoundTab(QWidget):
         self.left_x_btn.setEnabled(False)
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(False)
-        self.single_save_btn.setEnabled(False)
+        self.single_save_btn.setEnabled(False) # [修改] 启用/禁用单次保存按钮
 
         # 1. 定义 'image' 根目录并创建子文件夹
         base_dir = os.path.join(os.getcwd(), "image")
