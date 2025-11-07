@@ -580,8 +580,8 @@ class BeckhoffTab(QWidget):
             QMessageBox.warning(self, "警告", "正在执行运动监控任务，请稍候。")
             return
 
-        RESET_J2 = 71.46
-        RESET_J3 = 23.9
+        RESET_J2 = 67.569
+        RESET_J3 = 20.347
         
         # 1. 读取运动时间（ms），并直接使用
         try:
