@@ -308,6 +308,8 @@ class RobotControlWindow(QMainWindow):
             self.handle_emergency_info_message(message)
         elif message.startswith("ReadOverride"):
             self.handle_override_message(message)
+        elif message.startswith("WayPoint"):
+            self.log_message(message)
         elif message.startswith("SetTCPByName"):
             self.log_message(message)
         elif message.startswith("MoveRelJ,OK"):
