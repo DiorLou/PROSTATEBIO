@@ -158,6 +158,7 @@ def calculate_new_rpy_for_b_point(a_point, o_point, b_point, initial_rpy_deg):
 
     # np.arctan2 能够计算出绕OA轴的旋转角度
     rotation_angle_rad = np.arctan2(y_component, x_component)
+    print("绕OA轴的旋转角度(度):", end='')
     print(np.rad2deg(rotation_angle_rad))
 
     # 绕OA向量旋转指定角度

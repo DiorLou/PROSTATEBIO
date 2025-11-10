@@ -65,6 +65,11 @@ class RobotControlWindow(QMainWindow):
         self.b_vars = [None] * 3
         self.b_point_position = np.zeros(3)
         
+        # [修改] 用于存储从机器人读取的 [X, Y, Z, Rx, Ry, Rz]
+        self.tcp_u_definition_pose = None  
+        # [新增] 用于标记期待的响应类型 (替代按钮，改为连接时期待)
+        self.temp_expected_response = None
+        
         self.get_a_btn = None
         self.get_o_btn = None
         self.get_e_btn = None
@@ -254,6 +259,15 @@ class RobotControlWindow(QMainWindow):
         try:
             port = int(self.port_entry.text())
             result = self.tcp_manager.connect(ip, port)
+            
+            # [修正] 如果连接成功，在发送 ReadActPos/ReadRobotState 等定时指令之后，立即发送读取 TCP_U 的命令
+            if "连接成功" in result:
+                command = "ReadTCPByName,0,TCP_U;"
+                # 设置标志：期待下一个 ReadTCPByName 响应是 TCP_U 的定义
+                self.temp_expected_response = "TCP_U_DEF" 
+                self.tcp_manager.send_command(command)
+                self.log_message(f"已自动发送命令: {command}")
+            
             if "失败" in result:
                 QMessageBox.critical(self, "连接错误", result)
         except ValueError:
@@ -303,7 +317,12 @@ class RobotControlWindow(QMainWindow):
             self.handle_read_cur_tcp_message(message)
         elif message.startswith("ReadTCPByName"):
             self.log_message(message)
+            # 1. 通用处理 (例如记录日志，但不解析数据到UI，因为不知道是哪个TCP)
             self.handle_read_tcp_byname_message(message)
+            # 2. [修正] 特殊处理：检查是否是自动获取 TCP_U 定义的响应
+            if self.temp_expected_response == "TCP_U_DEF":
+                # 调用内部处理方法，它负责清除标记并解析数据
+                self._handle_auto_tcp_u_definition_response(message)
         elif message.startswith("ReadEmergencyInfo"):
             self.handle_emergency_info_message(message)
         elif message.startswith("ReadOverride"):
@@ -584,9 +603,7 @@ class RobotControlWindow(QMainWindow):
             final_rpy_deg = np.rad2deg(final_rpy_rad)
             
             P_final = get_final_tcp_e_position_after_delta_rotation([initial_tcp_pose[0], initial_tcp_pose[1], initial_tcp_pose[2]], delta_rotation_matrix, [o_point[0], o_point[1], o_point[2]])
-                        
-            # print(delta_rpy_deg)
-            
+                                    
             # 3. 构造 WayPoint 命令 (绝对运动)
             
             nRbtID = 0
@@ -628,6 +645,7 @@ class RobotControlWindow(QMainWindow):
 
             # 发送指令
             # self.tcp_manager.send_command(command)
+            print("WayPoint 目标姿态(rpy):", end='')
             print(pos_rpy_str)
             self.status_bar.showMessage("状态: 已发送指令，使超声平面包含B点 (WayPoint)。")
 
@@ -1150,14 +1168,14 @@ class RobotControlWindow(QMainWindow):
         layout.addWidget(group)
         
     def create_b_point_group(self, layout):
-        """新增：创建病灶点B定位Group。"""
+        """新增：创建病灶点B定位Group。（已修改：使用自动读取的TCP_U定义）"""
         
         # 最外层的 GroupBox
         group = QGroupBox("病灶点B定位")
         group_layout = QVBoxLayout(group)
         
-        # 内部的子 GroupBox
-        b_point_subgroup = QGroupBox("B点")
+        # --- 1. B点 (TCP_U 坐标系) 输入 ---
+        b_point_subgroup = QGroupBox("B点 (TCP_U 坐标系) - P_B|U")
         b_point_layout = QGridLayout(b_point_subgroup)
         
         b_labels = ["B_x:", "B_y:", "B_z:"]
@@ -1168,35 +1186,83 @@ class RobotControlWindow(QMainWindow):
             b_point_layout.addWidget(label, 0, i * 2)
             b_point_layout.addWidget(text_box, 0, i * 2 + 1)
         
-        self.b_point_btn = QPushButton("输入B点位置")
-        b_point_layout.addWidget(self.b_point_btn, 1, 0, 1, 6, alignment=Qt.AlignCenter)
-        
-        # 将内部的子 GroupBox 控件添加到外部的布局中
         group_layout.addWidget(b_point_subgroup)
         
-        # 在Groupbox底部添加一个水平布局，用于放置按钮
+        # --- 2. 按钮布局 ---
         button_layout = QHBoxLayout()
-        self.rotate_b_point_btn = QPushButton("绕AO旋转超声平面使经过B点")
-        button_layout.addWidget(self.rotate_b_point_btn)
+        # 按钮功能：读取B点(U系)并使用已读取的TCP_U定义转换到Base系
+        self.b_point_btn = QPushButton("读取B点(U系)并转换到Base系")
+        
+        button_layout.addWidget(self.b_point_btn) 
         
         group_layout.addLayout(button_layout)
+        
+        # 旋转按钮
+        self.rotate_b_point_btn = QPushButton("绕AO旋转超声平面使经过B点")
+        group_layout.addWidget(self.rotate_b_point_btn)
         
         group_layout.addStretch()
         layout.addWidget(group)
         
     def set_b_point_position(self):
         """
-        从文本框中读取B点坐标，并将其存储。
+        [修改] 从文本框中读取 B点(TCP_U) 坐标，使用已存储的 TCP_U 定义，
+        将其转换为 Base 坐标系下的位置，并存储到 self.b_point_position。
+        P_Base = T_Base_to_E * T_E_to_U * P_B|U
         """
         try:
-            b_x = float(self.b_vars[0].text())
-            b_y = float(self.b_vars[1].text())
-            b_z = float(self.b_vars[2].text())
-            self.b_point_position = np.array([b_x, b_y, b_z])
-            self.status_bar.showMessage(f"状态: B点位置 ({b_x}, {b_y}, {b_z}) 已输入。")
-        except ValueError:
-            self.status_bar.showMessage("错误: B点坐标必须为有效数字。")
-            QMessageBox.critical(self, "输入错误", "B点坐标必须是有效的数字！")
+            # 1. 检查 TCP_U 定义是否已读取
+            if self.tcp_u_definition_pose is None:
+                raise ValueError("未读取 TCP_U 定义。请确保已连接机器人，并等待 TCP_U 定义自动获取成功。")
+                
+            # 2. 获取 B点在 TCP_U 坐标系下的位置 (P_B|U)
+            p_b_in_u_raw = self._get_ui_values(self.b_vars)
+            if p_b_in_u_raw is None:
+                raise ValueError("B点 (TCP_U) 坐标必须是有效数字。")
+            p_b_in_u_homo = np.append(np.array(p_b_in_u_raw, dtype=np.float64), 1.0)
+            
+            # 3. 获取 T_Base_to_E: 基坐标系到 TCP_E 的变换 (机器人实时姿态)
+            pose_base_to_e = self.get_current_tool_pose()
+            if pose_base_to_e is None:
+                 raise ValueError("无法获取当前的机器人姿态 (TCP_E)。请确保已连接机器人或已手动输入工具端位姿。")
+
+            T_Base_to_E = self._pose_to_matrix(pose_base_to_e)
+            
+            # 4. T_E_to_U: 使用已存储的 TCP_U 定义
+            T_E_to_U = self._pose_to_matrix(self.tcp_u_definition_pose)
+            
+            # 5. 执行坐标变换: P_Base = T_Base_to_E * T_E_to_U * P_B|U
+            T_Base_to_U = T_Base_to_E @ T_E_to_U
+            p_b_in_base_homo = T_Base_to_U @ p_b_in_u_homo
+            
+            # 6. 提取 Base 坐标系下的 B 点位置
+            p_b_in_base = p_b_in_base_homo[:3]
+            
+            # 7. 更新内部 B 点状态 (self.b_point_position)
+            self.b_point_position = p_b_in_base
+            
+            # 8. 更新状态栏和弹出信息框
+            self.status_bar.showMessage(f"状态: B点 ({p_b_in_u_raw[0]:.2f}, {p_b_in_u_raw[1]:.2f}, {p_b_in_u_raw[2]:.2f}) 已从 TCP_U 系转换到 Base 系并存储。")
+            
+            QMessageBox.information(
+                self, 
+                "坐标转换成功", 
+                f"B点 (TCP_U) 坐标已转换为 Base 坐标系下的位置:\n"
+                f"X: {p_b_in_base[0]:.4f}\n"
+                f"Y: {p_b_in_base[1]:.4f}\n"
+                f"Z: {p_b_in_base[2]:.4f}\n\n"
+                f"该 Base 坐标已存储并用于后续的 '绕AO旋转超声平面使经过B点' 计算。"
+            )
+
+            print("Base 坐标系下的 b 点位置:", end='')
+            print(self.b_point_position)
+            
+        except ValueError as e:
+            QMessageBox.critical(self, "输入错误或数据不足", f"B点坐标转换失败: {e}")
+            self.status_bar.showMessage("错误: B点坐标转换失败。")
+        except Exception as e:
+            QMessageBox.critical(self, "内部错误", f"B点坐标转换时发生意外错误: {e}")
+            self.status_bar.showMessage("错误: B点坐标转换时发生意外错误。")
 
     def create_ur_control_group(self, layout):
         """
@@ -1664,3 +1730,60 @@ class RobotControlWindow(QMainWindow):
             
         except Exception as e:
             QMessageBox.critical(self, "数据恢复错误", f"恢复UI数据时失败: {e}")
+            
+    def _handle_auto_tcp_u_definition_response(self, response):
+        """
+        内部方法：处理由 'connect_tcp' 自动触发的 ReadTCPByName 响应，
+        通过检查 self.temp_expected_response 标志来确保是正确的响应。
+        """
+        # 1. 立即清除标志，防止后续无关的 ReadTCPByName 消息误触发
+        self.temp_expected_response = None 
+        
+        # 2. 检查消息格式是否符合 ReadTCPByName,OK/Fail,...
+        if not response.startswith("ReadTCPByName"):
+             return             
+        parts = response.strip(';').strip(',').split(',')
+        
+        # 3. 检查长度和状态码 (期望 8 个部分，且第二个部分是 'OK')
+        if len(parts) == 8 and parts[1].strip() == 'OK':
+            try:
+                # 参数索引从 2 到 7
+                tcp_u_pose_str = parts[2:] 
+                tcp_u_pose = [float(p) for p in tcp_u_pose_str]
+                
+                if len(tcp_u_pose) == 6:
+                    self.tcp_u_definition_pose = tcp_u_pose
+                    pose_str = ", ".join([f"{p:.2f}" for p in tcp_u_pose])
+                    self.log_message(f"系统: TCP_U 定义 (相对于 TCP_E) 已自动存储: [{pose_str}]")
+                    # [重要] 成功获取后，弹出提示，解决用户等待问题
+                    self.status_bar.showMessage("状态: TCP_U 定义已成功自动获取。")
+                    QMessageBox.information(self, "TCP_U 就绪", f"TCP_U 定义已成功获取: [{pose_str}]")
+                
+            except Exception as e:
+                self.log_message(f"警告: 自动解析 TCP_U 定义数据失败: {e}")
+                
+        elif len(parts) > 1 and parts[1].strip() == 'Fail':
+            self.log_message(f"警告: 自动读取 TCP_U 定义失败: {response}")
+            QMessageBox.warning(self, "TCP_U 警告", "自动获取 TCP_U 定义失败，功能受限。")
+
+    def _pose_to_matrix(self, pose_xyz_rpy):
+        """
+        Helper: Convert [X, Y, Z, Rx, Ry, Rz] (degrees) to 4x4 Homogeneous Matrix (T).
+        使用 SXYZ Extrinsic 约定，与 core/ultrasound_plane.py 保持一致。
+        """
+        x, y, z, rx, ry, rz = pose_xyz_rpy
+        
+        # 1. Position vector (translation)
+        translation = np.array([x, y, z])
+        
+        # 2. Rotation Matrix (SXYZ Extrinsic)
+        rpy_rad = np.deg2rad([rx, ry, rz])
+        # The order (0, 1, 2) corresponds to X, Y, Z axes
+        rotation_matrix = pyrot.matrix_from_euler(rpy_rad, 0, 1, 2, extrinsic=True)
+        
+        # 3. Homogeneous Transformation Matrix (4x4)
+        T = np.identity(4)
+        T[:3, :3] = rotation_matrix
+        T[:3, 3] = translation
+        
+        return T
