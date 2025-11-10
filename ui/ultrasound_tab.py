@@ -420,7 +420,6 @@ class UltrasoundTab(QWidget):
         image_path = os.path.join(self.real_time_save_folder, new_filename)
 
         if cv2.imwrite(image_path, self.current_frame):
-            # print(f"已实时保存图像: {new_filename}")
             self.save_sequence_number += 1
         else:
             print(f"实时保存图像失败: {image_path}")
