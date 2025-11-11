@@ -336,7 +336,8 @@ class RobotControlWindow(QMainWindow):
             self.ultrasound_tab.continue_rotation()
         elif message.startswith("MoveRelJ"):
             # 说明指令未完成，开启报错
-            QMessageBox.critical(self, "关节转动错误", "检查状态机是否空闲")
+            self.log_message(message)
+            # QMessageBox.critical(self, "关节转动错误", "检查状态机是否空闲")
 
     def request_cur_tcp_info(self):
         """通过按钮点击发送指令，请求获取当前TCP坐标。"""
@@ -1065,7 +1066,7 @@ class RobotControlWindow(QMainWindow):
             group_layout.addLayout(btn_layout, row_buttons, col_start, 1, 2)
         
         # 6. 添加 Tool 坐标系复选框 (放在下一行，即第 4 行，跨越所有列)
-        self.tool_coord_checkbox = QCheckBox("Tool 坐标系")
+        self.tool_coord_checkbox = QCheckBox("是否在 Tool 坐标系下运动")
         group_layout.addWidget(self.tool_coord_checkbox, 4, 0, 1, 6, alignment=Qt.AlignCenter)
 
         # 7. [新增] 添加“输入工具端位姿”按钮 (放在第 5 行)
@@ -1175,7 +1176,7 @@ class RobotControlWindow(QMainWindow):
         group_layout = QVBoxLayout(group)
         
         # --- 1. B点 (TCP_U 坐标系) 输入 ---
-        b_point_subgroup = QGroupBox("B点 (TCP_U 坐标系) - P_B|U")
+        b_point_subgroup = QGroupBox("B点 (TCP_U 坐标系)")
         b_point_layout = QGridLayout(b_point_subgroup)
         
         b_labels = ["B_x:", "B_y:", "B_z:"]
@@ -1240,19 +1241,11 @@ class RobotControlWindow(QMainWindow):
             
             # 7. 更新内部 B 点状态 (self.b_point_position)
             self.b_point_position = p_b_in_base
+            print("p_b_in_base = ", end = '')
+            print(p_b_in_base)
             
             # 8. 更新状态栏和弹出信息框
             self.status_bar.showMessage(f"状态: B点 ({p_b_in_u_raw[0]:.2f}, {p_b_in_u_raw[1]:.2f}, {p_b_in_u_raw[2]:.2f}) 已从 TCP_U 系转换到 Base 系并存储。")
-            
-            QMessageBox.information(
-                self, 
-                "坐标转换成功", 
-                f"B点 (TCP_U) 坐标已转换为 Base 坐标系下的位置:\n"
-                f"X: {p_b_in_base[0]:.4f}\n"
-                f"Y: {p_b_in_base[1]:.4f}\n"
-                f"Z: {p_b_in_base[2]:.4f}\n\n"
-                f"该 Base 坐标已存储并用于后续的 '绕AO旋转超声平面使经过B点' 计算。"
-            )
 
             print("Base 坐标系下的 b 点位置:", end='')
             print(self.b_point_position)
