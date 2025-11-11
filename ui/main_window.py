@@ -3,18 +3,23 @@ import sys
 import json
 import os
 import numpy as np
-from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-                             QGroupBox, QLabel, QLineEdit, QPushButton,
-                             QTextEdit, QStatusBar, QGridLayout, QMessageBox,
-                             QCheckBox, QSlider, QTabWidget)
+from PyQt5.QtWidgets import (
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QGroupBox, QLabel, QLineEdit, QPushButton,
+    QTextEdit, QStatusBar, QGridLayout, QMessageBox,
+    QCheckBox, QSlider, QTabWidget,
+    # 新增用于B点选择对话框和文件读取的控件
+    QDialog, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
+    QRadioButton, QFileDialog 
+)
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt5.QtGui import QCloseEvent, QFont, QImage, QPixmap
 from core.tcp_manager import TCPManager
 from core.ultrasound_plane import calculate_rotation_for_plane_alignment, calculate_new_rpy_for_b_point, get_final_tcp_e_position_after_delta_rotation
-from ui.ultrasound_tab import UltrasoundTab
 from kinematics.prostate_biopsy_robot_kinematics import RobotKinematics
 from ui.beckhoff_tab import BeckhoffTab
 import pytransform3d.rotations as pyrot
+from ui.ultrasound_tab import UltrasoundTab
 
 # Constants for motion direction
 # 移动方向常量
@@ -22,6 +27,113 @@ FORWARD = 1
 BACKWARD = 0
 
 DATA_FILE_NAME = "saved_robot_data.json"
+
+class BPointSelectionDialog(QDialog):
+    """用于显示从TXT文件读取的B点列表，并允许用户选择其中一个的对话框。"""
+    
+    # 信号：当用户选择并确认一个B点后发出，传递选定B点在Base坐标系下的位置 (X, Y, Z)
+    b_point_selected = pyqtSignal(np.ndarray)
+
+    def __init__(self, b_point_data_list, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("B点定位选择")
+        self.setMinimumSize(900, 400)
+        self.b_point_data_list = b_point_data_list
+        self.selected_row = -1 # 存储选中的行索引
+
+        main_layout = QVBoxLayout(self)
+
+        # 1. 结果表格
+        self.table = QTableWidget()
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["选择", "B点 (TCP_U) 姿态", "B点 (Base) 姿态", "OA轴旋转角度 (度)"])
+        # 允许内容自适应宽度，并限制只能选择行
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+
+        # 填充表格
+        self._populate_table()
+
+        main_layout.addWidget(self.table)
+        
+        # 2. 按钮布局
+        btn_layout = QHBoxLayout()
+        self.ok_btn = QPushButton("确认选择")
+        self.cancel_btn = QPushButton("取消")
+        btn_layout.addStretch()
+        btn_layout.addWidget(self.ok_btn)
+        btn_layout.addWidget(self.cancel_btn)
+        btn_layout.addStretch()
+        
+        main_layout.addLayout(btn_layout)
+
+        # 3. 连接信号
+        # 点击任何单元格时触发选择逻辑
+        self.table.cellClicked.connect(self._select_row) 
+        self.ok_btn.clicked.connect(self._accept_selection)
+        self.cancel_btn.clicked.connect(self.reject)
+        
+        # 默认选中第一行
+        if self.b_point_data_list:
+             self._select_row(0, 0) # 触发初始化选中
+
+    def _populate_table(self):
+        """填充表格数据。"""
+        self.table.setRowCount(len(self.b_point_data_list))
+        
+        for row, data in enumerate(self.b_point_data_list):
+            
+            # Data: [p_b_in_u_pose (6), p_b_in_base_pose (6), rotation_angle_deg (1)]
+            p_u_pose, p_base_pose, angle = data
+            
+            # 列 0: 单选按钮
+            radio_button = QRadioButton()
+            
+            # 使用一个 QWidget 作为容器来居中单选按钮
+            radio_container = QWidget()
+            radio_layout = QHBoxLayout(radio_container)
+            radio_layout.addWidget(radio_button)
+            radio_layout.setAlignment(Qt.AlignCenter)
+            radio_layout.setContentsMargins(0, 0, 0, 0)
+            
+            self.table.setCellWidget(row, 0, radio_container)
+
+            # 列 1: TCP_U 姿态
+            p_u_str = f"({p_u_pose[0]:.2f}, {p_u_pose[1]:.2f}, {p_u_pose[2]:.2f}, {p_u_pose[3]:.2f}, {p_u_pose[4]:.2f}, {p_u_pose[5]:.2f})"
+            self.table.setItem(row, 1, QTableWidgetItem(p_u_str))
+
+            # 列 2: Base 姿态
+            p_base_str = f"({p_base_pose[0]:.2f}, {p_base_pose[1]:.2f}, {p_base_pose[2]:.2f}, {p_base_pose[3]:.2f}, {p_base_pose[4]:.2f}, {p_base_pose[5]:.2f})"
+            self.table.setItem(row, 2, QTableWidgetItem(p_base_str))
+            
+            # 列 3: OA 轴旋转角度
+            self.table.setItem(row, 3, QTableWidgetItem(f"{angle:.2f}"))
+
+
+    def _select_row(self, row, column):
+        """处理单元格点击事件，更新选中的行索引并同步单选按钮状态。"""
+        self.selected_row = row
+        # 确保只有当前行被选中
+        for r in range(self.table.rowCount()):
+            widget = self.table.cellWidget(r, 0)
+            if widget:
+                radio_button = widget.findChild(QRadioButton)
+                if radio_button:
+                    radio_button.setChecked(r == row)
+        
+    def _accept_selection(self):
+        """确认选择并发出信号。"""
+        if self.selected_row == -1:
+            QMessageBox.warning(self, "警告", "请选择一个 B 点。")
+            return
+
+        # 提取 Base 坐标下的位置 (前3个元素)
+        selected_data = self.b_point_data_list[self.selected_row]
+        p_base_pose = selected_data[1] # Base 姿态 (6 elements)
+        p_base_position = p_base_pose[0:3]
+
+        self.b_point_selected.emit(p_base_position)
+        self.accept()
 
 class RobotControlWindow(QMainWindow):
     """
@@ -63,6 +175,8 @@ class RobotControlWindow(QMainWindow):
         self.o_vars = [None] * 3
         self.e_vars = [None] * 3 # 新增 end-effect 变量列表
         self.b_vars = [None] * 3
+
+        self.b_base_vars = [None] * 3 
         self.b_point_position = np.zeros(3)
         
         # [修改] 用于存储从机器人读取的 [X, Y, Z, Rx, Ry, Rz]
@@ -175,8 +289,7 @@ class RobotControlWindow(QMainWindow):
         left_panel_layout.addLayout(top_left_layout)
         self.create_tool_state_group(left_panel_layout)
         self.create_record_oae_state_group(left_panel_layout)
-        self.create_b_point_group(left_panel_layout)  # 调用新的方法
-        
+        self.create_b_point_group(left_panel_layout)
         self.create_data_persistence_group(left_panel_layout)
         
         # 在最底部添加一个弹簧，将所有内容向上推
@@ -235,6 +348,7 @@ class RobotControlWindow(QMainWindow):
         self.get_suitable_tcp_btn.clicked.connect(self.get_suitable_tcp)
         self.b_point_btn.clicked.connect(self.set_b_point_position)
         self.rotate_b_point_btn.clicked.connect(self.rotate_ultrasound_plane_to_b)
+        self.load_b_points_txt_btn.clicked.connect(self.read_b_points_from_file)
         self.get_a_btn.clicked.connect(self.get_a_point_position)
         self.get_o_btn.clicked.connect(self.get_o_point_position)
         self.get_e_btn.clicked.connect(self.get_e_point_position)
@@ -1169,7 +1283,7 @@ class RobotControlWindow(QMainWindow):
         layout.addWidget(group)
         
     def create_b_point_group(self, layout):
-        """新增：创建病灶点B定位Group。（已修改：使用自动读取的TCP_U定义）"""
+        """新增：创建病灶点B定位Group，包含 TCP_U 输入和 Base 计算结果显示。"""
         
         # 最外层的 GroupBox
         group = QGroupBox("病灶点B定位")
@@ -1179,6 +1293,7 @@ class RobotControlWindow(QMainWindow):
         b_point_subgroup = QGroupBox("B点 (TCP_U 坐标系)")
         b_point_layout = QGridLayout(b_point_subgroup)
         
+        # 假设这里只需要 X, Y, Z (与原代码一致)
         b_labels = ["B_x:", "B_y:", "B_z:"]
         for i, label_text in enumerate(b_labels):
             label = QLabel(label_text)
@@ -1189,12 +1304,36 @@ class RobotControlWindow(QMainWindow):
         
         group_layout.addWidget(b_point_subgroup)
         
-        # --- 2. 按钮布局 ---
+        # --------------------------------------------------------
+        # [修改] 2. B点 (Base 坐标系) 显示/输入 Group
+        # --------------------------------------------------------
+        # 修改 GroupBox 标题
+        b_point_base_subgroup = QGroupBox("B点 (Base 坐标系)")
+        b_point_base_layout = QGridLayout(b_point_base_subgroup)
+        
+        b_base_labels = ["B_x:", "B_y:", "B_z:"]
+        for i, label_text in enumerate(b_base_labels):
+            label = QLabel(label_text)
+            # 修改为可编辑
+            text_box = QLineEdit("0.00")
+            text_box.setReadOnly(False) # <--- 关键修改：设置为可编辑
+            # 调整样式以配合可编辑输入框
+            text_box.setStyleSheet("background-color: white; border: 1px inset grey;") 
+            self.b_base_vars[i] = text_box
+            b_point_base_layout.addWidget(label, 0, i * 2)
+            b_point_base_layout.addWidget(text_box, 0, i * 2 + 1)
+
+        group_layout.addWidget(b_point_base_subgroup)
+        # --------------------------------------------------------
+
+        # --- 3. 按钮布局 ---
         button_layout = QHBoxLayout()
         # 按钮功能：读取B点(U系)并使用已读取的TCP_U定义转换到Base系
         self.b_point_btn = QPushButton("读取B点(U系)并转换到Base系")
+        self.load_b_points_txt_btn = QPushButton("读取TXT文件中的B点(TCP_U)")
         
         button_layout.addWidget(self.b_point_btn) 
+        button_layout.addWidget(self.load_b_points_txt_btn) 
         
         group_layout.addLayout(button_layout)
         
@@ -1209,7 +1348,6 @@ class RobotControlWindow(QMainWindow):
         """
         [修改] 从文本框中读取 B点(TCP_U) 坐标，使用已存储的 TCP_U 定义，
         将其转换为 Base 坐标系下的位置，并存储到 self.b_point_position。
-        P_Base = T_Base_to_E * T_E_to_U * P_B|U
         """
         try:
             # 1. 检查 TCP_U 定义是否已读取
@@ -1220,7 +1358,9 @@ class RobotControlWindow(QMainWindow):
             p_b_in_u_raw = self._get_ui_values(self.b_vars)
             if p_b_in_u_raw is None:
                 raise ValueError("B点 (TCP_U) 坐标必须是有效数字。")
-            p_b_in_u_homo = np.append(np.array(p_b_in_u_raw, dtype=np.float64), 1.0)
+            
+            # 由于 self.b_vars 只有 3 个元素，需要填充 6D 姿态 (Rx, Ry, Rz = 0, 0, 0)
+            p_b_in_u_pose_6d = np.array(p_b_in_u_raw + [0.0, 0.0, 0.0])
             
             # 3. 获取 T_Base_to_E: 基坐标系到 TCP_E 的变换 (机器人实时姿态)
             pose_base_to_e = self.get_current_tool_pose()
@@ -1232,23 +1372,42 @@ class RobotControlWindow(QMainWindow):
             # 4. T_E_to_U: 使用已存储的 TCP_U 定义
             T_E_to_U = self._pose_to_matrix(self.tcp_u_definition_pose)
             
-            # 5. 执行坐标变换: P_Base = T_Base_to_E * T_E_to_U * P_B|U
-            T_Base_to_U = T_Base_to_E @ T_E_to_U
-            p_b_in_base_homo = T_Base_to_U @ p_b_in_u_homo
-            
-            # 6. 提取 Base 坐标系下的 B 点位置
-            p_b_in_base = p_b_in_base_homo[:3]
+            # 5. T_U_to_B: 从 6D 姿态创建矩阵
+            T_U_to_B = self._pose_to_matrix(p_b_in_u_pose_6d)
+
+            # 6. 执行坐标变换: P_Base = (T_Base_to_E * T_E_to_U * T_U_to_B) * [0,0,0,1]^T
+            T_Base_to_B = T_Base_to_E @ T_E_to_U @ T_U_to_B
+            p_b_in_base = T_Base_to_B[:3, 3] # B 点位置 (X, Y, Z)
             
             # 7. 更新内部 B 点状态 (self.b_point_position)
             self.b_point_position = p_b_in_base
-            print("p_b_in_base = ", end = '')
-            print(p_b_in_base)
             
-            # 8. 更新状态栏和弹出信息框
+            # 8. [新增] 更新 Base 坐标系 B 点显示
+            self.b_base_vars[0].setText(f"{p_b_in_base[0]:.2f}")
+            self.b_base_vars[1].setText(f"{p_b_in_base[1]:.2f}")
+            self.b_base_vars[2].setText(f"{p_b_in_base[2]:.2f}")
+            
+            # 9. 更新状态栏和弹出信息框
             self.status_bar.showMessage(f"状态: B点 ({p_b_in_u_raw[0]:.2f}, {p_b_in_u_raw[1]:.2f}, {p_b_in_u_raw[2]:.2f}) 已从 TCP_U 系转换到 Base 系并存储。")
+            
+            QMessageBox.information(
+                self, 
+                "坐标转换成功", 
+                f"B点 (TCP_U) 坐标已转换为 Base 坐标系下的位置:\n"
+                f"X: {p_b_in_base[0]:.4f}\n"
+                f"Y: {p_b_in_base[1]:.4f}\n"
+                f"Z: {p_b_in_base[2]:.4f}\n\n"
+                f"该 Base 坐标已存储并更新到 Base 坐标系显示区域，并用于后续的 '绕AO旋转超声平面使经过B点' 计算。"
+            )
 
-            print("Base 坐标系下的 b 点位置:", end='')
-            print(self.b_point_position)
+            print("Base 坐标系下的 b 点位置:", p_b_in_base)
+            
+        except ValueError as e:
+            QMessageBox.critical(self, "输入错误或数据不足", f"B点坐标转换失败: {e}")
+            self.status_bar.showMessage("错误: B点坐标转换失败。")
+        except Exception as e:
+            QMessageBox.critical(self, "内部错误", f"B点坐标转换时发生意外错误: {e}")
+            self.status_bar.showMessage("错误: B点坐标转换时发生意外错误。")
             
         except ValueError as e:
             QMessageBox.critical(self, "输入错误或数据不足", f"B点坐标转换失败: {e}")
@@ -1628,15 +1787,241 @@ class RobotControlWindow(QMainWindow):
             QMessageBox.critical(self, "输入错误", "工具端位姿坐标必须是有效的数字！")
             self.status_bar.showMessage("错误: 工具端位姿坐标必须是有效的数字。")
             
-    def _get_ui_values(self, var_list):
-        """Helper to get float values from a list of QLineEdits."""
-        values = []
-        for var in var_list:
-            try:
-                values.append(float(var.text()))
-            except ValueError:
-                return None
-        return values
+    def _get_ui_values(self, qline_edits):
+        """尝试从 QLineEdit 列表中获取浮点数列表。失败返回 None 或抛出异常。"""
+        try:
+            return [float(le.text()) for le in qline_edits]
+        except ValueError:
+            return None
+        
+    def _get_ultrasound_normal(self, tcp_rpy_deg):
+        """
+        根据工具末端的欧拉角，计算超声平面的法向量。
+        (核心逻辑复制自 core/ultrasound_plane.py:calculate_ultrasound_plane_normal)
+        """
+        euler_angles_rad = np.deg2rad(tcp_rpy_deg)
+        tool_rotation_matrix = pyrot.matrix_from_euler(euler_angles_rad, 0, 1, 2, extrinsic=True)
+        angle_offset_rad = np.deg2rad(-22.5) 
+        z_axis_angle = np.array([0, 0, 1, angle_offset_rad])
+        rotation_delta_matrix = pyrot.matrix_from_axis_angle(z_axis_angle)
+        new_ultrasound_rotation_matrix = np.dot(tool_rotation_matrix, rotation_delta_matrix)
+        tool_y_axis_in_world_frame = new_ultrasound_rotation_matrix[:, 1]
+        
+        return tool_y_axis_in_world_frame
+
+    def _calculate_oa_rotation_angle(self, a_point, o_point, b_point, initial_rpy_deg, p_b_in_u_pose):
+        """
+        计算使超声平面包含B点所需绕OA轴的旋转角度 (度)。
+        """
+        # 1. 计算旋转轴：OA向量
+        oa_vector = a_point - o_point
+        
+        if np.linalg.norm(oa_vector) < 1e-6:
+            raise ValueError("几何错误：OA向量长度为零，无法定义旋转轴。") 
+
+        oa_unit_vector = oa_vector / np.linalg.norm(oa_vector)
+
+        # 2. 计算超声平面的初始法向量
+        ultrasound_normal = self._get_ultrasound_normal(initial_rpy_deg)
+        
+        # 3. 计算 OAB 平面法向量作为目标
+        ob_vector = b_point - o_point
+        
+        if np.linalg.norm(ob_vector) < 1e-6:
+            return 0.0
+
+        n_oab_vector = np.cross(oa_vector, ob_vector)
+        
+        if np.linalg.norm(n_oab_vector) < 1e-6:
+            # O, A, B 共线
+            return 0.0 
+
+        # 4. 计算旋转所需的角度
+        proj_u_norm = ultrasound_normal - np.dot(ultrasound_normal, oa_unit_vector) * oa_unit_vector
+        proj_target = n_oab_vector - np.dot(n_oab_vector, oa_unit_vector) * oa_unit_vector
+        
+        if np.linalg.norm(proj_u_norm) < 1e-6 or np.linalg.norm(proj_target) < 1e-6:
+            return 0.0 
+
+        y_axis_in_plane = np.cross(oa_unit_vector, proj_u_norm)
+        
+        x_component = np.dot(proj_target, proj_u_norm)
+        y_component = np.dot(proj_target, y_axis_in_plane)
+        
+        rotation_angle_rad = np.arctan2(y_component, x_component)
+
+        # ----------------------------------------------------
+        # 【统一调试打印】 (根据您的要求合并和调整格式)
+        print("\n======================================")
+        print("--- B点计算输入与几何向量分析 ---")
+        print(f"当前 A 点 (Base): {a_point}")
+        print(f"当前 O 点 (Base): {o_point}")
+        print(f"当前 TCP E 姿态 (Base, RPY): {initial_rpy_deg}")
+        print(f"待计算 B 点 (TCP_U 原始输入, 6D): {p_b_in_u_pose}")
+        print(f"OA轴单位向量: {oa_unit_vector}")
+        print(f"初始超声法向量 (N_US): {ultrasound_normal}")
+        print(f"目标 OAB 法向量 (N_OAB): {n_oab_vector / np.linalg.norm(n_oab_vector)}")
+        print(f"B 点位置 (Base 转换结果): {b_point}")
+        print("\n--- 投影向量分析 ---")
+        print(f"Proj(N_US): {proj_u_norm}")
+        print(f"Proj(N_OAB): {proj_target}")
+        print(f"绕OA轴的旋转角度(度): {np.rad2deg(rotation_angle_rad)}")
+        print("======================================")
+        # ----------------------------------------------------
+        
+        return np.rad2deg(rotation_angle_rad)
+
+    def _calculate_b_point_data(self, p_b_in_u_pose):
+        """
+        执行单个B点的所有计算：Base坐标系姿态和OA轴旋转角度。
+        p_b_in_u_pose: B点在TCP_U下的 [X, Y, Z, Rx, Ry, Rz] (度) 姿态。
+        """
+        # --- 0. 检查和读取依赖数据 ---
+        if self.tcp_u_definition_pose is None:
+            raise ValueError("未读取 TCP_U 定义，无法进行坐标变换。")
+            
+        pose_base_to_e = self.get_current_tool_pose()
+        if pose_base_to_e is None:
+            raise ValueError("无法获取当前的机器人姿态 (TCP_E)。请确保已连接机器人或已手动输入工具端位姿。")
+
+        a_point_val = self._get_ui_values(self.a_vars)
+        o_point_val = self._get_ui_values(self.o_vars)
+
+        if a_point_val is None or o_point_val is None:
+            raise ValueError("A点或O点坐标必须为有效数字。")
+
+        a_point = np.array(a_point_val[:3])
+        o_point = np.array(o_point_val[:3])
+        initial_rpy_deg = pose_base_to_e[3:] # 提取 RPY 姿态角
+
+        # --- 1. 计算 T_Base_to_B (Base 坐标系下的 B 点姿态) ---
+        T_U_to_B = self._pose_to_matrix(p_b_in_u_pose)
+        T_Base_to_E = self._pose_to_matrix(pose_base_to_e)
+        T_E_to_U = self._pose_to_matrix(self.tcp_u_definition_pose)
+        
+        T_Base_to_B = T_Base_to_E @ T_E_to_U @ T_U_to_B
+        
+        p_b_in_base = T_Base_to_B[:3, 3] # B 点位置 (X, Y, Z)
+        r_b_in_base_rpy = pyrot.euler_from_matrix(T_Base_to_B[:3, :3], 0, 1, 2, extrinsic=True) 
+        p_b_in_base_pose = np.append(p_b_in_base, np.rad2deg(r_b_in_base_rpy))
+
+        # --- 2. 计算 OA 轴旋转角度 ---
+        # 传递所有需要的参数和用于打印调试信息的原始 B 点 TCP_U 姿态
+        rotation_angle_deg = self._calculate_oa_rotation_angle(
+            a_point, 
+            o_point, 
+            p_b_in_base, 
+            initial_rpy_deg,
+            p_b_in_u_pose 
+        )
+        
+        return p_b_in_base_pose, rotation_angle_deg
+    
+    def read_b_points_from_file(self):
+        """
+        读取TXT文件，解析B点(TCP_U)位置(X,Y,Z)，假设姿态(Rx,Ry,Rz)为(0,0,0)，
+        计算Base姿态和旋转角度，并显示选择对话框。
+        """
+        # 1. 检查 TCP_U 定义
+        if self.tcp_u_definition_pose is None:
+            QMessageBox.warning(self, "警告", "请先连接机器人并确保已获取 TCP_U 定义。")
+            return
+
+        # 2. 检查 A, O 点是否已设置且不重合 (新增关键错误检查)
+        try:
+            a_point_val = self._get_ui_values(self.a_vars)
+            o_point_val = self._get_ui_values(self.o_vars)
+            
+            if a_point_val is None or o_point_val is None:
+                QMessageBox.critical(self, "数据错误", "请先在 '机器人A、O和End-Effect位置' 模块中输入或获取有效的 A 点和 O 点坐标。")
+                return
+            
+            a_point_pos = np.array(a_point_val[:3])
+            o_point_pos = np.array(o_point_val[:3])
+            
+            # 检查 A 点和 O 点是否重合（导致 OA 轴无法定义）
+            if np.linalg.norm(a_point_pos - o_point_pos) < 1e-6:
+                QMessageBox.critical(self, "几何错误", "A 点和 O 点坐标重合或过于接近，无法定义 OA 旋转轴。请重新输入或获取有效坐标。")
+                return
+                
+        except ValueError:
+            QMessageBox.critical(self, "数据错误", "A点或O点坐标必须为有效数字。")
+            return
+
+        # 3. 弹出文件选择对话框
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "选择 B 点 TXT 文件", "", "文本文件 (*.txt)"
+        )
+        
+        if not file_path:
+            return
+
+        b_point_data_list = []
+        try:
+            with open(file_path, 'r') as f:
+                for line_num, line in enumerate(f, 1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    
+                    # 清理输入行，移除方括号和空格
+                    line = line.strip('[] \t\n')
+                    parts = line.split(',')
+
+                    # 检查是否为 3 个位置参数 (X, Y, Z)
+                    if len(parts) != 3:
+                        self.log_message(f"警告: 文件第 {line_num} 行格式错误，期望 3 个位置参数 (X, Y, Z)，跳过: {line}")
+                        continue
+                    
+                    try:
+                        # 仅有位置 [X, Y, Z]
+                        p_b_in_u_pos = [float(p.strip()) for p in parts]
+                        
+                        # 构造 6D 姿态：[X, Y, Z, Rx, Ry, Rz]，假设姿态角为 0, 0, 0
+                        p_b_in_u_pose = np.array(p_b_in_u_pos + [0.0, 0.0, 0.0])
+                        
+                        # 4. 执行计算 
+                        p_b_in_base_pose, rotation_angle_deg = self._calculate_b_point_data(p_b_in_u_pose)
+                        
+                        # 存储: (TCP_U 姿态, Base 姿态, 旋转角度)
+                        b_point_data_list.append((p_b_in_u_pose, p_b_in_base_pose, rotation_angle_deg))
+                        
+                    except ValueError as e:
+                        # 捕获并记录文件内部的计算错误
+                        self.log_message(f"计算错误 (行 {line_num})：无法将参数转换为数字或计算失败: {e}")
+                        
+        except Exception as e:
+            QMessageBox.critical(self, "文件读取或计算错误", f"处理文件时发生错误: {e}")
+            return
+
+        if not b_point_data_list:
+            QMessageBox.warning(self, "警告", "文件中没有有效的 B 点数据可供计算。")
+            return
+
+        # 5. 弹出选择对话框
+        dialog = BPointSelectionDialog(b_point_data_list, self)
+        dialog.b_point_selected.connect(self._handle_b_point_selection)
+        dialog.exec_()
+        
+    def _handle_b_point_selection(self, p_base_position):
+        """
+        槽函数：接收选定的 B 点在 Base 坐标系下的位置 (X, Y, Z)，
+        并将其写入 B点 (Base坐标系) 的 UI 和内部状态。
+        """
+        # 1. 更新内部状态 (Base 坐标系下的 B 点位置) - 保持不变
+        self.b_point_position = p_base_position
+        
+        # 2. 写入 B点 (Base坐标系) UI - 写入新的显示区域
+        self.b_base_vars[0].setText(f"{p_base_position[0]:.2f}")
+        self.b_base_vars[1].setText(f"{p_base_position[1]:.2f}")
+        self.b_base_vars[2].setText(f"{p_base_position[2]:.2f}")
+        
+        # 3. 提示
+        self.status_bar.showMessage("状态: 已从文件选择 B 点，Base 坐标已更新，可进行旋转操作。")
+        QMessageBox.information(self, "选择成功", 
+                                f"选定的 B 点 Base 坐标已存储并更新至 Base 坐标系显示 (X: {p_base_position[0]:.2f}, Y: {p_base_position[1]:.2f}, Z: {p_base_position[2]:.2f})。\n"
+                                "请点击“绕AO旋转超声平面使经过B点”按钮以进行旋转。"
+                               )
         
     def _set_ui_values(self, var_list, data_list):
         """Helper to set QLineEdit values from a list of floats."""
