@@ -173,11 +173,10 @@ class RobotControlWindow(QMainWindow):
         # 新增用于记录A点和O点坐标的文本框列表
         self.a_vars = [None] * 3
         self.o_vars = [None] * 3
-        self.e_vars = [None] * 3 # 新增 end-effect 变量列表
-        self.b_vars = [None] * 3
-
-        self.b_base_vars = [None] * 3 
-        self.b_point_position = np.zeros(3)
+        self.e_vars = [None] * 3
+        self.b_vars_in_tcp_u = [None] * 3
+        self.b_vars_in_base = [None] * 3 
+        self.b_point_position_in_base = np.zeros(3)
         
         # [修改] 用于存储从机器人读取的 [X, Y, Z, Rx, Ry, Rz]
         self.tcp_u_definition_pose = None  
@@ -187,14 +186,12 @@ class RobotControlWindow(QMainWindow):
         self.get_a_btn = None
         self.get_o_btn = None
         self.get_e_btn = None
-        self.set_a_btn_manual = None
-        self.set_o_btn_manual = None
-        self.set_e_btn_manual = None
+
         self.save_data_btn = None
         self.load_data_btn = None # <--- [新增] 读取按钮引用
         self.align_planes_btn = None
-        self.b_point_btn = None
-        self.rotate_b_point_btn = None
+        self.convert_tcp_u_b_to_base_b_in_base_btn = None
+        self.rotate_ultrasound_plane_to_b_btn = None
         
         self.init_joint_pos_btn = None # 新增初始化关节按钮成员变量
         
@@ -346,9 +343,9 @@ class RobotControlWindow(QMainWindow):
         self.read_tcp_tip_btn.clicked.connect(self.read_tcp_tip)
         self.set_tcp_tip_btn.clicked.connect(self.set_tcp_tip)
         self.get_suitable_tcp_btn.clicked.connect(self.get_suitable_tcp)
-        self.b_point_btn.clicked.connect(self.set_b_point_position)
-        self.rotate_b_point_btn.clicked.connect(self.rotate_ultrasound_plane_to_b)
-        self.load_b_points_txt_btn.clicked.connect(self.read_b_points_from_file)
+        self.convert_tcp_u_b_to_base_b_in_base_btn.clicked.connect(self.convert_tcp_u_b_to_base_b_in_base)
+        self.rotate_ultrasound_plane_to_b_btn.clicked.connect(self.rotate_ultrasound_plane_to_b)
+        self.load_b_points_intcp_u_txt_btn.clicked.connect(self.read_b_points_in_tcp_u_from_file)
         self.get_a_btn.clicked.connect(self.get_a_point_position)
         self.get_o_btn.clicked.connect(self.get_o_point_position)
         self.get_e_btn.clicked.connect(self.get_e_point_position)
@@ -684,10 +681,10 @@ class RobotControlWindow(QMainWindow):
         try:
             a_point = np.array([float(self.a_vars[i].text()) for i in range(3)])
             o_point = np.array([float(self.o_vars[i].text()) for i in range(3)])
-            if np.all(self.b_point_position == 0):
+            if np.all(self.b_point_position_in_base == 0):
                 QMessageBox.warning(self, "操作失败", "请先输入B点位置。")
                 return
-            b_point = self.b_point_position
+            b_point = self.b_point_position_in_base
         except ValueError:
             self.status_bar.showMessage("错误: A、O、B点坐标必须为有效数字。")
             return
@@ -766,7 +763,7 @@ class RobotControlWindow(QMainWindow):
         except Exception as e:
              self.status_bar.showMessage(f"致命错误: 姿态计算失败: {e}")
              self.log_message(f"FATAL ERROR: Calculation or command preparation failed: {e}") # FATAL LOG
-        self.log_message("--- 绕AO旋转超声平面至B点功能结束 ---") # END LOG
+        self.log_message("--- 绕OA旋转超声平面至B点功能结束 ---") # END LOG
         
     def handle_read_tcp_byname_message(self, message):
         """解析 'ReadTCPByName' 消息，并更新新的TCP显示框。"""
@@ -1285,7 +1282,7 @@ class RobotControlWindow(QMainWindow):
         for i, label_text in enumerate(b_labels):
             label = QLabel(label_text)
             text_box = QLineEdit("0.00")
-            self.b_vars[i] = text_box
+            self.b_vars_in_tcp_u[i] = text_box
             b_point_layout.addWidget(label, 0, i * 2)
             b_point_layout.addWidget(text_box, 0, i * 2 + 1)
         
@@ -1306,7 +1303,7 @@ class RobotControlWindow(QMainWindow):
             text_box.setReadOnly(False) # <--- 关键修改：设置为可编辑
             # 调整样式以配合可编辑输入框
             text_box.setStyleSheet("background-color: white; border: 1px inset grey;") 
-            self.b_base_vars[i] = text_box
+            self.b_vars_in_base[i] = text_box
             b_point_base_layout.addWidget(label, 0, i * 2)
             b_point_base_layout.addWidget(text_box, 0, i * 2 + 1)
 
@@ -1316,37 +1313,37 @@ class RobotControlWindow(QMainWindow):
         # --- 3. 按钮布局 ---
         button_layout = QHBoxLayout()
         # 按钮功能：读取B点(U系)并使用已读取的TCP_U定义转换到Base系
-        self.b_point_btn = QPushButton("读取B点(U系)并转换到Base系")
-        self.load_b_points_txt_btn = QPushButton("读取TXT文件中的B点(TCP_U)")
+        self.convert_tcp_u_b_to_base_b_in_base_btn = QPushButton("读取B点(U系)并转换到Base系")
+        self.load_b_points_intcp_u_txt_btn = QPushButton("读取TXT文件中的B点(TCP_U)")
         
-        button_layout.addWidget(self.b_point_btn) 
-        button_layout.addWidget(self.load_b_points_txt_btn) 
+        button_layout.addWidget(self.convert_tcp_u_b_to_base_b_in_base_btn) 
+        button_layout.addWidget(self.load_b_points_intcp_u_txt_btn) 
         
         group_layout.addLayout(button_layout)
         
         # 旋转按钮
-        self.rotate_b_point_btn = QPushButton("绕AO旋转超声平面使经过B点")
-        group_layout.addWidget(self.rotate_b_point_btn)
+        self.rotate_ultrasound_plane_to_b_btn = QPushButton("绕OA旋转超声平面使经过B点")
+        group_layout.addWidget(self.rotate_ultrasound_plane_to_b_btn)
         
         group_layout.addStretch()
         layout.addWidget(group)
         
-    def set_b_point_position(self):
+    def convert_tcp_u_b_to_base_b_in_base(self):
         """
         [修改] 从文本框中读取 B点(TCP_U) 坐标，使用已存储的 TCP_U 定义，
-        将其转换为 Base 坐标系下的位置，并存储到 self.b_point_position。
+        将其转换为 Base 坐标系下的位置，并存储到 self.b_point_position_in_base。
         """
         try:
             # 1. 检查 TCP_U 定义是否已读取
             if self.tcp_u_definition_pose is None:
                 raise ValueError("未读取 TCP_U 定义。请确保已连接机器人，并等待 TCP_U 定义自动获取成功。")
                 
-            # 2. 获取 B点在 TCP_U 坐标系下的位置 (P_B|U)
-            p_b_in_u_raw = self._get_ui_values(self.b_vars)
+            # 2. 获取 B点在 TCP_U 坐标系下的位置
+            p_b_in_u_raw = self._get_ui_values(self.b_vars_in_tcp_u)
             if p_b_in_u_raw is None:
                 raise ValueError("B点 (TCP_U) 坐标必须是有效数字。")
             
-            # 由于 self.b_vars 只有 3 个元素，需要填充 6D 姿态 (Rx, Ry, Rz = 0, 0, 0)
+            # 由于 self.b_vars_in_tcp_u 只有 3 个元素，需要填充 6D 姿态 (Rx, Ry, Rz = 0, 0, 0)
             p_b_in_u_pose_6d = np.array(p_b_in_u_raw + [0.0, 0.0, 0.0])
             
             # 3. 获取 T_Base_to_E: 基坐标系到 TCP_E 的变换 (机器人实时姿态)
@@ -1366,28 +1363,18 @@ class RobotControlWindow(QMainWindow):
             T_Base_to_B = T_Base_to_E @ T_E_to_U @ T_U_to_B
             p_b_in_base = T_Base_to_B[:3, 3] # B 点位置 (X, Y, Z)
             
-            # 7. 更新内部 B 点状态 (self.b_point_position)
-            self.b_point_position = p_b_in_base
+            # 7. 更新内部 B 点状态 (self.b_point_position_in_base)
+            self.b_point_position_in_base = p_b_in_base
             
             # 8. [新增] 更新 Base 坐标系 B 点显示
-            self.b_base_vars[0].setText(f"{p_b_in_base[0]:.2f}")
-            self.b_base_vars[1].setText(f"{p_b_in_base[1]:.2f}")
-            self.b_base_vars[2].setText(f"{p_b_in_base[2]:.2f}")
+            self.b_vars_in_base[0].setText(f"{p_b_in_base[0]:.2f}")
+            self.b_vars_in_base[1].setText(f"{p_b_in_base[1]:.2f}")
+            self.b_vars_in_base[2].setText(f"{p_b_in_base[2]:.2f}")
             
             # 9. 更新状态栏和弹出信息框
             self.status_bar.showMessage(f"状态: B点 ({p_b_in_u_raw[0]:.2f}, {p_b_in_u_raw[1]:.2f}, {p_b_in_u_raw[2]:.2f}) 已从 TCP_U 系转换到 Base 系并存储。")
-            
-            QMessageBox.information(
-                self, 
-                "坐标转换成功", 
-                f"B点 (TCP_U) 坐标已转换为 Base 坐标系下的位置:\n"
-                f"X: {p_b_in_base[0]:.4f}\n"
-                f"Y: {p_b_in_base[1]:.4f}\n"
-                f"Z: {p_b_in_base[2]:.4f}\n\n"
-                f"该 Base 坐标已存储并更新到 Base 坐标系显示区域，并用于后续的 '绕AO旋转超声平面使经过B点' 计算。"
-            )
 
-            print("Base 坐标系下的 b 点位置:", p_b_in_base)
+            print("根据 TCP_U 坐标系下 b 点计算得到的 Base 坐标系下的 b 点位置:", p_b_in_base)
             
         except ValueError as e:
             QMessageBox.critical(self, "输入错误或数据不足", f"B点坐标转换失败: {e}")
@@ -1848,7 +1835,7 @@ class RobotControlWindow(QMainWindow):
         
         return p_b_in_base_pose, rotation_angle_deg
     
-    def read_b_points_from_file(self):
+    def read_b_points_in_tcp_u_from_file(self):
         """
         读取TXT文件，解析B点(TCP_U)位置(X,Y,Z)，假设姿态(Rx,Ry,Rz)为(0,0,0)，
         计算Base姿态和旋转角度，并显示选择对话框。
@@ -1943,18 +1930,18 @@ class RobotControlWindow(QMainWindow):
         并将其写入 B点 (Base坐标系) 的 UI 和内部状态。
         """
         # 1. 更新内部状态 (Base 坐标系下的 B 点位置) - 保持不变
-        self.b_point_position = p_base_position
+        self.b_point_position_in_base = p_base_position
         
         # 2. 写入 B点 (Base坐标系) UI - 写入新的显示区域
-        self.b_base_vars[0].setText(f"{p_base_position[0]:.2f}")
-        self.b_base_vars[1].setText(f"{p_base_position[1]:.2f}")
-        self.b_base_vars[2].setText(f"{p_base_position[2]:.2f}")
+        self.b_vars_in_base[0].setText(f"{p_base_position[0]:.2f}")
+        self.b_vars_in_base[1].setText(f"{p_base_position[1]:.2f}")
+        self.b_vars_in_base[2].setText(f"{p_base_position[2]:.2f}")
         
         # 3. 提示
         self.status_bar.showMessage("状态: 已从文件选择 B 点，Base 坐标已更新，可进行旋转操作。")
         QMessageBox.information(self, "选择成功", 
                                 f"选定的 B 点 Base 坐标已存储并更新至 Base 坐标系显示 (X: {p_base_position[0]:.2f}, Y: {p_base_position[1]:.2f}, Z: {p_base_position[2]:.2f})。\n"
-                                "请点击“绕AO旋转超声平面使经过B点”按钮以进行旋转。"
+                                "请点击“绕OA旋转超声平面使经过B点”按钮以进行旋转。"
                                )
         
     def _set_ui_values(self, var_list, data_list):
@@ -1980,7 +1967,7 @@ class RobotControlWindow(QMainWindow):
             data['a_point'] = self._get_ui_values(self.a_vars)
             data['o_point'] = self._get_ui_values(self.o_vars)
             data['e_point'] = self._get_ui_values(self.e_vars)
-            data['b_point'] = self._get_ui_values(self.b_vars)
+            data['b_point'] = self._get_ui_values(self.b_vars_in_tcp_u)
 
             if any(v is None for v in [data['a_point'], data['o_point'], data['e_point'], data['b_point']]):
                  raise ValueError("A/O/E/B点数据中存在无效数字。")
@@ -2032,10 +2019,10 @@ class RobotControlWindow(QMainWindow):
             self._set_ui_values(self.e_vars, data.get('e_point', [0.0]*3))
             
             b_point_data = data.get('b_point', [0.0]*3)
-            self._set_ui_values(self.b_vars, b_point_data)
+            self._set_ui_values(self.b_vars_in_tcp_u, b_point_data)
             
-            # 更新内部 self.b_point_position (需要 np.array)
-            self.b_point_position = np.array(b_point_data)
+            # 更新内部 self.b_point_position_in_base (需要 np.array)
+            self.b_point_position_in_base = np.array(b_point_data)
 
             self.status_bar.showMessage(f"状态: 数据已从 {DATA_FILE_NAME} 恢复。")
             QMessageBox.information(self, "读取成功", "上次保存的数据已恢复。")
