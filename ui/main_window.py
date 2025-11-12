@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGroupBox, QLabel, QLineEdit, QPushButton,
     QTextEdit, QStatusBar, QGridLayout, QMessageBox,
-    QCheckBox, QSlider, QTabWidget,
+    QCheckBox, QSlider, QTabWidget, QComboBox,
     # 新增用于B点选择对话框和文件读取的控件
     QDialog, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
     QRadioButton, QFileDialog 
@@ -29,27 +29,34 @@ BACKWARD = 0
 DATA_FILE_NAME = "saved_robot_data.json"
 
 class BPointSelectionDialog(QDialog):
-    """用于显示从TXT文件读取的B点列表，并允许用户选择其中一个的对话框。"""
+    """
+    修改后的对话框：用于显示从TXT文件读取的B点列表，并允许用户多选。
+    返回选中的所有点的数据列表。
+    """
     
-    # 信号：当用户选择并确认一个B点后发出，传递选定B点在Base坐标系下的位置 (X, Y, Z)
-    b_point_selected = pyqtSignal(np.ndarray)
+    # 信号：当用户选择并确认多个B点后发出，传递选定点的列表
+    # 列表中每个元素包含: [p_b_in_u_pose (6), p_base_pose (6), rotation_angle_deg (1), index (int)]
+    b_points_selected = pyqtSignal(list) 
 
     def __init__(self, b_point_data_list, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("B点定位选择")
+        self.setWindowTitle("B点定位选择 (多选)")
         self.setMinimumSize(900, 400)
-        self.b_point_data_list = b_point_data_list
-        self.selected_row = -1 # 存储选中的行索引
+        # b_point_data_list 的元素结构已修改为: (p_u_pose, p_base_pose, angle, index)
+        self.b_point_data_list = b_point_data_list 
+        self.checkboxes = [] # 修正: 初始化 checkboxes 列表
 
         main_layout = QVBoxLayout(self)
 
         # 1. 结果表格
         self.table = QTableWidget()
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["选择", "B点 (TCP_U) 姿态", "B点 (Base) 姿态", "OA轴旋转角度 (度)"])
+        self.table.setColumnCount(5) # 新增一列用于显示编号
+        self.table.setHorizontalHeaderLabels(["选择", "编号", "B点 (TCP_U) 姿态", "B点 (Base) 姿态", "OA轴旋转角度 (度)"])
         # 允许内容自适应宽度，并限制只能选择行
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        # 允许单元格选择，但不自动改变选择状态
+        self.table.setSelectionMode(QAbstractItemView.NoSelection) 
 
         # 填充表格
         self._populate_table()
@@ -59,7 +66,7 @@ class BPointSelectionDialog(QDialog):
         # 2. 按钮布局
         btn_layout = QHBoxLayout()
         self.ok_btn = QPushButton("确认选择")
-        self.cancel_btn = QPushButton("取消")
+        self.cancel_btn = QPushButton(f"取消 (已加载 {len(self.b_point_data_list)} 个点)")
         btn_layout.addStretch()
         btn_layout.addWidget(self.ok_btn)
         btn_layout.addWidget(self.cancel_btn)
@@ -68,71 +75,82 @@ class BPointSelectionDialog(QDialog):
         main_layout.addLayout(btn_layout)
 
         # 3. 连接信号
-        # 点击任何单元格时触发选择逻辑
-        self.table.cellClicked.connect(self._select_row) 
         self.ok_btn.clicked.connect(self._accept_selection)
         self.cancel_btn.clicked.connect(self.reject)
         
-        # 默认选中第一行
-        if self.b_point_data_list:
-             self._select_row(0, 0) # 触发初始化选中
+        # 修正: 增加 cellClicked 连接，用于手动切换复选框状态
+        self.table.cellClicked.connect(self._toggle_checkbox_on_click) 
+        
+        # 修正: 移除默认全选的循环，默认状态为不选中 (False)
 
     def _populate_table(self):
-        """填充表格数据。"""
+        """填充表格数据，使用 QCheckBox 实现多选。"""
+        # 宽度常量
+        SELECTION_COLUMN_WIDTH = 180 
+
         self.table.setRowCount(len(self.b_point_data_list))
         
         for row, data in enumerate(self.b_point_data_list):
             
-            # Data: [p_b_in_u_pose (6), p_b_in_base_pose (6), rotation_angle_deg (1)]
-            p_u_pose, p_base_pose, angle = data
+            # Data: [p_u_pose (6), p_base_pose (6), angle (1), index (1)]
+            p_u_pose, p_base_pose, angle, index = data 
             
-            # 列 0: 单选按钮
-            radio_button = QRadioButton()
+            # 列 0: 复选框
+            checkbox = QCheckBox()
+            # 默认不选中
+            checkbox.setChecked(False)
+            self.checkboxes.append(checkbox) # 存储引用
             
-            # 使用一个 QWidget 作为容器来居中单选按钮
-            radio_container = QWidget()
-            radio_layout = QHBoxLayout(radio_container)
-            radio_layout.addWidget(radio_button)
-            radio_layout.setAlignment(Qt.AlignCenter)
-            radio_layout.setContentsMargins(0, 0, 0, 0)
+            # 使用一个 QWidget 作为容器来居中复选框
+            check_container = QWidget()
+            check_layout = QHBoxLayout(check_container)
+            check_layout.addWidget(checkbox)
+            check_layout.setAlignment(Qt.AlignCenter)
+            check_layout.setContentsMargins(0, 0, 0, 0)
             
-            self.table.setCellWidget(row, 0, radio_container)
+            self.table.setCellWidget(row, 0, check_container)
 
-            # 列 1: TCP_U 姿态
+            # 列 1: 编号
+            self.table.setItem(row, 1, QTableWidgetItem(f"B{index}"))
+
+            # 列 2: TCP_U 姿态
             p_u_str = f"({p_u_pose[0]:.2f}, {p_u_pose[1]:.2f}, {p_u_pose[2]:.2f}, {p_u_pose[3]:.2f}, {p_u_pose[4]:.2f}, {p_u_pose[5]:.2f})"
-            self.table.setItem(row, 1, QTableWidgetItem(p_u_str))
+            self.table.setItem(row, 2, QTableWidgetItem(p_u_str))
 
-            # 列 2: Base 姿态
+            # 列 3: Base 姿态
             p_base_str = f"({p_base_pose[0]:.2f}, {p_base_pose[1]:.2f}, {p_base_pose[2]:.2f}, {p_base_pose[3]:.2f}, {p_base_pose[4]:.2f}, {p_base_pose[5]:.2f})"
-            self.table.setItem(row, 2, QTableWidgetItem(p_base_str))
+            self.table.setItem(row, 3, QTableWidgetItem(p_base_str))
             
-            # 列 3: OA 轴旋转角度
-            self.table.setItem(row, 3, QTableWidgetItem(f"{angle:.2f}"))
-
-
-    def _select_row(self, row, column):
-        """处理单元格点击事件，更新选中的行索引并同步单选按钮状态。"""
-        self.selected_row = row
-        # 确保只有当前行被选中
-        for r in range(self.table.rowCount()):
-            widget = self.table.cellWidget(r, 0)
-            if widget:
-                radio_button = widget.findChild(QRadioButton)
-                if radio_button:
-                    radio_button.setChecked(r == row)
+            # 列 4: OA 轴旋转角度
+            self.table.setItem(row, 4, QTableWidgetItem(f"{angle:.2f}"))
         
+        # 修正: 设置“选择”列的宽度与按钮一致
+        self.table.setColumnWidth(0, SELECTION_COLUMN_WIDTH) 
+        self.table.resizeColumnsToContents()
+
+    def _toggle_checkbox_on_click(self, row, column):
+        """手动处理单元格点击事件，切换对应行的复选框状态。"""
+        # 检查点击是否在表格的有效范围内
+        if 0 <= row < len(self.checkboxes):
+            checkbox = self.checkboxes[row]
+            # 切换状态
+            checkbox.setChecked(not checkbox.isChecked())
+
     def _accept_selection(self):
-        """确认选择并发出信号。"""
-        if self.selected_row == -1:
-            QMessageBox.warning(self, "警告", "请选择一个 B 点。")
+        """确认多选，收集选中的点数据并发出信号。显式检查 isChecked()。"""
+        selected_data_list = []
+        
+        # 遍历存储的复选框列表，显式读取其状态
+        for row, checkbox in enumerate(self.checkboxes):
+            if checkbox.isChecked(): 
+                # 返回原始数据 (p_u_pose, p_base_pose, angle, index)
+                selected_data_list.append(self.b_point_data_list[row]) 
+
+        if not selected_data_list:
+            QMessageBox.warning(self, "警告", "请至少选择一个 B 点。")
             return
 
-        # 提取 Base 坐标下的位置 (前3个元素)
-        selected_data = self.b_point_data_list[self.selected_row]
-        p_base_pose = selected_data[1] # Base 姿态 (6 elements)
-        p_base_position = p_base_pose[0:3]
-
-        self.b_point_selected.emit(p_base_position)
+        self.b_points_selected.emit(selected_data_list) 
         self.accept()
 
 class RobotControlWindow(QMainWindow):
@@ -177,6 +195,9 @@ class RobotControlWindow(QMainWindow):
         self.b_vars_in_tcp_u = [None] * 3
         self.b_vars_in_base = [None] * 3 
         self.b_point_position_in_base = np.zeros(3)
+        self.calculated_b_points = [] # <--- ADDED: 存储从文件读取并计算的所有B点数据
+        self.b_point_dropdown = None  # <--- ADDED: B点选择下拉列表
+
         
         # [修改] 用于存储从机器人读取的 [X, Y, Z, Rx, Ry, Rz]
         self.tcp_u_definition_pose = None  
@@ -1267,15 +1288,25 @@ class RobotControlWindow(QMainWindow):
         layout.addWidget(group)
         
     def create_b_point_group(self, layout):
-        """新增：创建病灶点B定位Group，包含 TCP_U 输入和 Base 计算结果显示。"""
+        """
+        新增：创建病灶点B定位Group，包含 TCP_U 输入和 Base 计算结果显示。
+        [修改]：调整布局，将转换按钮移至 TCP_U 区域右侧，
+              并将读取文件按钮后的选择结果改为下拉列表，放在 Base 区域右侧。
+        """
+        
+        # 宽度常量：用于按钮和下拉列表的统一宽度
+        BUTTON_WIDTH = 180 
         
         # 最外层的 GroupBox
         group = QGroupBox("病灶点B定位")
         group_layout = QVBoxLayout(group)
         
-        # --- 1. B点 (TCP_U 坐标系) 输入 ---
+        # --- 1. B点 (TCP_U 坐标系) 输入 & "转换"按钮 ---
         b_point_subgroup = QGroupBox("B点 (TCP_U 坐标系)")
-        b_point_layout = QGridLayout(b_point_subgroup)
+        # 使用 QHBoxLayout 包装内容和转换按钮
+        h_layout_u = QHBoxLayout(b_point_subgroup) 
+        
+        b_point_layout = QGridLayout() # Keep grid layout for X,Y,Z
         
         # 假设这里只需要 X, Y, Z (与原代码一致)
         b_labels = ["B_x:", "B_y:", "B_z:"]
@@ -1286,37 +1317,48 @@ class RobotControlWindow(QMainWindow):
             b_point_layout.addWidget(label, 0, i * 2)
             b_point_layout.addWidget(text_box, 0, i * 2 + 1)
         
+        # 将 Grid 布局添加到 HBox
+        h_layout_u.addLayout(b_point_layout)
+        h_layout_u.addStretch() # 推送按钮到右侧
+        
+        # 移动 '读取B点(U系)并转换到Base系' 按钮到 TCP_U 区域的右侧
+        self.convert_tcp_u_b_to_base_b_in_base_btn = QPushButton("读取B点(U系)并转换到Base系")
+        self.convert_tcp_u_b_to_base_b_in_base_btn.setFixedWidth(BUTTON_WIDTH) # 修正: 设置按钮宽度
+        h_layout_u.addWidget(self.convert_tcp_u_b_to_base_b_in_base_btn)
+        
         group_layout.addWidget(b_point_subgroup)
         
         # --------------------------------------------------------
-        # [修改] 2. B点 (Base 坐标系) 显示/输入 Group
+        # 2. B点 (Base 坐标系) 显示/输入 & Dropdown
         # --------------------------------------------------------
-        # 修改 GroupBox 标题
         b_point_base_subgroup = QGroupBox("B点 (Base 坐标系)")
         b_point_base_layout = QGridLayout(b_point_base_subgroup)
         
         b_base_labels = ["B_x:", "B_y:", "B_z:"]
         for i, label_text in enumerate(b_base_labels):
             label = QLabel(label_text)
-            # 修改为可编辑
             text_box = QLineEdit("0.00")
-            text_box.setReadOnly(False) # <--- 关键修改：设置为可编辑
-            # 调整样式以配合可编辑输入框
+            text_box.setReadOnly(False) 
             text_box.setStyleSheet("background-color: white; border: 1px inset grey;") 
-            self.b_vars_in_base[i] = text_box
+            self.b_vars_in_base[i] = text_box # <--- 关键：确保 self.b_vars_in_base 引用了这些 QLineEdit
             b_point_base_layout.addWidget(label, 0, i * 2)
             b_point_base_layout.addWidget(text_box, 0, i * 2 + 1)
 
+        # 添加下拉列表到 B_z 右侧 (B_z 对应的列索引为 5)
+        self.b_point_dropdown = QComboBox()
+        self.b_point_dropdown.setPlaceholderText("请先读取TXT文件")
+        self.b_point_dropdown.setFixedWidth(BUTTON_WIDTH) 
+        b_point_base_layout.addWidget(self.b_point_dropdown, 0, 6) # Column 6 is right of B_z input
+
+        self.b_point_dropdown.currentIndexChanged.connect(self._handle_b_point_dropdown_selection)
+        
         group_layout.addWidget(b_point_base_subgroup)
         # --------------------------------------------------------
 
-        # --- 3. 按钮布局 ---
+        # --- 3. 按钮布局 (Load TXT and Rotate) ---
         button_layout = QHBoxLayout()
-        # 按钮功能：读取B点(U系)并使用已读取的TCP_U定义转换到Base系
-        self.convert_tcp_u_b_to_base_b_in_base_btn = QPushButton("读取B点(U系)并转换到Base系")
+        # 读取 TXT 文件按钮
         self.load_b_points_intcp_u_txt_btn = QPushButton("读取TXT文件中的B点(TCP_U)")
-        
-        button_layout.addWidget(self.convert_tcp_u_b_to_base_b_in_base_btn) 
         button_layout.addWidget(self.load_b_points_intcp_u_txt_btn) 
         
         group_layout.addLayout(button_layout)
@@ -1371,7 +1413,11 @@ class RobotControlWindow(QMainWindow):
             self.b_vars_in_base[1].setText(f"{p_b_in_base[1]:.2f}")
             self.b_vars_in_base[2].setText(f"{p_b_in_base[2]:.2f}")
             
-            # 9. 更新状态栏和弹出信息框
+            # 9. 清空下拉列表 (避免与文件读取混淆)
+            self.b_point_dropdown.clear()
+            self.b_point_dropdown.setPlaceholderText("已使用转换按钮")
+            
+            # 10. 更新状态栏和弹出信息框
             self.status_bar.showMessage(f"状态: B点 ({p_b_in_u_raw[0]:.2f}, {p_b_in_u_raw[1]:.2f}, {p_b_in_u_raw[2]:.2f}) 已从 TCP_U 系转换到 Base 系并存储。")
 
             print("根据 TCP_U 坐标系下 b 点计算得到的 Base 坐标系下的 b 点位置:", p_b_in_base)
@@ -1789,10 +1835,11 @@ class RobotControlWindow(QMainWindow):
         
         return np.rad2deg(rotation_angle_rad)
 
-    def _calculate_b_point_data(self, p_b_in_u_pose):
+    def _calculate_b_point_data(self, p_b_in_u_pose, index):
         """
-        执行单个B点的所有计算：Base坐标系姿态和OA轴旋转角度。
+        执行单个B点的所有计算：Base坐标系姿态和OA轴旋转角度，并返回索引。
         p_b_in_u_pose: B点在TCP_U下的 [X, Y, Z, Rx, Ry, Rz] (度) 姿态。
+        index: B点编号 (1-based integer).
         """
         # --- 0. 检查和读取依赖数据 ---
         if self.tcp_u_definition_pose is None:
@@ -1833,12 +1880,12 @@ class RobotControlWindow(QMainWindow):
             p_b_in_u_pose 
         )
         
-        return p_b_in_base_pose, rotation_angle_deg
+        return p_b_in_base_pose, rotation_angle_deg, index
     
     def read_b_points_in_tcp_u_from_file(self):
         """
-        读取TXT文件，解析B点(TCP_U)位置(X,Y,Z)，假设姿态(Rx,Ry,Rz)为(0,0,0)，
-        计算Base姿态和旋转角度，并显示选择对话框。
+        [修改]：读取TXT文件，解析B点(TCP_U)位置(X,Y,Z)，计算Base姿态和旋转角度，
+               弹出多选对话框，并处理返回的选定点列表。
         """
         # 1. 检查 TCP_U 定义
         if self.tcp_u_definition_pose is None:
@@ -1866,20 +1913,32 @@ class RobotControlWindow(QMainWindow):
             QMessageBox.critical(self, "数据错误", "A点或O点坐标必须为有效数字。")
             return
 
-        # --- 【修改开始】自动读取指定文件 ---
+        # 3. 文件读取和解析 (使用文件对话框允许用户选择)
         FILE_NAME = "TCP_U_B_LIST.txt"
         
-        # 构造文件路径。我们假设文件在当前工作目录下可访问。
+        # 优先查找当前目录下的文件
         file_path = os.path.join(os.getcwd(), FILE_NAME)
         
         if not os.path.exists(file_path):
-             QMessageBox.critical(self, "文件读取失败", f"未找到指定的B点文件: {FILE_NAME}。请确保文件位于当前目录: {os.getcwd()}")
-             return
-        # --- 【修改结束】自动读取指定文件 ---
-
+             file_dialog = QFileDialog(self)
+             file_dialog.setWindowTitle("选择 B 点文件")
+             file_dialog.setNameFilter("文本文件 (*.txt);;所有文件 (*)")
+             file_dialog.setFileMode(QFileDialog.ExistingFile) 
+             
+             if file_dialog.exec_() == QFileDialog.Accepted:
+                 selected_files = file_dialog.selectedFiles()
+                 if not selected_files:
+                     return
+                 file_path = selected_files[0]
+                 FILE_NAME = os.path.basename(file_path)
+             else:
+                 self.status_bar.showMessage("状态: 用户取消选择文件。")
+                 return
+        
         b_point_data_list = []
         try:
             with open(file_path, 'r') as f:
+                index = 1 # <--- ADDED: 从 1 开始编号
                 for line_num, line in enumerate(f, 1):
                     line = line.strip()
                     if not line:
@@ -1889,61 +1948,78 @@ class RobotControlWindow(QMainWindow):
                     line = line.strip('[] \t\n')
                     parts = line.split(',')
 
-                    # 检查是否为 3 个位置参数 (X, Y, Z)
                     if len(parts) != 3:
-                        self.log_message(f"警告: 文件第 {line_num} 行格式错误，期望 3 个位置参数 (X, Y, Z)，跳过: {line}")
+                        self.log_message(f"警告: 文件 {FILE_NAME} 第 {line_num} 行格式错误，期望 3 个位置参数 (X, Y, Z)，跳过: {line}")
                         continue
                     
                     try:
-                        # 仅有位置 [X, Y, Z]
                         p_b_in_u_pos = [float(p.strip()) for p in parts]
-                        
-                        # 构造 6D 姿态：[X, Y, Z, Rx, Ry, Rz]，假设姿态角为 0, 0, 0
                         p_b_in_u_pose = np.array(p_b_in_u_pos + [0.0, 0.0, 0.0])
                         
                         # 4. 执行计算 
-                        p_b_in_base_pose, rotation_angle_deg = self._calculate_b_point_data(p_b_in_u_pose)
+                        # 传入当前 index
+                        p_b_in_base_pose, rotation_angle_deg, calculated_index = self._calculate_b_point_data(p_b_in_u_pose, index) 
                         
-                        # 存储: (TCP_U 姿态, Base 姿态, 旋转角度)
-                        b_point_data_list.append((p_b_in_u_pose, p_b_in_base_pose, rotation_angle_deg))
+                        # 存储: (TCP_U 姿态, Base 姿态, 旋转角度, 索引)
+                        b_point_data_list.append((p_b_in_u_pose, p_b_in_base_pose, rotation_angle_deg, calculated_index))
+                        
+                        index += 1 # 递增 index
                         
                     except ValueError as e:
-                        # 捕获并记录文件内部的计算错误
-                        self.log_message(f"计算错误 (行 {line_num})：无法将参数转换为数字或计算失败: {e}")
+                        self.log_message(f"计算错误 (文件 {FILE_NAME} 行 {line_num})：无法将参数转换为数字或计算失败: {e}")
                         
         except Exception as e:
             QMessageBox.critical(self, "文件读取或计算错误", f"处理文件时发生错误: {e}")
             return
 
         if not b_point_data_list:
-            QMessageBox.warning(self, "警告", "文件中没有有效的 B 点数据可供计算。")
+            QMessageBox.warning(self, "警告", f"文件 {FILE_NAME} 中没有有效的 B 点数据可供计算。")
             return
 
-        # 5. 弹出选择对话框
+        # 5. 弹出多选对话框
         dialog = BPointSelectionDialog(b_point_data_list, self)
-        dialog.b_point_selected.connect(self._handle_b_point_selection)
+        # 关键：连接新的信号
+        dialog.b_points_selected.connect(self._handle_b_points_list_selection) 
         dialog.exec_()
         
-    def _handle_b_point_selection(self, p_base_position):
+    def _handle_b_point_dropdown_selection(self, index):
         """
-        槽函数：接收选定的 B 点在 Base 坐标系下的位置 (X, Y, Z)，
-        并将其写入 B点 (Base坐标系) 的 UI 和内部状态。
+        槽函数：处理下拉列表选择事件，更新 Base 坐标系 B 点显示和内部状态。
         """
-        # 1. 更新内部状态 (Base 坐标系下的 B 点位置) - 保持不变
+        if index < 0 or not self.calculated_b_points:
+            # -1 索引通常是占位符或列表清空
+            # 此时清空 Base 坐标显示
+            self.b_point_position_in_base = np.zeros(3) 
+            # 使用列表推导式直接写入 "0.00"
+            for i in range(3):
+                 self.b_vars_in_base[i].setText("0.00")
+            return
+        
+        if index >= len(self.calculated_b_points):
+            self.status_bar.showMessage("警告: 下拉列表索引越界。")
+            return
+        # data: [p_u_pose (6), p_base_pose (6), rotation_angle_deg (1), index (1)]
+        selected_data = self.calculated_b_points[index]
+        p_base_pose = selected_data[1] # Base 姿态 (6 elements: X, Y, Z, Rx, Ry, Rz)
+        p_base_position = p_base_pose[0:3] # <--- 提取前 3 个位置数据 (X, Y, Z)
+        rotation_angle = selected_data[2]
+        b_index = selected_data[3]
+
+        # 1. Update internal state (Base 坐标系下的 B 点位置)
         self.b_point_position_in_base = p_base_position
         
-        # 2. 写入 B点 (Base坐标系) UI - 写入新的显示区域
-        self.b_vars_in_base[0].setText(f"{p_base_position[0]:.2f}")
-        self.b_vars_in_base[1].setText(f"{p_base_position[1]:.2f}")
-        self.b_vars_in_base[2].setText(f"{p_base_position[2]:.2f}")
-        
-        # 3. 提示
-        self.status_bar.showMessage("状态: 已从文件选择 B 点，Base 坐标已更新，可进行旋转操作。")
-        QMessageBox.information(self, "选择成功", 
-                                f"选定的 B 点 Base 坐标已存储并更新至 Base 坐标系显示 (X: {p_base_position[0]:.2f}, Y: {p_base_position[1]:.2f}, Z: {p_base_position[2]:.2f})。\n"
-                                "请点击“绕OA旋转超声平面使经过B点”按钮以进行旋转。"
-                               )
-        
+        # 2. 写入 B点 (Base坐标系) UI (红框处)
+        try:
+            # 确保将 Base 姿态中的 X, Y, Z 值分别写入对应的输入框
+            self.b_vars_in_base[0].setText(f"{p_base_position[0]:.2f}")
+            self.b_vars_in_base[1].setText(f"{p_base_position[1]:.2f}")
+            self.b_vars_in_base[2].setText(f"{p_base_position[2]:.2f}")
+        except Exception as e:
+            self.status_bar.showMessage(f"写入 B 点坐标失败 (UI 引用错误): {e}")
+            return
+
+        self.status_bar.showMessage(f"状态: 已选择 B{b_index}，Base 坐标已更新 (绕OA轴角度: {rotation_angle:.2f} 度)。")
+
     def _set_ui_values(self, var_list, data_list):
         """Helper to set QLineEdit values from a list of floats."""
         for var, data in zip(var_list, data_list):
@@ -2023,6 +2099,10 @@ class RobotControlWindow(QMainWindow):
             
             # 更新内部 self.b_point_position_in_base (需要 np.array)
             self.b_point_position_in_base = np.array(b_point_data)
+            
+            # 3. 清空下拉列表
+            self.b_point_dropdown.clear()
+            self.b_point_dropdown.setPlaceholderText("数据从文件加载")
 
             self.status_bar.showMessage(f"状态: 数据已从 {DATA_FILE_NAME} 恢复。")
             QMessageBox.information(self, "读取成功", "上次保存的数据已恢复。")
@@ -2085,3 +2165,35 @@ class RobotControlWindow(QMainWindow):
         T[:3, 3] = translation
         
         return T
+    
+    def _handle_b_points_list_selection(self, selected_points_list):
+        """
+        槽函数：接收选定的 B 点列表，存储所有点，并按指定格式填充到下拉列表中。
+        同时默认选择第一个点，并触发选择处理逻辑。
+        """
+        # 1. 存储选定的点列表
+        self.calculated_b_points = selected_points_list
+        
+        # 2. 填充下拉列表 (清空旧数据)
+        self.b_point_dropdown.clear()
+        
+        if not self.calculated_b_points:
+            self.b_point_dropdown.setPlaceholderText("未选择任何点")
+            # 确保 Base 坐标系 UI 重置
+            self.b_point_position_in_base = np.zeros(3) 
+            self._set_ui_values(self.b_vars_in_base, [0.0]*3)
+            self.status_bar.showMessage("状态: 已选择 0 个 B 点。")
+            return
+            
+        for data in selected_points_list:
+            # data: [p_u_pose (6), p_base_pose (6), angle (1), index (1)]
+            angle = data[2]
+            index = data[3]
+            # 格式: "B<编号>,<角度>度"
+            display_text = f"B{index}, {angle:.2f}度" 
+            self.b_point_dropdown.addItem(display_text)
+
+        # 3. 默认选中第一个点，这会触发 _handle_b_point_dropdown_selection 来更新红框区域
+        self.b_point_dropdown.setCurrentIndex(0) 
+        
+        self.status_bar.showMessage(f"状态: 已选择 {len(selected_points_list)} 个 B 点，列表已填充。")
