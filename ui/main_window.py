@@ -352,12 +352,8 @@ class RobotControlWindow(QMainWindow):
         self.get_a_btn.clicked.connect(self.get_a_point_position)
         self.get_o_btn.clicked.connect(self.get_o_point_position)
         self.get_e_btn.clicked.connect(self.get_e_point_position)
-        self.set_a_btn_manual.clicked.connect(self.set_a_point_manually)
-        self.set_o_btn_manual.clicked.connect(self.set_o_point_manually)
-        self.set_e_btn_manual.clicked.connect(self.set_e_point_manually)
         self.align_planes_btn.clicked.connect(self.align_ultrasound_plane_to_aoe)
         self.init_joint_pos_btn.clicked.connect(self.send_init_joint_position_command)
-        self.input_tool_pose_btn.clicked.connect(self.set_tool_pose_manually)
         self.align_planes_btn.clicked.connect(self.align_ultrasound_plane_to_aoe)
         self.init_joint_pos_btn.clicked.connect(self.send_init_joint_position_command)
         self.save_data_btn.clicked.connect(self.save_data)
@@ -1110,7 +1106,7 @@ class RobotControlWindow(QMainWindow):
         layout.addWidget(group)
 
     def create_tool_state_group(self, layout):
-        """创建用于显示机器人工具端实时状态并包含微调按钮的模块。（已修改为可输入）"""
+        """创建用于显示机器人工具端实时状态并包含微调按钮的模块。（已修改为只读）"""
         group = QGroupBox("机器人工具端实时状态")
         group_layout = QGridLayout(group)
         self.tool_pose_labels = {}
@@ -1148,11 +1144,12 @@ class RobotControlWindow(QMainWindow):
             
             # 3. 创建并配置 QLineEdit (值显示/输入部分)
             value_label = QLineEdit("0.00")
-            # --- 关键修改：移除 setReadOnly(True) 使其可输入 ---
+            # --- 关键修改：设为只读，不再允许手动输入 ---
+            value_label.setReadOnly(True) 
             value_label.setFixedWidth(70)
             value_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter) 
-            # 关键修改：将背景色改为白色，表示可输入
-            value_label.setStyleSheet("background-color: white; border: 1px inset grey;")
+            # 关键修改：将背景色改为灰色，表示只读
+            value_label.setStyleSheet("background-color: lightgrey; border: 1px inset grey;")
             self.tool_pose_labels[var_key] = value_label
             
             # ***** 关键修改: 强制设置固定高度，防止被多行标签拉伸 *****
@@ -1182,18 +1179,17 @@ class RobotControlWindow(QMainWindow):
         # 6. 添加 Tool 坐标系复选框 (放在下一行，即第 4 行，跨越所有列)
         self.tool_coord_checkbox = QCheckBox("是否在 Tool 坐标系下运动")
         group_layout.addWidget(self.tool_coord_checkbox, 4, 0, 1, 6, alignment=Qt.AlignCenter)
-
-        # 7. [新增] 添加“输入工具端位姿”按钮 (放在第 5 行)
-        self.input_tool_pose_btn = QPushButton("输入工具端位姿")
-        group_layout.addWidget(self.input_tool_pose_btn, 5, 0, 1, 6, alignment=Qt.AlignCenter) # 跨越所有 6 列
         
         layout.addWidget(group)
         
     def create_record_oae_state_group(self, layout):
-        """创建用于记录机器人A点、O点和end-effect点的模块。（已修改为可输入）"""
+        """创建用于记录机器人A点、O点和end-effect点的模块。（已移除人工输入按钮，调整获取按钮位置）"""
         group = QGroupBox("机器人A、O和End-Effect位置")
         group_layout = QVBoxLayout(group)
 
+        # 定义一个统一的按钮宽度，确保三个“获取”按钮大小一致
+        BUTTON_WIDTH = 120
+        
         # A点布局
         a_point_subgroup = QGroupBox("A点")
         a_point_layout = QGridLayout(a_point_subgroup)
@@ -1201,7 +1197,7 @@ class RobotControlWindow(QMainWindow):
         for i, label_text in enumerate(a_labels):
             label = QLabel(label_text)
             text_box = QLineEdit("0.00")
-            # --- 修改：设置为可输入，并改变背景颜色 ---
+            # --- 保持为可输入，以便人工调整或加载数据 ---
             text_box.setReadOnly(False)
             text_box.setStyleSheet("background-color: white;")
             # --- 结束修改 ---
@@ -1209,13 +1205,10 @@ class RobotControlWindow(QMainWindow):
             a_point_layout.addWidget(label, 0, i * 2)
             a_point_layout.addWidget(text_box, 0, i * 2 + 1)
         
-        # --- 按钮布局重组 ---
-        a_btn_layout = QHBoxLayout()
-        self.set_a_btn_manual = QPushButton("人工输入A点位置") 
+        # --- 按钮布局重组：将获取按钮放在 Z 坐标右边 ---
         self.get_a_btn = QPushButton("获取A点位置") 
-        a_btn_layout.addWidget(self.set_a_btn_manual)
-        a_btn_layout.addWidget(self.get_a_btn)
-        a_point_layout.addLayout(a_btn_layout, 1, 0, 1, 6)
+        self.get_a_btn.setFixedWidth(BUTTON_WIDTH) # 设置固定宽度
+        a_point_layout.addWidget(self.get_a_btn, 0, 6) # 放置在 A_z 右侧
         # --- 按钮布局结束 ---
         
         group_layout.addWidget(a_point_subgroup)
@@ -1227,7 +1220,7 @@ class RobotControlWindow(QMainWindow):
         for i, label_text in enumerate(o_labels):
             label = QLabel(label_text)
             text_box = QLineEdit("0.00")
-            # --- 修改：设置为可输入，并改变背景颜色 ---
+            # --- 保持为可输入，以便人工调整或加载数据 ---
             text_box.setReadOnly(False)
             text_box.setStyleSheet("background-color: white;")
             # --- 结束修改 ---
@@ -1235,13 +1228,10 @@ class RobotControlWindow(QMainWindow):
             o_point_layout.addWidget(label, 0, i * 2)
             o_point_layout.addWidget(text_box, 0, i * 2 + 1)
         
-        # --- 按钮布局重组 ---
-        o_btn_layout = QHBoxLayout()
-        self.set_o_btn_manual = QPushButton("人工输入O点位置")
+        # --- 按钮布局重组：将获取按钮放在 Z 坐标右边 ---
         self.get_o_btn = QPushButton("获取O点位置")
-        o_btn_layout.addWidget(self.set_o_btn_manual)
-        o_btn_layout.addWidget(self.get_o_btn)
-        o_point_layout.addLayout(o_btn_layout, 1, 0, 1, 6)
+        self.get_o_btn.setFixedWidth(BUTTON_WIDTH) # 设置固定宽度
+        o_point_layout.addWidget(self.get_o_btn, 0, 6) # 放置在 O_z 右侧
         # --- 按钮布局结束 ---
         
         group_layout.addWidget(o_point_subgroup)
@@ -1253,7 +1243,7 @@ class RobotControlWindow(QMainWindow):
         for i, label_text in enumerate(e_labels):
             label = QLabel(label_text)
             text_box = QLineEdit("0.00")
-            # --- 修改：设置为可输入，并改变背景颜色 ---
+            # --- 保持为可输入，以便人工调整或加载数据 ---
             text_box.setReadOnly(False)
             text_box.setStyleSheet("background-color: white;")
             # --- 结束修改 ---
@@ -1261,13 +1251,10 @@ class RobotControlWindow(QMainWindow):
             e_point_layout.addWidget(label, 0, i * 2)
             e_point_layout.addWidget(text_box, 0, i * 2 + 1)
         
-        # --- 按钮布局重组 ---
-        e_btn_layout = QHBoxLayout()
-        self.set_e_btn_manual = QPushButton("人工输入End-Effect位置")
+        # --- 按钮布局重组：将获取按钮放在 Z 坐标右边 ---
         self.get_e_btn = QPushButton("获取End-Effect位置")
-        e_btn_layout.addWidget(self.set_e_btn_manual)
-        e_btn_layout.addWidget(self.get_e_btn)
-        e_point_layout.addLayout(e_btn_layout, 1, 0, 1, 6)
+        self.get_e_btn.setFixedWidth(BUTTON_WIDTH) # 设置固定宽度
+        e_point_layout.addWidget(self.get_e_btn, 0, 6) # 放置在 E_z 右侧
         # --- 按钮布局结束 ---
         
         group_layout.addWidget(e_point_subgroup)
@@ -1715,40 +1702,7 @@ class RobotControlWindow(QMainWindow):
         group_layout.setStretchFactor(self.recv_text, 1)
         
         layout.addWidget(group)
-        
-    def set_a_point_manually(self):
-        """从A点文本框中读取坐标，并更新状态栏（确认手动输入）。"""
-        try:
-            x = float(self.a_vars[0].text())
-            y = float(self.a_vars[1].text())
-            z = float(self.a_vars[2].text())
-            self.status_bar.showMessage(f"状态: 已人工输入A点位置 ({x:.2f}, {y:.2f}, {z:.2f})。")
-        except ValueError:
-            QMessageBox.critical(self, "输入错误", "A点坐标必须是有效的数字！")
-            self.status_bar.showMessage("错误: A点坐标必须是有效的数字。")
             
-    def set_o_point_manually(self):
-        """从O点文本框中读取坐标，并更新状态栏（确认手动输入）。"""
-        try:
-            x = float(self.o_vars[0].text())
-            y = float(self.o_vars[1].text())
-            z = float(self.o_vars[2].text())
-            self.status_bar.showMessage(f"状态: 已人工输入O点位置 ({x:.2f}, {y:.2f}, {z:.2f})。")
-        except ValueError:
-            QMessageBox.critical(self, "输入错误", "O点坐标必须是有效的数字！")
-            self.status_bar.showMessage("错误: O点坐标必须是有效的数字。")
-            
-    def set_e_point_manually(self):
-        """从End-Effect点文本框中读取坐标，并更新状态栏（确认手动输入）。"""
-        try:
-            x = float(self.e_vars[0].text())
-            y = float(self.e_vars[1].text())
-            z = float(self.e_vars[2].text())
-            self.status_bar.showMessage(f"状态: 已人工输入End-Effect位置 ({x:.2f}, {y:.2f}, {z:.2f})。")
-        except ValueError:
-            QMessageBox.critical(self, "输入错误", "End-Effect点坐标必须是有效的数字！")
-            self.status_bar.showMessage("错误: End-Effect点坐标必须是有效的数字。")
-    
     def create_data_persistence_group(self, layout):
         """新增：创建用于保存和读取当前数据的Group。"""
         group = QGroupBox("保存当前数据")
@@ -1763,29 +1717,6 @@ class RobotControlWindow(QMainWindow):
         group_layout.addStretch()
         
         layout.addWidget(group)
-            
-    def set_tool_pose_manually(self):
-        """
-        从工具端位姿输入框中读取坐标，并更新内部状态 self.latest_tool_pose。
-        """
-        try:
-            # 从可编辑的 QLineEdit 中读取值
-            x = float(self.tool_pose_labels["Tcp_X"].text())
-            y = float(self.tool_pose_labels["Tcp_Y"].text())
-            z = float(self.tool_pose_labels["Tcp_Z"].text())
-            rx = float(self.tool_pose_labels["Tcp_Rx"].text())
-            ry = float(self.tool_pose_labels["Tcp_Ry"].text())
-            rz = float(self.tool_pose_labels["Tcp_Rz"].text())
-            
-            new_pose = [x, y, z, rx, ry, rz]
-            
-            # 更新内部状态，用于后续的 AOE 平面等计算
-            self.latest_tool_pose = new_pose
-            
-            self.status_bar.showMessage(f"状态: 已人工输入工具端位姿 ({x:.2f}, {y:.2f}, {z:.2f}, {rx:.2f}, {ry:.2f}, {rz:.2f})，可用于后续计算。")
-        except ValueError:
-            QMessageBox.critical(self, "输入错误", "工具端位姿坐标必须是有效的数字！")
-            self.status_bar.showMessage("错误: 工具端位姿坐标必须是有效的数字。")
             
     def _get_ui_values(self, qline_edits):
         """尝试从 QLineEdit 列表中获取浮点数列表。失败返回 None 或抛出异常。"""
@@ -2029,18 +1960,18 @@ class RobotControlWindow(QMainWindow):
             var.setText(f"{data:.2f}")
             
     def save_data(self):
-        """保存当前的工具端、A/O/E/B点数据到JSON文件。"""
+        """保存当前的A/O/E/B点数据到JSON文件。（已移除工具端位姿保存）"""
         # 1. 收集数据
         try:
             data = {}
             
-            # Tool End-Effector Status (Tcp_X ~ Tcp_Rz)
-            tool_keys = ["Tcp_X", "Tcp_Y", "Tcp_Z", "Tcp_Rx", "Tcp_Ry", "Tcp_Rz"]
-            tool_vars = [self.tool_pose_labels[k] for k in tool_keys]
-            tool_pose = self._get_ui_values(tool_vars)
-            if tool_pose is None:
-                raise ValueError("工具端姿态数据无效，请确保所有字段为数字。")
-            data['tool_pose'] = tool_pose
+            # # Tool End-Effector Status (Tcp_X ~ Tcp_Rz) # 【已移除】工具端姿态保存
+            # tool_keys = ["Tcp_X", "Tcp_Y", "Tcp_Z", "Tcp_Rx", "Tcp_Ry", "Tcp_Rz"]
+            # tool_vars = [self.tool_pose_labels[k] for k in tool_keys]
+            # tool_pose = self._get_ui_values(tool_vars)
+            # if tool_pose is None:
+            #     raise ValueError("工具端姿态数据无效，请确保所有字段为数字。")
+            # data['tool_pose'] = tool_pose
 
             # A, O, E, B points
             data['a_point'] = self._get_ui_values(self.a_vars)
@@ -2066,7 +1997,7 @@ class RobotControlWindow(QMainWindow):
 
 
     def load_data(self):
-        """从JSON文件读取数据，并恢复到当前的工具端、A/O/E/B点输入框。"""
+        """从JSON文件读取数据，并恢复到当前的A/O/E/B点输入框。（已移除工具端位姿加载）"""
         if not os.path.exists(DATA_FILE_NAME):
             QMessageBox.warning(self, "读取失败", f"未找到数据文件: {DATA_FILE_NAME}")
             self.status_bar.showMessage("状态: 未找到上次保存的数据文件。")
@@ -2082,15 +2013,15 @@ class RobotControlWindow(QMainWindow):
 
         # 2. 恢复数据到UI
         try:
-            # Tool End-Effector Status
-            tool_keys = ["Tcp_X", "Tcp_Y", "Tcp_Z", "Tcp_Rx", "Tcp_Ry", "Tcp_Rz"]
-            tool_vars = [self.tool_pose_labels[k] for k in tool_keys]
-            # 使用 .get 确保即使文件缺少键，也能使用默认值
-            tool_pose_data = data.get('tool_pose', [0.0]*6) 
-            self._set_ui_values(tool_vars, tool_pose_data)
+            # # Tool End-Effector Status # 【已移除】工具端姿态加载
+            # tool_keys = ["Tcp_X", "Tcp_Y", "Tcp_Z", "Tcp_Rx", "Tcp_Ry", "Tcp_Rz"]
+            # tool_vars = [self.tool_pose_labels[k] for k in tool_keys]
+            # # 使用 .get 确保即使文件缺少键，也能使用默认值
+            # tool_pose_data = data.get('tool_pose', [0.0]*6) 
+            # self._set_ui_values(tool_vars, tool_pose_data)
             
-            # 更新内部 self.latest_tool_pose (用于计算)
-            self.latest_tool_pose = tool_pose_data
+            # # 更新内部 self.latest_tool_pose (用于计算) # 【已移除】
+            # self.latest_tool_pose = tool_pose_data
             
             # A, O, E, B points
             self._set_ui_values(self.a_vars, data.get('a_point', [0.0]*3))
@@ -2108,7 +2039,7 @@ class RobotControlWindow(QMainWindow):
             
         except Exception as e:
             QMessageBox.critical(self, "数据恢复错误", f"恢复UI数据时失败: {e}")
-            
+
     def _handle_auto_tcp_u_definition_response(self, response):
         """
         内部方法：处理由 'connect_tcp' 自动触发的 ReadTCPByName 响应，
@@ -2135,7 +2066,6 @@ class RobotControlWindow(QMainWindow):
                     self.log_message(f"系统: TCP_U 定义 (相对于 TCP_E) 已自动存储: [{pose_str}]")
                     # [重要] 成功获取后，弹出提示，解决用户等待问题
                     self.status_bar.showMessage("状态: TCP_U 定义已成功自动获取。")
-                    QMessageBox.information(self, "TCP_U 就绪", f"TCP_U 定义已成功获取: [{pose_str}]")
                 
             except Exception as e:
                 self.log_message(f"警告: 自动解析 TCP_U 定义数据失败: {e}")
