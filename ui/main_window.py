@@ -1858,7 +1858,7 @@ class RobotControlWindow(QMainWindow):
             QMessageBox.warning(self, "警告", "请先连接机器人并确保已获取 TCP_U 定义。")
             return
 
-        # 2. 检查 A, O 点是否已设置且不重合 (新增关键错误检查)
+        # 2. 检查 A, O 点是否已设置且不重合
         try:
             a_point_val = self._get_ui_values(self.a_vars)
             o_point_val = self._get_ui_values(self.o_vars)
@@ -1879,13 +1879,16 @@ class RobotControlWindow(QMainWindow):
             QMessageBox.critical(self, "数据错误", "A点或O点坐标必须为有效数字。")
             return
 
-        # 3. 弹出文件选择对话框
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "选择 B 点 TXT 文件", "", "文本文件 (*.txt)"
-        )
+        # --- 【修改开始】自动读取指定文件 ---
+        FILE_NAME = "TCP_U_B_LIST.txt"
         
-        if not file_path:
-            return
+        # 构造文件路径。我们假设文件在当前工作目录下可访问。
+        file_path = os.path.join(os.getcwd(), FILE_NAME)
+        
+        if not os.path.exists(file_path):
+             QMessageBox.critical(self, "文件读取失败", f"未找到指定的B点文件: {FILE_NAME}。请确保文件位于当前目录: {os.getcwd()}")
+             return
+        # --- 【修改结束】自动读取指定文件 ---
 
         b_point_data_list = []
         try:
