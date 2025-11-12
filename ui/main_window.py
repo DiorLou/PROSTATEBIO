@@ -2031,22 +2031,25 @@ class RobotControlWindow(QMainWindow):
         try:
             data = {}
             
-            # # Tool End-Effector Status (Tcp_X ~ Tcp_Rz) # 【已移除】工具端姿态保存
-            # tool_keys = ["Tcp_X", "Tcp_Y", "Tcp_Z", "Tcp_Rx", "Tcp_Ry", "Tcp_Rz"]
-            # tool_vars = [self.tool_pose_labels[k] for k in tool_keys]
-            # tool_pose = self._get_ui_values(tool_vars)
-            # if tool_pose is None:
-            #     raise ValueError("工具端姿态数据无效，请确保所有字段为数字。")
-            # data['tool_pose'] = tool_pose
-
             # A, O, E, B points
             data['a_point'] = self._get_ui_values(self.a_vars)
             data['o_point'] = self._get_ui_values(self.o_vars)
             data['e_point'] = self._get_ui_values(self.e_vars)
-            data['b_point'] = self._get_ui_values(self.b_vars_in_tcp_u)
+            data['b_point_in_tcp_u'] = self._get_ui_values(self.b_vars_in_tcp_u)
 
-            if any(v is None for v in [data['a_point'], data['o_point'], data['e_point'], data['b_point']]):
+            if any(v is None for v in [data['a_point'], data['o_point'], data['e_point'], data['b_point_in_tcp_u']]):
                  raise ValueError("A/O/E/B点数据中存在无效数字。")
+
+            # 新增：保存计算出的 B 点列表 (需要将 NumPy 数组转换为 List)
+            # 结构: [p_u_pose (6), p_base_pose (6), angle (1), index (1)]
+            calculated_b_points_serializable = []
+            for p_u, p_base, angle, index in self.calculated_b_points:
+                # Convert NumPy arrays to lists for JSON serialization
+                p_u_list = p_u.tolist() if isinstance(p_u, np.ndarray) else list(p_u)
+                p_base_list = p_base.tolist() if isinstance(p_base, np.ndarray) else list(p_base)
+                calculated_b_points_serializable.append((p_u_list, p_base_list, float(angle), int(index)))
+                
+            data['calculated_b_points'] = calculated_b_points_serializable
 
         except ValueError as e:
             QMessageBox.critical(self, "保存错误", f"数据收集失败: {e}")
@@ -2060,7 +2063,6 @@ class RobotControlWindow(QMainWindow):
             QMessageBox.information(self, "保存成功", f"当前数据已保存到文件：{DATA_FILE_NAME}")
         except Exception as e:
             QMessageBox.critical(self, "文件写入错误", f"保存数据到文件时失败: {e}")
-
 
     def load_data(self):
         """从JSON文件读取数据，并恢复到当前的A/O/E/B点输入框。（已移除工具端位姿加载）"""
@@ -2079,32 +2081,33 @@ class RobotControlWindow(QMainWindow):
 
         # 2. 恢复数据到UI
         try:
-            # # Tool End-Effector Status # 【已移除】工具端姿态加载
-            # tool_keys = ["Tcp_X", "Tcp_Y", "Tcp_Z", "Tcp_Rx", "Tcp_Ry", "Tcp_Rz"]
-            # tool_vars = [self.tool_pose_labels[k] for k in tool_keys]
-            # # 使用 .get 确保即使文件缺少键，也能使用默认值
-            # tool_pose_data = data.get('tool_pose', [0.0]*6) 
-            # self._set_ui_values(tool_vars, tool_pose_data)
-            
-            # # 更新内部 self.latest_tool_pose (用于计算) # 【已移除】
-            # self.latest_tool_pose = tool_pose_data
-            
             # A, O, E, B points
             self._set_ui_values(self.a_vars, data.get('a_point', [0.0]*3))
             self._set_ui_values(self.o_vars, data.get('o_point', [0.0]*3))
             self._set_ui_values(self.e_vars, data.get('e_point', [0.0]*3))
             
-            b_point_data = data.get('b_point', [0.0]*3)
-            self._set_ui_values(self.b_vars_in_tcp_u, b_point_data)
+            b_point_in_tcp_u_data = data.get('b_point_in_tcp_u', [0.0]*3)
+            self._set_ui_values(self.b_vars_in_tcp_u, b_point_in_tcp_u_data)
             
-            # 更新内部 self.b_point_position_in_base (需要 np.array)
-            self.b_point_position_in_base = np.array(b_point_data)
-            
-            # 3. 清空下拉列表
-            self.b_point_dropdown.clear()
-            self.b_point_dropdown.setPlaceholderText("数据从文件加载")
+            # 3. 新增：恢复计算出的 B 点列表，并还原下拉列表
+            calculated_b_points_loaded = data.get('calculated_b_points', [])
+            if calculated_b_points_loaded:
+                # 将加载的列表元素转换回 (np.ndarray, np.ndarray, float, int) 格式
+                restored_b_points = []
+                for p_u_list, p_base_list, angle, index in calculated_b_points_loaded:
+                    restored_b_points.append((np.array(p_u_list), np.array(p_base_list), float(angle), int(index)))
+                
+                # 调用处理函数来填充下拉列表和设置默认选中项
+                # 此函数会清空旧列表，填充新项，并触发 Base 坐标更新
+                self._handle_b_points_list_selection(restored_b_points)
+                self.status_bar.showMessage(f"状态: 数据已从 {DATA_FILE_NAME} 恢复，B点列表已还原。")
+            else:
+                # 如果没有保存的列表数据，则清空下拉列表
+                self.calculated_b_points = []
+                self.b_point_dropdown.clear()
+                self.b_point_dropdown.setPlaceholderText("数据从文件加载")
+                self.status_bar.showMessage(f"状态: 数据已从 {DATA_FILE_NAME} 恢复。")
 
-            self.status_bar.showMessage(f"状态: 数据已从 {DATA_FILE_NAME} 恢复。")
             QMessageBox.information(self, "读取成功", "上次保存的数据已恢复。")
             
         except Exception as e:
