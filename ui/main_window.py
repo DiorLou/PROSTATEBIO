@@ -198,6 +198,12 @@ class RobotControlWindow(QMainWindow):
         self.calculated_b_points = [] # <--- ADDED: 存储从文件读取并计算的所有B点数据
         self.b_point_dropdown = None  # <--- ADDED: B点选择下拉列表
 
+        # 新增用于分步旋转的状态变量
+        self.b_point_rotation_steps = []  # 累积旋转矩阵的列表
+        self.current_b_point_step = -1    # 当前执行的步骤索引
+        self.initial_tcp_pose_for_b_rot = None # 旋转序列开始时的初始姿态 (6D array)
+        self.b_point_o_point = None       # O 点坐标 (3D array)
+
         
         # [修改] 用于存储从机器人读取的 [X, Y, Z, Rx, Ry, Rz]
         self.tcp_u_definition_pose = None  
@@ -455,6 +461,9 @@ class RobotControlWindow(QMainWindow):
             self.handle_emergency_info_message(message)
         elif message.startswith("ReadOverride"):
             self.handle_override_message(message)
+        elif message.startswith("WayPoint,OK"):
+            self.log_message(message)
+            self._continue_b_point_rotation() # <-- 调用分步继续函数
         elif message.startswith("WayPoint"):
             self.log_message(message)
         elif message.startswith("SetTCPByName"):
@@ -465,7 +474,6 @@ class RobotControlWindow(QMainWindow):
         elif message.startswith("MoveRelJ"):
             # 说明指令未完成，开启报错
             self.log_message(message)
-            # QMessageBox.critical(self, "关节转动错误", "检查状态机是否空闲")
 
     def request_cur_tcp_info(self):
         """通过按钮点击发送指令，请求获取当前TCP坐标。"""
@@ -715,76 +723,42 @@ class RobotControlWindow(QMainWindow):
             self.status_bar.showMessage("警告: 无法获取当前的机器人姿态。")
             return
 
-        try:
-            # 计算新的欧拉角姿态
-            delta_rotation_matrix = calculate_new_rpy_for_b_point(a_point, o_point, b_point, initial_tcp_pose[3:])
-            # 1. 将输入的欧拉角从度转换为弧度
-            euler_angles_rad = np.deg2rad([initial_tcp_pose[3], initial_tcp_pose[4], initial_tcp_pose[5]])
-    
-            # 2. 将欧拉角转换为工具末端在世界坐标系中的旋转矩阵
-            # 假设旋转顺序是 Roll (X), Pitch (Y), Yaw (Z) (SXYZ 外部旋转)
-            tool_rotation_matrix = pyrot.matrix_from_euler(euler_angles_rad, 0, 1, 2, extrinsic=True)
+        # 0. 重置并计算所有步骤的旋转矩阵
+        self.b_point_rotation_steps = []
+        self.current_b_point_step = -1
+        self.initial_tcp_pose_for_b_rot = None
+        self.b_point_o_point = None
 
-            R_final = np.dot(delta_rotation_matrix, tool_rotation_matrix)
-            
-            final_rpy_rad = pyrot.euler_from_matrix(R_final, 0, 1, 2, extrinsic=True)
-            
-            final_rpy_deg = np.rad2deg(final_rpy_rad)
-            
-            P_final = get_final_tcp_e_position_after_delta_rotation([initial_tcp_pose[0], initial_tcp_pose[1], initial_tcp_pose[2]], delta_rotation_matrix, [o_point[0], o_point[1], o_point[2]])
-                                    
-            # 3. 构造 WayPoint 命令 (绝对运动)
-            
-            nRbtID = 0
-            
-            # dX, dY, dZ, dRx, dRy, dRz 
-            dX_dY_dZ = P_final
-            dRx_dRy_dRz = final_rpy_deg
-            
-            # dJ1, dJ2, dJ3, dJ4, dJ5, dJ6 (全为0)
-            dJ_zero = ",".join(["0.00"] * 6)
-            
-            # dX, dY, dZ, dRx, dRy, dRz 字符串
-            pos_str = ",".join([f"{val:.2f}" for val in dX_dY_dZ])
-            rpy_str = ",".join([f"{val:.2f}" for val in dRx_dRy_dRz])
-            
-            # 拼接 6个位置参数 + 6个姿态参数
-            pos_rpy_str = f"{pos_str},{rpy_str}"
-            
-            sTcpName = "TCP"
-            sUcsName = "Base"
-            dVelocity = 50
-            dAcc = 250
-            dRadius = 50
-            nMoveType = 1 # 1代表直线运动 (Linear movement)
-            nIsUseJoint = 0 # 关键：不使用关节值模式
-            nIsSeek = 0
-            nIOBit = 0
-            nIOState = 0
-            strCmdID = "ID1"
-            
-            # WayPoint 命令格式: WayPoint,nRbtID,dX,dY,dZ,dRx,dRy,dRz,dJ1...dJ6,sTcpName,sUcsName,dVelocity,dAcc,dRadius,nMoveType,nIsUseJoint,nIsSeek,nIOBit,nIOState,strCmdID;
-            command = (
-                f"WayPoint,{nRbtID},{pos_rpy_str},{dJ_zero},"
-                f"{sTcpName},{sUcsName},{dVelocity},{dAcc},{dRadius},{nMoveType},"
-                f"{nIsUseJoint},{nIsSeek},{nIOBit},{nIOState},{strCmdID};"
+        try:
+            # 1. 调用修改后的函数，它返回一个 delta_rotation_matrix 列表 (4x4 arrays)
+            delta_rotation_matrices = calculate_new_rpy_for_b_point(
+                a_point, o_point, b_point, initial_tcp_pose[3:]
             )
             
-            self.log_message(f"Final WayPoint Command: {command}") # FINAL COMMAND LOG
-
-            # 发送指令
-            # self.tcp_manager.send_command(command)
-            print("WayPoint 目标姿态(rpy):", end='')
-            print(pos_rpy_str)
-            self.status_bar.showMessage("状态: 已发送指令，使超声平面包含B点 (WayPoint)。")
+            if not delta_rotation_matrices:
+                 self.status_bar.showMessage("错误: 姿态计算失败，未生成旋转步骤。")
+                 QMessageBox.critical(self, "计算错误", "姿态计算失败，未生成旋转步骤。")
+                 return
+                 
+            # 2. 存储状态
+            self.b_point_rotation_steps = delta_rotation_matrices
+            self.initial_tcp_pose_for_b_rot = initial_tcp_pose
+            self.b_point_o_point = o_point
+            
+            # 3. 启动第一个步骤 (通过将 step 设为 -1 并在 _continue 中递增到 0)
+            self.current_b_point_step = -1
+            self._continue_b_point_rotation()
+            
+            # 4. 更新 UI 状态
+            self.status_bar.showMessage("状态: 已开始分步发送 WayPoint 指令，使超声平面包含B点。")
 
         except ValueError as e:
             self.status_bar.showMessage(f"错误: {e}")
-            self.log_message(f"CALCULATION ERROR (ValueError): {e}") # ERROR LOG
+            self.log_message(f"CALCULATION ERROR (ValueError): {e}")
         except Exception as e:
              self.status_bar.showMessage(f"致命错误: 姿态计算失败: {e}")
-             self.log_message(f"FATAL ERROR: Calculation or command preparation failed: {e}") # FATAL LOG
-        self.log_message("--- 绕OA旋转超声平面至B点功能结束 ---") # END LOG
+             self.log_message(f"FATAL ERROR: Calculation or command preparation failed: {e}")
+        self.log_message("--- 绕OA旋转超声平面至B点功能启动 ---")
         
     def handle_read_tcp_byname_message(self, message):
         """解析 'ReadTCPByName' 消息，并更新新的TCP显示框。"""
@@ -2200,3 +2174,81 @@ class RobotControlWindow(QMainWindow):
         self.b_point_dropdown.setCurrentIndex(0) 
         
         self.status_bar.showMessage(f"状态: 已选择 {len(selected_points_list)} 个 B 点，列表已填充。")
+
+    def _continue_b_point_rotation(self):
+        """
+        当接收到 WayPoint 成功响应后，发送下一个旋转步骤的 WayPoint 指令。
+        """
+        # 如果不在 B 点旋转模式，则忽略
+        if not self.b_point_rotation_steps:
+            return
+
+        # 检查是否完成所有步骤
+        self.current_b_point_step += 1
+        
+        if self.current_b_point_step < len(self.b_point_rotation_steps):
+            # 1. 获取当前步骤的累积旋转矩阵
+            delta_rotation_matrix = self.b_point_rotation_steps[self.current_b_point_step]
+            
+            # 2. 从初始姿态计算目标姿态
+            initial_tcp_pose = self.initial_tcp_pose_for_b_rot
+            o_point = self.b_point_o_point
+            
+            # 3. 计算最终位置 P_final (使用初始XYZ和O点)
+            P_final = get_final_tcp_e_position_after_delta_rotation(
+                initial_tcp_pose[:3], 
+                delta_rotation_matrix, 
+                o_point
+            )
+            
+            # 4. 计算最终旋转矩阵 R_final 和 RPY
+            initial_rpy_rad = np.deg2rad(initial_tcp_pose[3:])
+            initial_rotation_matrix = pyrot.matrix_from_euler(initial_rpy_rad, 0, 1, 2, extrinsic=True)
+            # R_final = R_delta * R_initial
+            R_final = np.dot(delta_rotation_matrix[:3,:3], initial_rotation_matrix)
+            final_rpy_rad = pyrot.euler_from_matrix(R_final, 0, 1, 2, extrinsic=True)
+            final_rpy_deg = np.rad2deg(final_rpy_rad)
+                                    
+            # 5. 构造 WayPoint 命令
+            dX_dY_dZ = P_final
+            dRx_dRy_dRz = final_rpy_deg
+            pos_str = ",".join([f"{val:.2f}" for val in dX_dY_dZ])
+            rpy_str = ",".join([f"{val:.2f}" for val in dRx_dRy_dRz])
+            pos_rpy_str = f"{pos_str},{rpy_str}"
+            
+            # WayPoint 参数 (使用关节移动 Type=0, 半径=0)
+            dJ_zero = ",".join(["0.00"] * 6)
+            nRbtID = 0
+            sTcpName = "TCP"
+            sUcsName = "Base"
+            dVelocity = 50
+            dAcc = 250
+            dRadius = 0 # 半径设为 0
+            nMoveType = 0 # 0 代表关节运动 (Joint movement)
+            nIsUseJoint = 0 
+            nIsSeek = 0
+            nIOBit = 0
+            nIOState = 0
+            strCmdID = "ID1"
+            
+            command = (
+                f"WayPoint,{nRbtID},{pos_rpy_str},{dJ_zero},"
+                f"{sTcpName},{sUcsName},{dVelocity},{dAcc},{dRadius},{nMoveType},"
+                f"{nIsUseJoint},{nIsSeek},{nIOBit},{nIOState},{strCmdID};"
+            )
+            
+            # 6. 发送指令
+            # self.tcp_manager.send_command(command)
+            self.log_message(command)
+            # 提取累积旋转角度用于状态栏显示
+            step_angle = np.rad2deg(pyrot.axis_angle_from_matrix(delta_rotation_matrix[:3, :3])[3])
+            self.log_message(f"状态: 绕OA旋转超声平面 (步骤 {self.current_b_point_step+1}/{len(self.b_point_rotation_steps)}，累积旋转 {step_angle:.2f} 度)...")
+            
+        else:
+            # 7. 完成所有步骤
+            self.b_point_rotation_steps = []
+            self.current_b_point_step = -1
+            self.initial_tcp_pose_for_b_rot = None
+            self.b_point_o_point = None
+            self.status_bar.showMessage("状态: 绕OA旋转超声平面至B点任务完成。")
+            QMessageBox.information(self, "任务完成", "已完成超声平面绕OA轴旋转，使其经过B点的所有步骤。")

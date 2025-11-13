@@ -130,16 +130,17 @@ def calculate_new_rpy_for_b_point(a_point, o_point, b_point, initial_rpy_deg):
     ob_vector = b_point - o_point
     
     if np.linalg.norm(ob_vector) < 1e-6:
-        return initial_rpy_deg # B点与O点重合，无需旋转
+        # B点与O点重合，返回单位矩阵
+        return [np.identity(4)]
 
     # N_OAB 是 OAB 平面的法向量，使用用户建议的顺序：OB x OA
     n_oab_vector = np.cross(oa_vector, ob_vector)
     
     if np.linalg.norm(n_oab_vector) < 1e-6:
-        # O, A, B 三点共线，OAB 平面法向量为零，无需旋转
-        return initial_rpy_deg
+        # O, A, B 三点共线，OAB 平面法向量为零
+        return [np.identity(4)]
 
-    # 4. 计算旋转所需的角度
+    # 4. 计算总旋转所需的角度
     # 将超声平面法向量和 OAB 法向量投影到垂直于OA轴的平面上
     projected_ultrasound_normal = ultrasound_normal - np.dot(ultrasound_normal, oa_unit_vector) * oa_unit_vector
     
@@ -156,28 +157,63 @@ def calculate_new_rpy_for_b_point(a_point, o_point, b_point, initial_rpy_deg):
     x_component = np.dot(projected_target_vector, projected_ultrasound_normal)
     y_component = np.dot(projected_target_vector, y_axis_in_plane)
 
-    # np.arctan2 能够计算出绕OA轴的旋转角度
+    # np.arctan2 能够计算出绕OA轴的总旋转角度 (弧度)
     rotation_angle_rad = np.arctan2(y_component, x_component)
+    total_angle_deg = np.rad2deg(rotation_angle_rad)
+    
     print("绕OA轴的旋转角度(度):", end='')
-    print(np.rad2deg(rotation_angle_rad))
+    print(total_angle_deg)
+    
+    # --- 步进角度生成逻辑 (根据用户要求修改为 0.5 度步长，跳过最后一个 0.5 倍数) ---
+    step_size_deg = 0.5
+    abs_angle_deg = abs(total_angle_deg)
+    sign = np.sign(total_angle_deg) if abs(total_angle_deg) > 1e-6 else 1.0 
 
+    step_angles_deg = []
+
+    # 计算要生成的最大完整 0.5 度步长的索引 k_limit
+    # 目标是生成 0.5*k 直到 0.5*k <= abs_angle_deg - step_size_deg (即 0.5*k 至少比总角小一个步长)
+    max_full_step_deg = abs_angle_deg - step_size_deg
+    
+    # k_limit = floor(max_full_step_deg / step_size_deg)
+    # 例如：5.8 -> 5.3 -> k_limit=10.0 -> k_limit=10
+    # 例如：5.5 -> 5.0 -> k_limit=10.0 -> k_limit=10
+    # 例如：0.4 -> -0.1 -> k_limit=-0.2 -> k_limit=0 (因为 int() 截断，实际上这里应该是 -1)
+    k_limit = int(np.floor(max_full_step_deg / step_size_deg + 1e-6))
+    
+    # 1. 生成完整的 0.5 度步长
+    for k in range(1, k_limit + 1):
+        step_angles_deg.append(sign * k * step_size_deg)
+        
+    # 2. 最后一个步骤总是总角度 (除非总角度接近 0)
+    if abs(total_angle_deg) > 1e-6:
+        # 避免在 k_limit 恰好生成了 total_angle_deg 时重复添加
+        # 只有在最后一个完整步长不等于总角度时才添加总角度
+        if not (step_angles_deg and np.isclose(step_angles_deg[-1], total_angle_deg)):
+             step_angles_deg.append(total_angle_deg)
+             
+    if not step_angles_deg:
+        # 极小角度时确保至少有一个步骤 (0.0 或总角度)
+        if abs(total_angle_deg) > 1e-6:
+            step_angles_deg = [total_angle_deg]
+        else:
+             step_angles_deg = [0.0]
+
+    print("step_angles_deg = ", end='')
+    print(step_angles_deg)
+    
+    # 3. 构造累积旋转矩阵列表
+    delta_rotation_matrices = []
+    
     # 绕OA向量旋转指定角度
-    # 1. 将输入的欧拉角从度转换为弧度
-    euler_angles_rad = np.deg2rad([initial_rpy_deg[0], initial_rpy_deg[1], initial_rpy_deg[2]])
+    for angle_deg in step_angles_deg:
+        angle_rad = np.deg2rad(angle_deg)
+        # 使用 Rodrigous 公式构造旋转矩阵 (绕OA向量旋转 angle_rad)
+        rotation_axis_angle = np.array([oa_vector[0], oa_vector[1], oa_vector[2], angle_rad])
+        delta_rotation_matrix = pyrot.matrix_from_axis_angle(rotation_axis_angle)
+        delta_rotation_matrices.append(delta_rotation_matrix)
     
-    # 2. 将欧拉角转换为工具末端在世界坐标系中的旋转矩阵
-    # 假设旋转顺序是 Roll (X), Pitch (Y), Yaw (Z) (SXYZ 外部旋转)
-    tool_rotation_matrix = pyrot.matrix_from_euler(euler_angles_rad, 0, 1, 2, extrinsic=True)
-    
-    # 3. 使用 Tool Frame 轴构造旋转矩阵：
-    rotation_axis_angle = np.array([oa_vector[0], oa_vector[1], oa_vector[2], rotation_angle_rad])
-    delta_rotation_matrix = pyrot.matrix_from_axis_angle(rotation_axis_angle)
-    
-    # 6. 将新的旋转矩阵转换回欧拉角
-    # i=0 (X), j=1 (Y), k=2 (Z), extrinsic=True (外部旋转)
-    # delta_rpy_rad = pyrot.euler_from_matrix(delta_rotation_matrix, 0, 1, 2, extrinsic=True)
-    
-    return delta_rotation_matrix
+    return delta_rotation_matrices
 
 def get_final_tcp_e_position_after_delta_rotation(initial_tcp_pose, delta_rotation_matrix, o_vars):
     
@@ -187,7 +223,7 @@ def get_final_tcp_e_position_after_delta_rotation(initial_tcp_pose, delta_rotati
     # 手动实现向量减法
     diff = [small_p0[i] - big_p0[i] for i in range(len(small_p0))]
 
-    P_final = np.dot(delta_rotation_matrix, diff) + big_p0
+    P_final = np.dot(delta_rotation_matrix[:3,:3], diff) + big_p0 # 修正：只使用旋转矩阵的前三行三列
     return P_final
     
 
