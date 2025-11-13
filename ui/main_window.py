@@ -192,7 +192,6 @@ class RobotControlWindow(QMainWindow):
         self.a_vars = [None] * 3
         self.o_vars = [None] * 3
         self.e_vars = [None] * 3
-        self.b_vars_in_tcp_u = [None] * 3
         self.b_vars_in_base = [None] * 3 
         self.b_point_position_in_base = np.zeros(3)
         self.calculated_b_points = [] # <--- ADDED: 存储从文件读取并计算的所有B点数据
@@ -217,7 +216,6 @@ class RobotControlWindow(QMainWindow):
         self.save_data_btn = None
         self.load_data_btn = None # <--- [新增] 读取按钮引用
         self.align_planes_btn = None
-        self.convert_tcp_u_b_to_base_b_in_base_btn = None
         self.rotate_ultrasound_plane_to_b_btn = None
         
         self.init_joint_pos_btn = None # 新增初始化关节按钮成员变量
@@ -370,7 +368,6 @@ class RobotControlWindow(QMainWindow):
         self.read_tcp_tip_btn.clicked.connect(self.read_tcp_tip)
         self.set_tcp_tip_btn.clicked.connect(self.set_tcp_tip)
         self.get_suitable_tcp_btn.clicked.connect(self.get_suitable_tcp)
-        self.convert_tcp_u_b_to_base_b_in_base_btn.clicked.connect(self.convert_tcp_u_b_to_base_b_in_base)
         self.rotate_ultrasound_plane_to_b_btn.clicked.connect(self.rotate_ultrasound_plane_to_b)
         self.load_b_points_intcp_u_txt_btn.clicked.connect(self.read_b_points_in_tcp_u_from_file)
         self.get_a_btn.clicked.connect(self.get_a_point_position)
@@ -1263,9 +1260,8 @@ class RobotControlWindow(QMainWindow):
         
     def create_b_point_group(self, layout):
         """
-        新增：创建病灶点B定位Group，包含 TCP_U 输入和 Base 计算结果显示。
-        [修改]：调整布局，将转换按钮移至 TCP_U 区域右侧，
-              并将读取文件按钮后的选择结果改为下拉列表，放在 Base 区域右侧。
+        新增：创建病灶点B定位Group，包含 Base 坐标系结果显示和按钮。
+        [修改]：移除了 B点 (TCP_U 坐标系) 输入组和手动转换按钮。
         """
         
         # 宽度常量：用于按钮和下拉列表的统一宽度
@@ -1275,36 +1271,7 @@ class RobotControlWindow(QMainWindow):
         group = QGroupBox("病灶点B定位")
         group_layout = QVBoxLayout(group)
         
-        # --- 1. B点 (TCP_U 坐标系) 输入 & "转换"按钮 ---
-        b_point_subgroup = QGroupBox("B点 (TCP_U 坐标系)")
-        # 使用 QHBoxLayout 包装内容和转换按钮
-        h_layout_u = QHBoxLayout(b_point_subgroup) 
-        
-        b_point_layout = QGridLayout() # Keep grid layout for X,Y,Z
-        
-        # 假设这里只需要 X, Y, Z (与原代码一致)
-        b_labels = ["B_x:", "B_y:", "B_z:"]
-        for i, label_text in enumerate(b_labels):
-            label = QLabel(label_text)
-            text_box = QLineEdit("0.00")
-            self.b_vars_in_tcp_u[i] = text_box
-            b_point_layout.addWidget(label, 0, i * 2)
-            b_point_layout.addWidget(text_box, 0, i * 2 + 1)
-        
-        # 将 Grid 布局添加到 HBox
-        h_layout_u.addLayout(b_point_layout)
-        h_layout_u.addStretch() # 推送按钮到右侧
-        
-        # 移动 '读取B点(U系)并转换到Base系' 按钮到 TCP_U 区域的右侧
-        self.convert_tcp_u_b_to_base_b_in_base_btn = QPushButton("读取B点(U系)并转换到Base系")
-        self.convert_tcp_u_b_to_base_b_in_base_btn.setFixedWidth(BUTTON_WIDTH) # 修正: 设置按钮宽度
-        h_layout_u.addWidget(self.convert_tcp_u_b_to_base_b_in_base_btn)
-        
-        group_layout.addWidget(b_point_subgroup)
-        
-        # --------------------------------------------------------
-        # 2. B点 (Base 坐标系) 显示/输入 & Dropdown
-        # --------------------------------------------------------
+        # --- 1. B点 (Base 坐标系) 显示/输入 & Dropdown ---
         b_point_base_subgroup = QGroupBox("B点 (Base 坐标系)")
         b_point_base_layout = QGridLayout(b_point_base_subgroup)
         
@@ -1314,7 +1281,7 @@ class RobotControlWindow(QMainWindow):
             text_box = QLineEdit("0.00")
             text_box.setReadOnly(False) 
             text_box.setStyleSheet("background-color: white; border: 1px inset grey;") 
-            self.b_vars_in_base[i] = text_box # <--- 关键：确保 self.b_vars_in_base 引用了这些 QLineEdit
+            self.b_vars_in_base[i] = text_box
             b_point_base_layout.addWidget(label, 0, i * 2)
             b_point_base_layout.addWidget(text_box, 0, i * 2 + 1)
 
@@ -1329,7 +1296,7 @@ class RobotControlWindow(QMainWindow):
         group_layout.addWidget(b_point_base_subgroup)
         # --------------------------------------------------------
 
-        # --- 3. 按钮布局 (Load TXT and Rotate) ---
+        # --- 2. 按钮布局 (Load TXT and Rotate) ---
         button_layout = QHBoxLayout()
         # 读取 TXT 文件按钮
         self.load_b_points_intcp_u_txt_btn = QPushButton("读取TXT文件中的B点(TCP_U)")
@@ -1343,73 +1310,7 @@ class RobotControlWindow(QMainWindow):
         
         group_layout.addStretch()
         layout.addWidget(group)
-        
-    def convert_tcp_u_b_to_base_b_in_base(self):
-        """
-        [修改] 从文本框中读取 B点(TCP_U) 坐标，使用已存储的 TCP_U 定义，
-        将其转换为 Base 坐标系下的位置，并存储到 self.b_point_position_in_base。
-        """
-        try:
-            # 1. 检查 TCP_U 定义是否已读取
-            if self.tcp_u_definition_pose is None:
-                raise ValueError("未读取 TCP_U 定义。请确保已连接机器人，并等待 TCP_U 定义自动获取成功。")
                 
-            # 2. 获取 B点在 TCP_U 坐标系下的位置
-            p_b_in_u_raw = self._get_ui_values(self.b_vars_in_tcp_u)
-            if p_b_in_u_raw is None:
-                raise ValueError("B点 (TCP_U) 坐标必须是有效数字。")
-            
-            # 由于 self.b_vars_in_tcp_u 只有 3 个元素，需要填充 6D 姿态 (Rx, Ry, Rz = 0, 0, 0)
-            p_b_in_u_pose_6d = np.array(p_b_in_u_raw + [0.0, 0.0, 0.0])
-            
-            # 3. 获取 T_Base_to_E: 基坐标系到 TCP_E 的变换 (机器人实时姿态)
-            pose_base_to_e = self.get_current_tool_pose()
-            if pose_base_to_e is None:
-                 raise ValueError("无法获取当前的机器人姿态 (TCP_E)。请确保已连接机器人或已手动输入工具端位姿。")
-
-            T_Base_to_E = self._pose_to_matrix(pose_base_to_e)
-            
-            # 4. T_E_to_U: 使用已存储的 TCP_U 定义
-            T_E_to_U = self._pose_to_matrix(self.tcp_u_definition_pose)
-            
-            # 5. T_U_to_B: 从 6D 姿态创建矩阵
-            T_U_to_B = self._pose_to_matrix(p_b_in_u_pose_6d)
-
-            # 6. 执行坐标变换: P_Base = (T_Base_to_E * T_E_to_U * T_U_to_B) * [0,0,0,1]^T
-            T_Base_to_B = T_Base_to_E @ T_E_to_U @ T_U_to_B
-            p_b_in_base = T_Base_to_B[:3, 3] # B 点位置 (X, Y, Z)
-            
-            # 7. 更新内部 B 点状态 (self.b_point_position_in_base)
-            self.b_point_position_in_base = p_b_in_base
-            
-            # 8. [新增] 更新 Base 坐标系 B 点显示
-            self.b_vars_in_base[0].setText(f"{p_b_in_base[0]:.2f}")
-            self.b_vars_in_base[1].setText(f"{p_b_in_base[1]:.2f}")
-            self.b_vars_in_base[2].setText(f"{p_b_in_base[2]:.2f}")
-            
-            # 9. 清空下拉列表 (避免与文件读取混淆)
-            self.b_point_dropdown.clear()
-            self.b_point_dropdown.setPlaceholderText("已使用转换按钮")
-            
-            # 10. 更新状态栏和弹出信息框
-            self.status_bar.showMessage(f"状态: B点 ({p_b_in_u_raw[0]:.2f}, {p_b_in_u_raw[1]:.2f}, {p_b_in_u_raw[2]:.2f}) 已从 TCP_U 系转换到 Base 系并存储。")
-
-            print("根据 TCP_U 坐标系下 b 点计算得到的 Base 坐标系下的 b 点位置:", p_b_in_base)
-            
-        except ValueError as e:
-            QMessageBox.critical(self, "输入错误或数据不足", f"B点坐标转换失败: {e}")
-            self.status_bar.showMessage("错误: B点坐标转换失败。")
-        except Exception as e:
-            QMessageBox.critical(self, "内部错误", f"B点坐标转换时发生意外错误: {e}")
-            self.status_bar.showMessage("错误: B点坐标转换时发生意外错误。")
-            
-        except ValueError as e:
-            QMessageBox.critical(self, "输入错误或数据不足", f"B点坐标转换失败: {e}")
-            self.status_bar.showMessage("错误: B点坐标转换失败。")
-        except Exception as e:
-            QMessageBox.critical(self, "内部错误", f"B点坐标转换时发生意外错误: {e}")
-            self.status_bar.showMessage("错误: B点坐标转换时发生意外错误。")
-
     def create_ur_control_group(self, layout):
         """
         创建用于控制电源、使能、初始化和TCP设置的高级模块。
@@ -2000,19 +1901,19 @@ class RobotControlWindow(QMainWindow):
             var.setText(f"{data:.2f}")
             
     def save_data(self):
-        """保存当前的A/O/E/B点数据到JSON文件。（已移除工具端位姿保存）"""
+        """保存当前的A/O/E点数据到JSON文件。（已移除 B点 TCP_U 输入的保存）"""
         # 1. 收集数据
         try:
             data = {}
             
-            # A, O, E, B points
+            # A, O, E points
             data['a_point'] = self._get_ui_values(self.a_vars)
             data['o_point'] = self._get_ui_values(self.o_vars)
             data['e_point'] = self._get_ui_values(self.e_vars)
-            data['b_point_in_tcp_u'] = self._get_ui_values(self.b_vars_in_tcp_u)
+            # data['b_point_in_tcp_u'] = self._get_ui_values(self.b_vars_in_tcp_u) # <--- REMOVED
 
-            if any(v is None for v in [data['a_point'], data['o_point'], data['e_point'], data['b_point_in_tcp_u']]):
-                 raise ValueError("A/O/E/B点数据中存在无效数字。")
+            if any(v is None for v in [data['a_point'], data['o_point'], data['e_point']]): # <--- ADJUSTED CHECK
+                 raise ValueError("A/O/E点数据中存在无效数字。")
 
             # 新增：保存计算出的 B 点列表 (需要将 NumPy 数组转换为 List)
             # 结构: [p_u_pose (6), p_base_pose (6), angle (1), index (1)]
@@ -2039,7 +1940,7 @@ class RobotControlWindow(QMainWindow):
             QMessageBox.critical(self, "文件写入错误", f"保存数据到文件时失败: {e}")
 
     def load_data(self):
-        """从JSON文件读取数据，并恢复到当前的A/O/E/B点输入框。（已移除工具端位姿加载）"""
+        """从JSON文件读取数据，并恢复到当前的A/O/E点输入框。（已移除 B点 TCP_U 输入的加载）"""
         if not os.path.exists(DATA_FILE_NAME):
             QMessageBox.warning(self, "读取失败", f"未找到数据文件: {DATA_FILE_NAME}")
             self.status_bar.showMessage("状态: 未找到上次保存的数据文件。")
@@ -2055,13 +1956,13 @@ class RobotControlWindow(QMainWindow):
 
         # 2. 恢复数据到UI
         try:
-            # A, O, E, B points
+            # A, O, E points
             self._set_ui_values(self.a_vars, data.get('a_point', [0.0]*3))
             self._set_ui_values(self.o_vars, data.get('o_point', [0.0]*3))
             self._set_ui_values(self.e_vars, data.get('e_point', [0.0]*3))
             
-            b_point_in_tcp_u_data = data.get('b_point_in_tcp_u', [0.0]*3)
-            self._set_ui_values(self.b_vars_in_tcp_u, b_point_in_tcp_u_data)
+            # b_point_in_tcp_u_data = data.get('b_point_in_tcp_u', [0.0]*3) # <--- REMOVED
+            # self._set_ui_values(self.b_vars_in_tcp_u, b_point_in_tcp_u_data) # <--- REMOVED
             
             # 3. 新增：恢复计算出的 B 点列表，并还原下拉列表
             calculated_b_points_loaded = data.get('calculated_b_points', [])
