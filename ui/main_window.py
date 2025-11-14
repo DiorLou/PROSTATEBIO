@@ -375,8 +375,6 @@ class RobotControlWindow(QMainWindow):
         self.get_e_btn.clicked.connect(self.get_e_point_position)
         self.align_planes_btn.clicked.connect(self.align_ultrasound_plane_to_aoe)
         self.init_joint_pos_btn.clicked.connect(self.send_init_joint_position_command)
-        self.align_planes_btn.clicked.connect(self.align_ultrasound_plane_to_aoe)
-        self.init_joint_pos_btn.clicked.connect(self.send_init_joint_position_command)
         self.save_data_btn.clicked.connect(self.save_data)
         self.load_data_btn.clicked.connect(self.load_data)
         
@@ -656,13 +654,50 @@ class RobotControlWindow(QMainWindow):
             return None
         
     def align_ultrasound_plane_to_aoe(self):
-        """计算并发送指令，以使超声平面与AOE平面重合。"""
+        """
+        [修改]：开始执行新的对齐序列：切换到 TCP_E，获取 End-Effect 位置，然后执行计算和旋转。
+        """
+        # 1. 检查连接状态 (可选但推荐)
+        if not self.tcp_manager.is_connected:
+            QMessageBox.warning(self, "警告", "机器人未连接。")
+            return
+
+        self.status_bar.showMessage("状态: 开始执行 '使超声平面对齐AOE平面' 序列 (Step 0/3: 切换到 TCP_E)...")
+        
+        # Step 0: 切换到 TCP_E (Sequence Start)
+        self.set_tcp_e()
+        
+        # Step 1: 延时 200ms 后，获取 End-Effect 位置
+        QTimer.singleShot(200, self._continue_align_ultrasound_plane_to_aoe)
+
+
+    def _continue_align_ultrasound_plane_to_aoe(self):
+        """
+        [序列 Step 1]：获取 End-Effect 位置。
+        """
+        self.status_bar.showMessage("状态: 序列 Step 1/3: 获取 End-Effect 位置...")
+
+        # Step 1: 获取 End-Effect 位置
+        self.get_e_point_position()
+        
+        # Step 2: 延时 200ms 后，执行核心计算和旋转逻辑
+        QTimer.singleShot(200, self._finalize_align_ultrasound_plane_to_aoe)
+
+
+    def _finalize_align_ultrasound_plane_to_aoe(self):
+        """
+        [序列 Step 2/3]：执行原有的核心计算和关节旋转指令。
+        """
+        self.status_bar.showMessage("状态: 序列 Step 2/3: 计算并发送关节旋转指令...")
+
+        # 将原有的 align_ultrasound_plane_to_aoe 核心逻辑放在这里
         try:
             a_point = np.array([float(self.a_vars[i].text()) for i in range(3)])
             o_point = np.array([float(self.o_vars[i].text()) for i in range(3)])
             e_point = np.array([float(self.e_vars[i].text()) for i in range(3)])
         except ValueError:
             self.status_bar.showMessage("错误: A、O、E点坐标必须为有效数字。")
+            QMessageBox.critical(self, "错误", "A、O、E点坐标必须为有效数字。")
             return
         
         initial_tcp_pose = self.get_current_tool_pose()
@@ -698,8 +733,9 @@ class RobotControlWindow(QMainWindow):
         
         # 发送指令
         self.tcp_manager.send_command(command)
-        self.status_bar.showMessage(f"状态: 已发送指令，使超声平面与AOE平面重合，关节6旋转了 {rotation_angle_deg:.2f} 度。")
-        
+        self.status_bar.showMessage(f"状态: 序列 Step 3/3 完成。已发送指令，使超声平面与AOE平面重合，关节6旋转了 {rotation_angle_deg:.2f} 度。")
+        QMessageBox.information(self, "序列完成", f"已发送旋转指令，关节6旋转了 {rotation_angle_deg:.2f} 度。")
+
     def rotate_ultrasound_plane_to_b(self):
         """
         计算并发送指令，以使超声平面绕OA轴旋转，使其经过B点。
@@ -1250,7 +1286,7 @@ class RobotControlWindow(QMainWindow):
         
         # 在Groupbox底部添加一个水平布局，用于放置按钮
         button_layout = QHBoxLayout()
-        self.align_planes_btn = QPushButton("使超声平面对齐AOE平面") # 创建按钮实例
+        self.align_planes_btn = QPushButton("Rotate the ultrasound plane to pass through the puncture point") # 创建按钮实例
         button_layout.addWidget(self.align_planes_btn)
 
         group_layout.addLayout(button_layout)
