@@ -1401,7 +1401,7 @@ class RobotControlWindow(QMainWindow):
         # 2. 操作按钮 (第二排)
         button_row2 = QHBoxLayout()
         self.set_cur_tcp_btn = QPushButton("设置Cur TCP")
-        self.get_suitable_tcp_btn = QPushButton("获取合适的Tar_Tcp_Z以及更新O点位置")
+        self.get_suitable_tcp_btn = QPushButton("Get Virtual RCM_O")
         
         button_row2.addWidget(self.set_cur_tcp_btn)
         button_row2.addWidget(self.get_suitable_tcp_btn)
@@ -1469,60 +1469,123 @@ class RobotControlWindow(QMainWindow):
                 
     def get_suitable_tcp(self):
         """
-        计算EO向量在关节六Z轴方向的投影距离，并设置到Tcp_Z。
-        同时将其他五个TCP值设置成0，并将新的O点位置投影到E点沿着工具Z轴的延长线上。
+        [修改]：开始执行新的复杂指令序列：切换到 TCP_E，获取 End-Effect 位置，然后执行计算和 TCP 设置序列。
         """
-        # 1. 检查E点和O点是否有数据
+        # 1. 检查连接状态 (可选但推荐)
+        if not self.tcp_manager.is_connected:
+            QMessageBox.warning(self, "警告", "机器人未连接。")
+            return
+
+        self.status_bar.showMessage("状态: 开始执行 '获取合适的Tar_Tcp_Z' 序列 (Step 0/5: 切换到 TCP_E)...")
+        
+        # Step 0: 切换到 TCP_E (Sequence Start)
+        self.set_tcp_e()
+        
+        # Step 1: 延时 200ms 后，获取 End-Effect 位置
+        QTimer.singleShot(200, self._suitable_tcp_sequence_step_1)
+
+
+    def _suitable_tcp_sequence_step_1(self):
+        """
+        [序列 Step 1]：获取 End-Effect 位置，并执行投影距离计算和 UI 更新。
+        """
+        self.status_bar.showMessage("状态: 序列 Step 1/5: 获取 End-Effect 位置并计算投影距离...")
+
+        # 1. 点击“获取End-Effect位置”
+        self.get_e_point_position()
+        
+        # 2. 检查 E点和 O点是否有数据 (此时 End-Effect 应该已被最新的 latest_tool_pose 更新)
         try:
             o_point = np.array([float(self.o_vars[i].text()) for i in range(3)])
             e_point = np.array([float(self.e_vars[i].text()) for i in range(3)])
         except ValueError:
-            self.status_bar.showMessage("警告: 请先获取O点和End-effect点坐标。")
+            QMessageBox.critical(self, "序列中断", "请先在 O 点和 End-Effect 点输入或获取有效的坐标。")
+            self.status_bar.showMessage("错误: 序列中断，O点或 E点数据无效。")
             return
 
         initial_tcp_pose = self.get_current_tool_pose()
         if initial_tcp_pose is None:
-            QMessageBox.warning(self, "警告", "无法获取当前的机器人姿态来计算新的O点位置。")
+            QMessageBox.critical(self, "序列中断", "无法获取最新的机器人姿态。")
+            self.status_bar.showMessage("错误: 序列中断，无法获取机器人姿态。")
             return
             
         try:
-            # a. 获取 End-effect Z 轴向量 (V_Z) 和 P_EE
+            # 3. 执行计算逻辑 (更新 O_x, O_y, O_z 和 Tar_Tcp_Z/Rz)
             rpy_deg = initial_tcp_pose[3:]
             z_axis_vector = self._get_z_axis_vector(rpy_deg)
             p_ee = initial_tcp_pose[:3]
-
-            # b. 计算 EO 向量 (O - E)
             vector_eo = o_point - e_point
-            
-            # c. 计算投影距离 (D_proj): EO 向量在工具Z轴方向的投影。这个投影距离就是新的 TCP_Z
             projection_distance = np.dot(vector_eo, z_axis_vector)
-            self.status_bar.showMessage(f"状态: EO向量在工具Z轴的投影距离为 {projection_distance:.2f}。")
 
-            # 2. 设置TCP_Z和其他TCP值
-            self.tcp_input_entries[2].setText(f"{projection_distance:.2f}")
-            
-            # 3. 将其他五个TCP值设置成0
+            # 更新 UI: Tar_Tcp_* 输入框
+            self.tcp_input_entries[2].setText(f"{projection_distance:.2f}") # TCP_Z
             for i in range(len(self.tcp_input_entries)):
-                if i != 2: # 索引2是Tcp_Z
+                if i != 2 and i != 5:
                     self.tcp_input_entries[i].setText("0.00")
+            self.tcp_input_entries[5].setText("157.50") # TCP_Rz
 
-            # 4. 计算新的 O 点位置 (P_O_new)
-            # P_O_new = P_EE + D_proj * V_Z
+            # 更新 UI: O 点位置
             p_o_new = p_ee + projection_distance * z_axis_vector
-            
-            # d. 更新 O 点 UI
             self.o_vars[0].setText(f"{p_o_new[0]:.2f}")
             self.o_vars[1].setText(f"{p_o_new[1]:.2f}")
             self.o_vars[2].setText(f"{p_o_new[2]:.2f}")
         
+            self.status_bar.showMessage(f"状态: 序列 Step 1/5 完成。投影距离为 {projection_distance:.2f}。")
+
+            # Step 2: 延时 200ms 后，切换到 TCP_O
+            QTimer.singleShot(200, self._suitable_tcp_sequence_step_2)
+
+        except Exception as e:
+            QMessageBox.critical(self, "序列中断", f"计算或 UI 更新失败: {e}")
+            self.status_bar.showMessage("错误: 序列中断，计算失败。")
+
+
+    def _suitable_tcp_sequence_step_2(self):
+        """
+        [序列 Step 2]：切换到 TCP_O，并延时执行下一步。
+        """
+        self.status_bar.showMessage("状态: 序列 Step 2/5: 切换到 TCP_O...")
+        # Step 2: 切换到 TCP_O
+        self.set_tcp_o()
+        
+        # Step 3: 延时 200ms 后，设置 Cur TCP
+        QTimer.singleShot(200, self._continue_suitable_tcp_sequence)
+
+    
+    def _continue_suitable_tcp_sequence(self):
+        """
+        [序列 Step 3]：设置 Cur TCP，并延时执行下一步。
+        (原有的 _continue_suitable_tcp_sequence)
+        """
+        self.status_bar.showMessage("状态: 序列 Step 3/5: 设置 Cur TCP...")
+        try:
+            # Step 3: 发送 ConfigTCP 指令 ("设置Cur Tcp")
+            self.send_set_tcp_command()
+            
+            # Step 4: 启动延时 200ms，执行序列的最后一步
+            QTimer.singleShot(200, self._finalize_suitable_tcp_sequence)
+            
+        except Exception as e:
+            QMessageBox.critical(self, "指令发送错误", f"序列中断 (设置 Cur TCP 失败): {e}")
+            self.status_bar.showMessage("错误: 序列中断，设置 Cur TCP 失败。")
+
+    def _finalize_suitable_tcp_sequence(self):
+        """
+        [序列 Step 4/5]：切换回 TCP_E，并弹出最终成功消息。
+        (原有的 _finalize_suitable_tcp_sequence)
+        """
+        self.status_bar.showMessage("状态: 序列 Step 4/5: 切换回 TCP_E...")
+        try:
+            # Step 4: 切换回 TCP_E
+            self.set_tcp_e()
+            
+            self.status_bar.showMessage("状态: 序列 Step 5/5 完成。")
             QMessageBox.information(self, "操作成功", 
-                                    f"TCP_Z值已设置为 {projection_distance:.2f}。\n"
-                                    f"O点位置已更新至 ({p_o_new[0]:.2f}, {p_o_new[1]:.2f}, {p_o_new[2]:.2f}) (Base坐标系)。\n"
-                                    "请点击“设置Cur TCP”按钮以应用更改。"
+                                    "机器人指令序列 (切换TCP_E -> 获取E点 -> 计算 -> 切换TCP_O -> 设置Cur TCP -> 切换TCP_E) 已发送完成。"
                                    )
         except Exception as e:
-            QMessageBox.critical(self, "计算错误", f"计算TCP或新的O点位置时出错: {e}")
-            self.status_bar.showMessage("错误: 计算TCP或新的O点位置时出错。")
+             QMessageBox.critical(self, "指令发送错误", f"序列中断 (切换 TCP_E 失败): {e}")
+             self.status_bar.showMessage("错误: 序列中断，切换 TCP_E 失败。")
 
     def create_cur_tcp_group(self, layout):
         """新增：创建用于显示当前TCP坐标的Groupbox。"""
