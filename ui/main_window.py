@@ -40,7 +40,7 @@ class BPointSelectionDialog(QDialog):
 
     def __init__(self, b_point_data_list, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("B点定位选择 (多选)")
+        self.setWindowTitle("B Point Localization Selection (Multiple)")
         self.setMinimumSize(900, 400)
         # b_point_data_list 的元素结构已修改为: (p_u_pose, p_base_pose, angle, index)
         self.b_point_data_list = b_point_data_list 
@@ -51,7 +51,7 @@ class BPointSelectionDialog(QDialog):
         # 1. 结果表格
         self.table = QTableWidget()
         self.table.setColumnCount(5) # 新增一列用于显示编号
-        self.table.setHorizontalHeaderLabels(["选择", "编号", "B点 (TCP_U) 姿态", "B点 (Base) 姿态", "OA轴旋转角度 (度)"])
+        self.table.setHorizontalHeaderLabels(["Select", "Index", "B Point (TCP_U) Pose", "B Point (Base) Pose", "OA Axis Rotation Angle (Deg)"])
         # 允许内容自适应宽度，并限制只能选择行
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -65,8 +65,8 @@ class BPointSelectionDialog(QDialog):
         
         # 2. 按钮布局
         btn_layout = QHBoxLayout()
-        self.ok_btn = QPushButton("确认选择")
-        self.cancel_btn = QPushButton(f"取消 (已加载 {len(self.b_point_data_list)} 个点)")
+        self.ok_btn = QPushButton("Confirm Selection")
+        self.cancel_btn = QPushButton(f"Cancel (Loaded {len(self.b_point_data_list)} points)")
         btn_layout.addStretch()
         btn_layout.addWidget(self.ok_btn)
         btn_layout.addWidget(self.cancel_btn)
@@ -147,7 +147,7 @@ class BPointSelectionDialog(QDialog):
                 selected_data_list.append(self.b_point_data_list[row]) 
 
         if not selected_data_list:
-            QMessageBox.warning(self, "警告", "请至少选择一个 B 点。")
+            QMessageBox.warning(self, "Warning", "Please select at least one B point.")
             return
 
         self.b_points_selected.emit(selected_data_list) 
@@ -168,7 +168,7 @@ class RobotControlWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         # 设置窗口标题。
-        self.setWindowTitle("RRRRRR 机器人高级控制界面 (PyQt5版)")
+        self.setWindowTitle("UR-like Robot Advanced Control Interface (PyQt5)")
         # 设置窗口的初始位置和大小。
         self.setGeometry(100, 100, 900, 700)
 
@@ -328,18 +328,18 @@ class RobotControlWindow(QMainWindow):
         main_layout.addLayout(right_panel_layout, 1)
         
         # 将机器人控制标签页添加到 QTabWidget
-        self.tabs.addTab(robot_control_tab, "机器人控制")
+        self.tabs.addTab(robot_control_tab, "Robot Control")
 
         # 将超声图像标签页添加到 QTabWidget
-        self.tabs.addTab(self.ultrasound_tab, "超声图像")
+        self.tabs.addTab(self.ultrasound_tab, "Ultrasound Imaging")
         
         # 将 Beckhoff 通信标签页添加到 QTabWidget
-        self.tabs.addTab(self.beckhoff_tab, "Beckhoff通信")
+        self.tabs.addTab(self.beckhoff_tab, "Beckhoff Communication")
 
         # 状态栏，用于在底部显示简短的程序状态信息。
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("状态: 准备就绪")
+        self.status_bar.showMessage("Status: Ready")
 
     def setup_connections(self):
         """
@@ -397,10 +397,10 @@ class RobotControlWindow(QMainWindow):
                 self.tcp_manager.send_command(command)
                 self.log_message(f"已自动发送命令: {command}")
             
-            if "失败" in result:
-                QMessageBox.critical(self, "连接错误", result)
+            if "Fail" in result or "失败" in result:
+                QMessageBox.critical(self, "Connection Error", result)
         except ValueError:
-            QMessageBox.critical(self, "输入错误", "端口号必须是有效数字。")
+            QMessageBox.critical(self, "Input Error", "Port number must be a valid digit.")
             
     def disconnect_tcp(self):
         """将断开连接请求委托给 TCPManager。"""
@@ -424,8 +424,8 @@ class RobotControlWindow(QMainWindow):
         self.disconnect_button.setEnabled(is_connected)
         self.send_entry.setEnabled(is_connected)
         self.send_button.setEnabled(is_connected)
-        self.tcp_status_label.setText("TCP状态: 已连接" if is_connected else "TCP状态: 未连接")
-        self.status_bar.showMessage("状态: 已连接到机器人" if is_connected else "状态: 准备就绪")
+        self.tcp_status_label.setText("TCP Status: Connected" if is_connected else "TCP Status: Disconnected")
+        self.status_bar.showMessage("Status: Connected to Robot" if is_connected else "Status: Ready")
         if not is_connected:
             self.ur_stop_btn.setEnabled(False) # 断开连接时禁用急停按钮
 
@@ -495,23 +495,23 @@ class RobotControlWindow(QMainWindow):
             
             self.log_message(command)
             self.tcp_manager.send_command(command)
-            self.status_bar.showMessage(f"状态: TCP参数已发送到 {sTcpName}。")
+            self.status_bar.showMessage(f"Status: TCP parameters sent to {sTcpName}.")
         except ValueError:
-            QMessageBox.critical(self, "输入错误", "TCP参数必须是有效的数字！")
+            QMessageBox.critical(self, "Input Error", "TCP parameters must be valid numbers!")
         except IndexError:
-            QMessageBox.critical(self, "内部错误", "TCP参数输入框数量不正确。")
+            QMessageBox.critical(self, "Internal Error", "Incorrect number of TCP parameter input boxes.")
 
     def toggle_power(self):
         """根据当前电源状态切换按钮文本，并发送相应的上电或断电指令。"""
         if self.power_state == 0:
             # 未上电，发送上电指令。
             self.tcp_manager.send_command("Electrify;")
-            self.ur_power_btn.setText("电源开启中...")
+            self.ur_power_btn.setText("Powering On...")
             self.ur_power_btn.setEnabled(False) # 暂时禁用按钮，避免重复点击。
         else:
             # 已上电，发送断电指令 (OSCmd,1)。
             self.tcp_manager.send_command("OSCmd,1;")
-            self.ur_power_btn.setText("断电中...")
+            self.ur_power_btn.setText("Powering Off...")
             self.ur_power_btn.setEnabled(False)
 
     def toggle_enable(self):
@@ -519,12 +519,12 @@ class RobotControlWindow(QMainWindow):
         if self.enable_state == 0:
             # 未使能，发送使能指令 (GrpEnable,0)。
             self.tcp_manager.send_command("GrpEnable,0;")
-            self.ur_enable_btn.setText("使能中...")
+            self.ur_enable_btn.setText("Enabling...")
             self.ur_enable_btn.setEnabled(False)
         else:
             # 已使能，发送去使能指令 (GrpDisable,0)。
             self.tcp_manager.send_command("GrpDisable,0;")
-            self.ur_enable_btn.setText("去使能中...")
+            self.ur_enable_btn.setText("Disabling...")
             self.ur_enable_btn.setEnabled(False)
 
     def handle_teach_mode_state_change(self, state):
@@ -533,17 +533,17 @@ class RobotControlWindow(QMainWindow):
             # 如果勾选，发送开启示教功能指令 (GrpOpenFreeDriver,0)。
             command = "GrpOpenFreeDriver,0;"
             self.tcp_manager.send_command(command)
-            self.status_bar.showMessage("状态: 示教功能已开启。")
+            self.status_bar.showMessage("Status: Teach Mode Enabled.")
         else:
             # 如果取消勾选，发送关闭示教功能指令 (GrpCloseFreeDriver,0)。
             command = "GrpCloseFreeDriver,0;"
             self.tcp_manager.send_command(command)
-            self.status_bar.showMessage("状态: 示教功能已关闭。")
+            self.status_bar.showMessage("Status: Teach Mode Disabled.")
 
     def _on_override_slider_changed(self, value):
         """当滑条数值改变时，更新标签以显示当前的运动速率值。"""
         override_value = value / 100.0
-        self.override_label.setText(f"运动速率: {override_value:.2f}")
+        self.override_label.setText(f"Motion Speed: {override_value:.2f}")
 
     def _on_override_slider_released(self):
         """当用户释放滑条时，发送 SetOverride 指令到机器人。"""
@@ -551,7 +551,7 @@ class RobotControlWindow(QMainWindow):
         # 指令格式为: `SetOverride,nRbtID,dOverride;`
         command = f"SetOverride,0,{d_override:.2f};"
         self.tcp_manager.send_command(command)
-        self.status_bar.showMessage(f"状态: 已设置运动速率为 {d_override:.2f}")
+        self.status_bar.showMessage(f"Status: Motion speed set to {d_override:.2f}")
 
     def handle_override_message(self, message):
         """解析 'ReadOverride' 消息，并更新当前运动速率显示。"""
@@ -561,9 +561,9 @@ class RobotControlWindow(QMainWindow):
                 dOverride = float(parts[2])
                 self.current_override_value.setText(f"{dOverride:.2f}")
             except (ValueError, IndexError) as e:
-                self.log_message(f"警告: 无法解析运动速率信息: {message}, 错误: {e}")
+                self.log_message(f"Warning: Cannot parse motion speed info: {message}, Error: {e}")
         else:
-            self.log_message(f"警告: 接收到无效的 ReadOverride 消息: {message}")
+            self.log_message(f"Warning: Received invalid ReadOverride message: {message}")
 
     def handle_emergency_info_message(self, message):
         """解析 'ReadEmergencyInfo' 消息，并根据nESTO值更新急停按钮状态。"""
@@ -574,9 +574,9 @@ class RobotControlWindow(QMainWindow):
                 # 如果nESTO为0，说明未处于急停状态，急停按钮可用
                 self.ur_stop_btn.setEnabled(nESTO == 0)
             except (ValueError, IndexError) as e:
-                self.log_message(f"警告: 无法解析急停信息消息: {message}, 错误: {e}")
+                self.log_message(f"Warning: Cannot parse emergency stop info message: {message}, Error: {e}")
         else:
-            self.log_message(f"警告: 接收到无效的 ReadEmergencyInfo 消息: {message}")
+            self.log_message(f"Warning: Received invalid ReadEmergencyInfo message: {message}")
 
     def handle_real_time_message(self, message):
         """解析 'ReadActPos' 消息，并更新UI上的关节和末端坐标显示。"""
@@ -601,44 +601,44 @@ class RobotControlWindow(QMainWindow):
                 # 更新最新工具端姿态
                 self.latest_tool_pose = tool_pose_params
 
-                self.status_bar.showMessage("状态: 关节、末端和工具端坐标已实时同步。")
+                self.status_bar.showMessage("Status: Joint, TCP, and Tool coordinates synchronized in real time.")
             except (ValueError, IndexError):
-                self.log_message("警告: 无法解析 ReadActPos 消息。")
+                self.log_message("Warning: Cannot parse ReadActPos message.")
         else:
-            self.log_message(f"警告: 接收到无效的 ReadActPos 消息: {message}")
+            self.log_message(f"Warning: Received invalid ReadActPos message: {message}")
 
     def get_a_point_position(self):
         """将最新的工具端位置记录到A点文本框中。"""
         if not self.latest_tool_pose:
-            self.status_bar.showMessage("警告: 无法获取位置，请先连接机器人并等待数据更新。")
+            self.status_bar.showMessage("Warning: Cannot get position, please connect robot and wait for data update first.")
             return
         
         self.a_vars[0].setText(f"{self.latest_tool_pose[0]:.2f}")
         self.a_vars[1].setText(f"{self.latest_tool_pose[1]:.2f}")
         self.a_vars[2].setText(f"{self.latest_tool_pose[2]:.2f}")
-        self.status_bar.showMessage("状态: 已获取A点位置。")
+        self.status_bar.showMessage("Status: A point position obtained.")
 
     def get_o_point_position(self):
         """将最新的工具端位置记录到O点文本框中。"""
         if not self.latest_tool_pose:
-            self.status_bar.showMessage("警告: 无法获取位置，请先连接机器人并等待数据更新。")
+            self.status_bar.showMessage("Warning: Cannot get position, please connect robot and wait for data update first.")
             return
         
         self.o_vars[0].setText(f"{self.latest_tool_pose[0]:.2f}")
         self.o_vars[1].setText(f"{self.latest_tool_pose[1]:.2f}")
         self.o_vars[2].setText(f"{self.latest_tool_pose[2]:.2f}")
-        self.status_bar.showMessage("状态: 已获取O点位置。")
+        self.status_bar.showMessage("Status: O point position obtained.")
         
     def get_e_point_position(self):
         """将最新的工具端位置记录到End-Effect文本框中。"""
         if not self.latest_tool_pose:
-            self.status_bar.showMessage("警告: 无法获取位置，请先连接机器人并等待数据更新。")
+            self.status_bar.showMessage("Warning: Cannot get position, please connect robot and wait for data update first.")
             return
         e_point = self.latest_tool_pose[0:3]
         self.e_vars[0].setText(f"{e_point[0]:.2f}")
         self.e_vars[1].setText(f"{e_point[1]:.2f}")
         self.e_vars[2].setText(f"{e_point[2]:.2f}")
-        self.status_bar.showMessage("状态: 已获取End-Effect位置。")
+        self.status_bar.showMessage("Status: End-Effect position obtained.")
         
     def get_current_tool_pose(self):
         """从UI中获取当前的工具姿态（位置和欧拉角）。"""
@@ -659,10 +659,10 @@ class RobotControlWindow(QMainWindow):
         """
         # 1. 检查连接状态 (可选但推荐)
         if not self.tcp_manager.is_connected:
-            QMessageBox.warning(self, "警告", "机器人未连接。")
+            QMessageBox.warning(self, "Warning", "Robot is disconnected.")
             return
 
-        self.status_bar.showMessage("状态: 开始执行 '使超声平面对齐AOE平面' 序列 (Step 0/3: 切换到 TCP_E)...")
+        self.status_bar.showMessage("Status: Starting 'Align Ultrasound Plane to AOE Plane' sequence (Step 0/3: Switch to TCP_E)...")
         
         # Step 0: 切换到 TCP_E (Sequence Start)
         self.set_tcp_e()
@@ -675,7 +675,7 @@ class RobotControlWindow(QMainWindow):
         """
         [序列 Step 1]：获取 End-Effect 位置。
         """
-        self.status_bar.showMessage("状态: 序列 Step 1/3: 获取 End-Effect 位置...")
+        self.status_bar.showMessage("Status: Sequence Step 1/3: Get End-Effect Position...")
 
         # Step 1: 获取 End-Effect 位置
         self.get_e_point_position()
@@ -688,7 +688,7 @@ class RobotControlWindow(QMainWindow):
         """
         [序列 Step 2/3]：执行原有的核心计算和关节旋转指令。
         """
-        self.status_bar.showMessage("状态: 序列 Step 2/3: 计算并发送关节旋转指令...")
+        self.status_bar.showMessage("Status: Sequence Step 2/3: Calculate and send joint rotation command...")
 
         # 将原有的 align_ultrasound_plane_to_aoe 核心逻辑放在这里
         try:
@@ -696,13 +696,13 @@ class RobotControlWindow(QMainWindow):
             o_point = np.array([float(self.o_vars[i].text()) for i in range(3)])
             e_point = np.array([float(self.e_vars[i].text()) for i in range(3)])
         except ValueError:
-            self.status_bar.showMessage("错误: A、O、E点坐标必须为有效数字。")
-            QMessageBox.critical(self, "错误", "A、O、E点坐标必须为有效数字。")
+            self.status_bar.showMessage("Error: A, O, E point coordinates must be valid numbers.")
+            QMessageBox.critical(self, "Error", "A, O, E point coordinates must be valid numbers.")
             return
         
         initial_tcp_pose = self.get_current_tool_pose()
         if initial_tcp_pose is None:
-            self.status_bar.showMessage("警告: 无法获取当前的机器人姿态。")
+            self.status_bar.showMessage("Warning: Cannot get current robot pose.")
             return
 
         # 调用函数，计算关节6需要旋转的角度（带正负号）
@@ -711,8 +711,8 @@ class RobotControlWindow(QMainWindow):
 
         # Check if the result is an error message
         if isinstance(result, tuple):
-            self.status_bar.showMessage(f"错误: {result[1]}")
-            QMessageBox.warning(self, "错误", result[1])
+            self.status_bar.showMessage(f"Error: {result[1]}")
+            QMessageBox.warning(self, "Error", result[1])
             return
         
         rotation_angle_deg = result # Assign the float value if no error
@@ -733,8 +733,8 @@ class RobotControlWindow(QMainWindow):
         
         # 发送指令
         self.tcp_manager.send_command(command)
-        self.status_bar.showMessage(f"状态: 序列 Step 3/3 完成。已发送指令，使超声平面与AOE平面重合，关节6旋转了 {rotation_angle_deg:.2f} 度。")
-        QMessageBox.information(self, "序列完成", f"已发送旋转指令，关节6旋转了 {rotation_angle_deg:.2f} 度。")
+        self.status_bar.showMessage(f"Status: Sequence Step 3/3 Completed. Sent command to align ultrasound plane with AOE plane, Joint 6 rotated {rotation_angle_deg:.2f} degrees.")
+        QMessageBox.information(self, "Sequence Completed", f"Rotation command sent, Joint 6 rotated {rotation_angle_deg:.2f} degrees.")
 
     def rotate_ultrasound_plane_to_b(self):
         """
@@ -742,10 +742,10 @@ class RobotControlWindow(QMainWindow):
         """
         # 1. 检查连接状态
         if not self.tcp_manager.is_connected:
-            QMessageBox.warning(self, "警告", "机器人未连接。")
+            QMessageBox.warning(self, "Warning", "Robot is disconnected.")
             return
             
-        self.status_bar.showMessage("状态: 开始执行 '绕OA旋转超声平面使经过B点' 序列 (Step 0/2: 切换到 TCP_E)...")
+        self.status_bar.showMessage("Status: Starting 'Rotate Ultrasound Plane around OA to pass through B Point' sequence (Step 0/2: Switch to TCP_E)...")
         
         # Step 0: 切换到 TCP_E
         self.set_tcp_e()
@@ -757,7 +757,7 @@ class RobotControlWindow(QMainWindow):
         """
         [序列 Step 1/2]：执行原有的 B 点旋转计算，设置序列状态，并发送第一个 WayPoint 指令。
         """
-        self.status_bar.showMessage("状态: 序列 Step 1/2: 计算旋转步骤并发送第一个 WayPoint...")
+        self.status_bar.showMessage("Status: Sequence Step 1/2: Calculate rotation steps and send first WayPoint...")
         
         try:
             a_point = np.array([float(self.a_vars[i].text()) for i in range(3)])
@@ -765,13 +765,13 @@ class RobotControlWindow(QMainWindow):
             
             # --- Input validation and B-point retrieval ---
             if np.all(self.b_point_position_in_base == 0):
-                QMessageBox.warning(self, "操作失败", "请先输入或选择有效的 B 点位置。")
+                QMessageBox.warning(self, "Operation Failed", "Please enter or select a valid B point position first.")
                 return
             b_point = self.b_point_position_in_base
             
             initial_tcp_pose = self.get_current_tool_pose()
             if initial_tcp_pose is None:
-                self.status_bar.showMessage("警告: 无法获取当前的机器人姿态。")
+                self.status_bar.showMessage("Warning: Cannot get current robot pose.")
                 return
             
             # 0. 重置并计算所有步骤的旋转矩阵
@@ -786,8 +786,8 @@ class RobotControlWindow(QMainWindow):
             )
             
             if not delta_rotation_matrices or (len(delta_rotation_matrices) == 1 and np.allclose(delta_rotation_matrices[0], np.identity(4))):
-                 self.status_bar.showMessage("警告: 旋转角度接近0或计算失败，无需旋转。")
-                 QMessageBox.information(self, "完成", "旋转角度接近0或计算失败，无需旋转。")
+                 self.status_bar.showMessage("Warning: Rotation angle is close to 0 or calculation failed, no rotation needed.")
+                 QMessageBox.information(self, "Completed", "Rotation angle is close to 0 or calculation failed, no rotation needed.")
                  return
                  
             # 2. 存储状态
@@ -802,17 +802,17 @@ class RobotControlWindow(QMainWindow):
             self._continue_b_point_rotation() 
             
             # 5. 更新 UI 状态
-            self.status_bar.showMessage("状态: 序列 Step 2/2 完成。已开始分步发送 WayPoint 指令，使超声平面包含B点。")
-            QMessageBox.information(self, "任务开始", f"已开始 {len(delta_rotation_matrices)} 步旋转任务。")
+            self.status_bar.showMessage("Status: Sequence Step 2/2 Completed. Started sending WayPoint commands in steps to make the ultrasound plane contain B point.")
+            QMessageBox.information(self, "Task Started", f"Started {len(delta_rotation_matrices)} step rotation task.")
             
         except ValueError as e:
-            self.status_bar.showMessage(f"错误: 旋转计算失败: {e}")
+            self.status_bar.showMessage(f"Error: Rotation calculation failed: {e}")
             self.log_message(f"CALCULATION ERROR (ValueError): {e}") 
-            QMessageBox.critical(self, "计算错误", f"旋转计算失败: {e}")
+            QMessageBox.critical(self, "Calculation Error", f"Rotation calculation failed: {e}")
         except Exception as e:
-             self.status_bar.showMessage(f"致命错误: 姿态计算失败: {e}")
+             self.status_bar.showMessage(f"Fatal Error: Pose calculation failed: {e}")
              self.log_message(f"FATAL ERROR: Calculation failed: {e}")
-             QMessageBox.critical(self, "致命错误", f"姿态计算失败: {e}")
+             QMessageBox.critical(self, "Fatal Error", f"Pose calculation failed: {e}")
              
     # I must assume this method exists and is the main iterator/handler
     def _continue_b_point_rotation(self):
@@ -881,7 +881,7 @@ class RobotControlWindow(QMainWindow):
 
             # 提取累积旋转角度用于状态栏显示
             step_angle = np.rad2deg(pyrot.axis_angle_from_matrix(delta_rotation_matrix[:3, :3])[3])
-            self.status_bar.showMessage(f"状态: 绕OA旋转超声平面 (步骤 {self.current_b_point_step+1}/{len(self.b_point_rotation_steps)}，累积旋转 {step_angle:.2f} 度)...")
+            self.status_bar.showMessage(f"Status: Rotate Ultrasound Plane around OA (Step {self.current_b_point_step+1}/{len(self.b_point_rotation_steps)}, cumulative rotation {step_angle:.2f} degrees)...")
             
         else:
             # 7. 完成所有步骤
@@ -889,8 +889,8 @@ class RobotControlWindow(QMainWindow):
             self.current_b_point_step = -1
             self.initial_tcp_pose_for_b_rot = None
             self.b_point_o_point = None
-            self.status_bar.showMessage("状态: 绕OA旋转超声平面至B点任务完成。")
-            QMessageBox.information(self, "任务完成", "已完成超声平面绕OA轴旋转至B点任务。")
+            self.status_bar.showMessage("Status: Rotation of Ultrasound Plane around OA to B Point task completed.")
+            QMessageBox.information(self, "Task Completed", "Rotation of Ultrasound Plane around OA to B Point task completed.")
         
     def handle_read_tcp_byname_message(self, message):
         """解析 'ReadTCPByName' 消息，并更新新的TCP显示框。"""
@@ -900,11 +900,11 @@ class RobotControlWindow(QMainWindow):
                 tcp_params = [f"{float(p):.2f}" for p in parts[2:]]
                 for i in range(len(tcp_params)):
                     self.cur_tcp_vars[i].setText(tcp_params[i])
-                self.status_bar.showMessage("状态: 当前TCP坐标已更新。")
+                self.status_bar.showMessage("Status: Current TCP coordinates updated.")
             except (ValueError, IndexError):
-                self.log_message("警告: 无法解析 ReadTCPByName 消息。")
+                self.log_message("Warning: Cannot parse ReadTCPByName message.")
         else:
-            self.log_message(f"警告: 接收到无效的 ReadTCPByName 消息: {message}")
+            self.log_message(f"Warning: Received invalid ReadTCPByName message: {message}")
             
     def handle_read_cur_tcp_message(self, message):
         """解析 'ReadCurTCP' 消息，并更新新的TCP显示框。"""
@@ -914,11 +914,11 @@ class RobotControlWindow(QMainWindow):
                 tcp_params = [f"{float(p):.2f}" for p in parts[2:]]
                 for i in range(len(tcp_params)):
                     self.cur_tcp_vars[i].setText(tcp_params[i])
-                self.status_bar.showMessage("状态: 当前TCP坐标已更新。")
+                self.status_bar.showMessage("Status: Current TCP coordinates updated.")
             except (ValueError, IndexError):
-                self.log_message("警告: 无法解析 ReadCurTCP 消息。")
+                self.log_message("Warning: Cannot parse ReadCurTCP message.")
         else:
-            self.log_message(f"警告: 接收到无效的 ReadCurTCP 消息: {message}")
+            self.log_message(f"Warning: Received invalid ReadCurTCP message: {message}")
             
     def handle_robot_state_message(self, message):
         """解析 'ReadRobotState' 消息，并更新UI上的电源和使能按钮状态。"""
@@ -931,19 +931,19 @@ class RobotControlWindow(QMainWindow):
                 self.update_power_button(nElectrify)
                 self.update_enable_button(nEnableState)
             except (ValueError, IndexError):
-                self.log_message("警告: 无法解析机器人状态消息中的上电/使能状态。")
+                self.log_message("Warning: Cannot parse power/enable status in robot state message.")
         else:
-            self.log_message(f"警告: 接收到无效的 ReadRobotState 消息: {message}")
+            self.log_message(f"Warning: Received invalid ReadRobotState message: {message}")
 
     def update_power_button(self, nElectrify):
         """根据上电状态更新电源按钮的文本和颜色。"""
         self.power_state = nElectrify
         self.ur_power_btn.setEnabled(True)  # 重新启用按钮。
         if nElectrify == 1:
-            self.ur_power_btn.setText("电源断开")
+            self.ur_power_btn.setText("Power Off")
             self.ur_power_btn.setStyleSheet("background-color: lightgreen;")
         else:
-            self.ur_power_btn.setText("电源开启")
+            self.ur_power_btn.setText("Power On")
             self.ur_power_btn.setStyleSheet("background-color: salmon;")
 
     def update_enable_button(self, nEnableState):
@@ -951,40 +951,40 @@ class RobotControlWindow(QMainWindow):
         self.enable_state = nEnableState
         self.ur_enable_btn.setEnabled(True)
         if nEnableState == 1:
-            self.ur_enable_btn.setText("去使能")
+            self.ur_enable_btn.setText("Disable")
             self.ur_enable_btn.setStyleSheet("background-color: lightgreen;")
         else:
-            self.ur_enable_btn.setText("使能")
+            self.ur_enable_btn.setText("Enable")
             self.ur_enable_btn.setStyleSheet("background-color: salmon;")
 
     def send_ur_init_controller_command(self):
         """发送初始化控制器指令。"""
         self.tcp_manager.send_command("StartMaster;")
-        self.status_bar.showMessage("状态: 已发送初始化控制器指令。")
+        self.status_bar.showMessage("Status: Initialized Controller command sent.")
 
     def send_ur_reset_command(self):
         """发送机器人控制器复位指令。"""
         command = "GrpReset,0;" 
         self.tcp_manager.send_command(command)
-        self.status_bar.showMessage("状态: 已发送复位指令。")
+        self.status_bar.showMessage("Status: Reset command sent.")
 
     def send_ur_pause_command(self):
         """发送机器人运动暂停指令。"""
         command = "GrpInterrupt,0;"
         self.tcp_manager.send_command(command)
-        self.status_bar.showMessage("状态: 已发送暂停指令。")
+        self.status_bar.showMessage("Status: Pause command sent.")
 
     def send_ur_continue_command(self):
         """发送机器人运动继续指令。"""
         command = "GrpContinue,0;"
         self.tcp_manager.send_command(command)
-        self.status_bar.showMessage("状态: 已发送继续指令。")
+        self.status_bar.showMessage("Status: Continue command sent.")
 
     def send_ur_stop_command(self):
         """发送机器人急停指令。"""
         command = "GrpStop,0;" 
         self.tcp_manager.send_command(command)
-        self.status_bar.showMessage("状态: 已发送急停指令。")
+        self.status_bar.showMessage("Status: Emergency Stop command sent.")
 
     def log_message(self, message):
         """将消息添加到接收文本框，并自动滚动到底部。"""
@@ -997,7 +997,7 @@ class RobotControlWindow(QMainWindow):
         # dDeltaVal 是以度为单位的增量值。
         command = f"MoveRelJ,0,{joint_index},{direction},1;"
         self.tcp_manager.send_command(command)
-        self.status_bar.showMessage(f"状态: 关节{joint_index+1} 微调中...")
+        self.status_bar.showMessage(f"Status: Joint {joint_index+1} fine-tuning...")
     
     def _start_joint_continuous_mode(self):
         """延迟2秒后触发，启动关节的连续循环微调模式。"""
@@ -1027,7 +1027,7 @@ class RobotControlWindow(QMainWindow):
         self._moving_joint_index = -1
         self._moving_direction = BACKWARD
         self._is_continuous_mode_active = False
-        self.status_bar.showMessage("状态: 关节微调停止")
+        self.status_bar.showMessage("Status: Joint fine-tuning stopped")
 
     def continuous_move(self):
         """由定时器周期性调用的函数，用于持续微调关节。"""
@@ -1066,7 +1066,7 @@ class RobotControlWindow(QMainWindow):
         # 更新状态栏显示，这里可能需要根据 nAxisId 重新映射标签
         axis_labels = ["X", "Y", "Z", "Rx", "Ry", "Rz"]
         coord_sys = "Tool" if nToolMotion == 1 else "Base"
-        self.status_bar.showMessage(f"状态: {coord_sys}坐标系下 Tcp_{axis_labels[nAxisId]} 微调中...")
+        self.status_bar.showMessage(f"Status: Tcp_{axis_labels[nAxisId]} fine-tuning in {coord_sys} coordinate system...")
 
     def _start_tcp_continuous_mode(self):
         """延迟2秒后触发，启动TCP的连续循环微调模式。"""
@@ -1096,7 +1096,7 @@ class RobotControlWindow(QMainWindow):
         self._moving_tcp_index = -1
         self._moving_direction = BACKWARD
         self._is_continuous_tcp_mode_active = False
-        self.status_bar.showMessage("状态: TCP微调停止")
+        self.status_bar.showMessage("Status: TCP fine-tuning stopped")
     
     def send_init_joint_position_command(self):
         """发送指令，使机器人移动到预设的初始关节位置。"""
@@ -1129,7 +1129,7 @@ class RobotControlWindow(QMainWindow):
         )
 
         self.tcp_manager.send_command(command)
-        self.status_bar.showMessage("状态: 已发送初始化关节位置指令。")
+        self.status_bar.showMessage("Status: Initialized Joint Position command sent.")
 
     def continuous_tcp_move(self):
         """由定时器周期性调用的函数，用于持续微调TCP坐标。"""
@@ -1149,13 +1149,13 @@ class RobotControlWindow(QMainWindow):
         创建左侧的电机微调模块，用于控制各个关节的运动。
         此方法已修改，以调整运动速率滑条的布局，使其与标签更靠近。
         """
-        group = QGroupBox("电机微调模块 (正运动学)")
+        group = QGroupBox("Motor Fine-tuning Module (Forward Kinematics)")
         group_layout = QVBoxLayout(group)
         group_layout.addStretch()
         for i in range(self.num_joints):
             row_layout = QHBoxLayout()
             row_layout.addStretch()
-            label = QLabel(f"关节 {i+1} (q{i+1}):")
+            label = QLabel(f"Joint {i+1} (q{i+1}):")
             value_label = QLineEdit("0.00")
             value_label.setReadOnly(True)
             value_label.setStyleSheet("background-color: lightgrey; border: 1px inset grey;")
@@ -1186,7 +1186,7 @@ class RobotControlWindow(QMainWindow):
         group_layout.addStretch()
         # --- 新增：初始化关节位置按钮 ---
         init_btn_layout = QHBoxLayout()
-        self.init_joint_pos_btn = QPushButton("初始化关节位置")
+        self.init_joint_pos_btn = QPushButton("Initialize Joint Position")
         init_btn_layout.addStretch()
         init_btn_layout.addWidget(self.init_joint_pos_btn)
         init_btn_layout.addStretch()
@@ -1197,9 +1197,9 @@ class RobotControlWindow(QMainWindow):
 
     def create_override_group(self, layout):
         """将运动速率滑块和显示做成一个新Groupbox。"""
-        group = QGroupBox("运动速率")
+        group = QGroupBox("Motion Speed")
         group_layout = QVBoxLayout(group)
-        self.override_label = QLabel("运动速率: 0.01")
+        self.override_label = QLabel("Motion Speed: 0.01")
         self.override_label.setAlignment(Qt.AlignCenter)
         center_layout = QVBoxLayout()
         self.override_slider = QSlider(Qt.Vertical)
@@ -1212,7 +1212,7 @@ class RobotControlWindow(QMainWindow):
         self.override_slider.sliderReleased.connect(self._on_override_slider_released)
         center_layout.addWidget(self.override_slider, alignment=Qt.AlignCenter)
         current_override_read_layout = QVBoxLayout()
-        self.current_override_label = QLabel("当前运动速率:")
+        self.current_override_label = QLabel("Current Motion Speed:")
         self.current_override_label.setAlignment(Qt.AlignCenter)
         self.current_override_value = QLineEdit("0.00")
         self.current_override_value.setReadOnly(True)
@@ -1231,7 +1231,7 @@ class RobotControlWindow(QMainWindow):
 
     def create_tool_state_group(self, layout):
         """创建用于显示机器人工具端实时状态并包含微调按钮的模块。（已修改为只读）"""
-        group = QGroupBox("机器人工具端实时状态")
+        group = QGroupBox("Robot Tool Real-time Status")
         group_layout = QGridLayout(group)
         self.tool_pose_labels = {}
         # 定义工具端姿态参数。格式: (基础标签文本, 变量键, 附加标签文本/None)
@@ -1301,18 +1301,18 @@ class RobotControlWindow(QMainWindow):
             group_layout.addLayout(btn_layout, row_buttons, col_start, 1, 2)
         
         # 6. 添加 Tool 坐标系复选框 (放在下一行，即第 4 行，跨越所有列)
-        self.tool_coord_checkbox = QCheckBox("是否在 Tool 坐标系下运动")
+        self.tool_coord_checkbox = QCheckBox("Move in Tool Coordinate System?")
         group_layout.addWidget(self.tool_coord_checkbox, 4, 0, 1, 6, alignment=Qt.AlignCenter)
         
         layout.addWidget(group)
         
     def create_record_oae_state_group(self, layout):
         """创建用于记录机器人A点、O点和end-effect点的模块。（已移除人工输入按钮，调整获取按钮位置）"""
-        group = QGroupBox("机器人A、O和End-Effect位置")
+        group = QGroupBox("Robot A, O, and End-Effect Positions")
         group_layout = QVBoxLayout(group)
 
         # 定义一个统一的按钮宽度，确保三个“获取”按钮大小一致
-        BUTTON_WIDTH = 120
+        BUTTON_WIDTH = 160
         
         # A点布局
         a_point_subgroup = QGroupBox("A点")
@@ -1330,7 +1330,7 @@ class RobotControlWindow(QMainWindow):
             a_point_layout.addWidget(text_box, 0, i * 2 + 1)
         
         # --- 按钮布局重组：将获取按钮放在 Z 坐标右边 ---
-        self.get_a_btn = QPushButton("获取A点位置") 
+        self.get_a_btn = QPushButton("Get A Point Position") 
         self.get_a_btn.setFixedWidth(BUTTON_WIDTH) # 设置固定宽度
         a_point_layout.addWidget(self.get_a_btn, 0, 6) # 放置在 A_z 右侧
         # --- 按钮布局结束 ---
@@ -1353,7 +1353,7 @@ class RobotControlWindow(QMainWindow):
             o_point_layout.addWidget(text_box, 0, i * 2 + 1)
         
         # --- 按钮布局重组：将获取按钮放在 Z 坐标右边 ---
-        self.get_o_btn = QPushButton("获取O点位置")
+        self.get_o_btn = QPushButton("Get O Point Position")
         self.get_o_btn.setFixedWidth(BUTTON_WIDTH) # 设置固定宽度
         o_point_layout.addWidget(self.get_o_btn, 0, 6) # 放置在 O_z 右侧
         # --- 按钮布局结束 ---
@@ -1376,7 +1376,7 @@ class RobotControlWindow(QMainWindow):
             e_point_layout.addWidget(text_box, 0, i * 2 + 1)
         
         # --- 按钮布局重组：将获取按钮放在 Z 坐标右边 ---
-        self.get_e_btn = QPushButton("获取End-Effect位置")
+        self.get_e_btn = QPushButton("Get End-Effect Position")
         self.get_e_btn.setFixedWidth(BUTTON_WIDTH) # 设置固定宽度
         e_point_layout.addWidget(self.get_e_btn, 0, 6) # 放置在 E_z 右侧
         # --- 按钮布局结束 ---
@@ -1403,11 +1403,11 @@ class RobotControlWindow(QMainWindow):
         BUTTON_WIDTH = 180 
         
         # 最外层的 GroupBox
-        group = QGroupBox("病灶点B定位")
+        group = QGroupBox("Lesion B Point Localization")
         group_layout = QVBoxLayout(group)
         
         # --- 1. B点 (Base 坐标系) 显示/输入 & Dropdown ---
-        b_point_base_subgroup = QGroupBox("B点 (Base 坐标系)")
+        b_point_base_subgroup = QGroupBox("B Point (Base Coordinate System)")
         b_point_base_layout = QGridLayout(b_point_base_subgroup)
         
         b_base_labels = ["B_x:", "B_y:", "B_z:"]
@@ -1422,7 +1422,7 @@ class RobotControlWindow(QMainWindow):
 
         # 添加下拉列表到 B_z 右侧 (B_z 对应的列索引为 5)
         self.b_point_dropdown = QComboBox()
-        self.b_point_dropdown.setPlaceholderText("请先读取TXT文件")
+        self.b_point_dropdown.setPlaceholderText("Please read TXT file first")
         self.b_point_dropdown.setFixedWidth(BUTTON_WIDTH) 
         b_point_base_layout.addWidget(self.b_point_dropdown, 0, 6) # Column 6 is right of B_z input
 
@@ -1434,7 +1434,7 @@ class RobotControlWindow(QMainWindow):
         # --- 2. 按钮布局 (Load TXT and Rotate) ---
         button_layout = QHBoxLayout()
         # 读取 TXT 文件按钮
-        self.load_b_points_intcp_u_txt_btn = QPushButton("读取TXT文件中的B点(TCP_U)")
+        self.load_b_points_intcp_u_txt_btn = QPushButton("Read B Points in TCP_U from TXT File")
         button_layout.addWidget(self.load_b_points_intcp_u_txt_btn) 
         
         group_layout.addLayout(button_layout)
@@ -1451,21 +1451,21 @@ class RobotControlWindow(QMainWindow):
         创建用于控制电源、使能、初始化和TCP设置的高级模块。
         此方法已修改，添加了“复位”、“暂停”、“继续”和“急停”按钮，并控制急停按钮的可用性。
         """
-        ur_control_group = QGroupBox("E05-L Pro设备控制")
+        ur_control_group = QGroupBox("E05-L Pro Device Control")
         ur_control_layout = QVBoxLayout(ur_control_group)
         # 电源/使能/初始化/复位/暂停/急停/继续 按钮布局。
         button_layout = QGridLayout()
         # 第一行按钮：电源和使能
-        self.ur_power_btn = QPushButton("电源开启")
-        self.ur_enable_btn = QPushButton("使能")
+        self.ur_power_btn = QPushButton("Power On")
+        self.ur_enable_btn = QPushButton("Enable")
         # 第二行按钮：初始化和复位
-        self.ur_init_btn = QPushButton("初始化控制器")
-        self.ur_reset_btn = QPushButton("复位")
+        self.ur_init_btn = QPushButton("Initialize Controller")
+        self.ur_reset_btn = QPushButton("Reset")
         # 第三行按钮：暂停和继续
-        self.ur_pause_btn = QPushButton("暂停")
-        self.ur_continue_btn = QPushButton("继续")
+        self.ur_pause_btn = QPushButton("Pause")
+        self.ur_continue_btn = QPushButton("Continue")
         # 第四行按钮：急停
-        self.ur_stop_btn = QPushButton("急停")
+        self.ur_stop_btn = QPushButton("Emergency Stop")
         self.ur_stop_btn.setStyleSheet("background-color: red; color: white; font-weight: bold;")
         # 默认情况下，急停按钮不可用，直到收到机器人状态信息
         self.ur_stop_btn.setEnabled(False)
@@ -1483,9 +1483,9 @@ class RobotControlWindow(QMainWindow):
 
     def create_teach_mode_group(self, layout):
         """新增：示教功能分组框，并将其移到左侧。"""
-        group = QGroupBox("示教功能")
+        group = QGroupBox("Teach Mode")
         group_layout = QHBoxLayout(group)
-        self.teach_mode_checkbox = QCheckBox("示教功能开启")
+        self.teach_mode_checkbox = QCheckBox("Teach Mode On")
         group_layout.addWidget(self.teach_mode_checkbox)
         layout.addWidget(group)
 
@@ -1494,7 +1494,7 @@ class RobotControlWindow(QMainWindow):
         新增：将工具坐标系设置移出并做成独立的Groupbox。
         已修改：将按钮分为两行。
         """
-        tcp_group = QGroupBox("工具坐标系设置 (TCP)")
+        tcp_group = QGroupBox("Tool Coordinate System Settings (TCP)")
         
         # 使用垂直布局作为主布局
         main_v_layout = QVBoxLayout(tcp_group)
@@ -1519,11 +1519,11 @@ class RobotControlWindow(QMainWindow):
         
         # 1. TCP 切换按钮 (第一排)
         button_row1 = QHBoxLayout()
-        self.set_tcp_o_btn = QPushButton("切换TCP_O")
-        self.set_tcp_p_btn = QPushButton("切换TCP_P")
-        self.set_tcp_u_btn = QPushButton("切换TCP_U")
-        self.set_tcp_e_btn = QPushButton("切换TCP_E")
-        self.set_tcp_tip_btn = QPushButton("切换TCP_tip")
+        self.set_tcp_o_btn = QPushButton("Switch to TCP_O")
+        self.set_tcp_p_btn = QPushButton("Switch to TCP_P")
+        self.set_tcp_u_btn = QPushButton("Switch to TCP_U")
+        self.set_tcp_e_btn = QPushButton("Switch to TCP_E")
+        self.set_tcp_tip_btn = QPushButton("Switch to TCP_tip")
         
         button_row1.addWidget(self.set_tcp_o_btn)
         button_row1.addWidget(self.set_tcp_p_btn) 
@@ -1535,7 +1535,7 @@ class RobotControlWindow(QMainWindow):
         
         # 2. 操作按钮 (第二排)
         button_row2 = QHBoxLayout()
-        self.set_cur_tcp_btn = QPushButton("设置Cur TCP")
+        self.set_cur_tcp_btn = QPushButton("Set Cur TCP")
         self.get_suitable_tcp_btn = QPushButton("Get Virtual RCM_O")
         
         button_row2.addWidget(self.set_cur_tcp_btn)
@@ -1550,47 +1550,47 @@ class RobotControlWindow(QMainWindow):
         self.current_tcp_name = "TCP_O" 
         self.log_message("SetTCPByName,0,TCP_O;")
         self.tcp_manager.send_command("SetTCPByName,0,TCP_O;")
-        self.status_bar.showMessage("状态: 已发送设置TCP_O的命令。")
+        self.status_bar.showMessage("Status: Sent command to set TCP_O.")
 
     def set_tcp_p(self):
         """发送设置TCP_P的命令。"""
         self.current_tcp_name = "TCP_P" 
         self.log_message("SetTCPByName,0,TCP_P;")
         self.tcp_manager.send_command("SetTCPByName,0,TCP_P;")
-        self.status_bar.showMessage("状态: 已发送设置TCP_P的命令。")
+        self.status_bar.showMessage("Status: Sent command to set TCP_P.")
 
     def set_tcp_u(self):
         """发送设置TCP_U的命令。"""
         self.current_tcp_name = "TCP_U" 
         self.log_message("SetTCPByName,0,TCP_U;")
         self.tcp_manager.send_command("SetTCPByName,0,TCP_U;")
-        self.status_bar.showMessage("状态: 已发送设置TCP_U的命令。")
+        self.status_bar.showMessage("Status: Sent command to set TCP_U.")
 
     def set_tcp_e(self):
         """发送设置TCP_E的命令。"""
         self.current_tcp_name = "TCP_E" 
         self.log_message("SetTCPByName,0,TCP_E;")
         self.tcp_manager.send_command("SetTCPByName,0,TCP_E;")
-        self.status_bar.showMessage("状态: 已发送设置TCP_E的命令。")
+        self.status_bar.showMessage("Status: Sent command to set TCP_E.")
 
     def set_tcp_tip(self):
         """发送设置TCP_tip的命令。"""
         self.current_tcp_name = "TCP_tip" 
         self.log_message("SetTCPByName,0,TCP_tip;")
         self.tcp_manager.send_command("SetTCPByName,0,TCP_tip;")
-        self.status_bar.showMessage("状态: 已发送设置TCP_tip的命令。")
+        self.status_bar.showMessage("Status: Sent command to set TCP_tip.")
     
     def read_tcp_o(self):
         """发送读取TCP_O的命令。"""
         self.log_message("ReadTCPByName,0,TCP_O;")
         self.tcp_manager.send_command("ReadTCPByName,0,TCP_O;")
-        self.status_bar.showMessage("状态: 已发送读取TCP_O的命令。")
+        self.status_bar.showMessage("Status: Sent command to read TCP_O.")
     
     def read_tcp_tip(self):
         """发送读取TCP_tip的命令。"""
         self.log_message("ReadTCPByName,0,TCP_tip;")
         self.tcp_manager.send_command("ReadTCPByName,0,TCP_tip;")
-        self.status_bar.showMessage("状态: 已发送读取TCP_tip的命令。")
+        self.status_bar.showMessage("Status: Sent command to read TCP_tip.")
         
     def _get_z_axis_vector(self, rpy_deg):
         """
@@ -1608,10 +1608,10 @@ class RobotControlWindow(QMainWindow):
         """
         # 1. 检查连接状态 (可选但推荐)
         if not self.tcp_manager.is_connected:
-            QMessageBox.warning(self, "警告", "机器人未连接。")
+            QMessageBox.warning(self, "Warning", "Robot is disconnected.")
             return
 
-        self.status_bar.showMessage("状态: 开始执行 '获取合适的Tar_Tcp_Z' 序列 (Step 0/5: 切换到 TCP_E)...")
+        self.status_bar.showMessage("Status: Starting 'Get Suitable Tar_Tcp_Z' sequence (Step 0/5: Switch to TCP_E)...")
         
         # Step 0: 切换到 TCP_E (Sequence Start)
         self.set_tcp_e()
@@ -1624,7 +1624,7 @@ class RobotControlWindow(QMainWindow):
         """
         [序列 Step 1]：获取 End-Effect 位置，并执行投影距离计算和 UI 更新。
         """
-        self.status_bar.showMessage("状态: 序列 Step 1/5: 获取 End-Effect 位置并计算投影距离...")
+        self.status_bar.showMessage("Status: Sequence Step 1/5: Get End-Effect Position and calculate projection distance...")
 
         # 1. 点击“获取End-Effect位置”
         self.get_e_point_position()
@@ -1634,14 +1634,14 @@ class RobotControlWindow(QMainWindow):
             o_point = np.array([float(self.o_vars[i].text()) for i in range(3)])
             e_point = np.array([float(self.e_vars[i].text()) for i in range(3)])
         except ValueError:
-            QMessageBox.critical(self, "序列中断", "请先在 O 点和 End-Effect 点输入或获取有效的坐标。")
-            self.status_bar.showMessage("错误: 序列中断，O点或 E点数据无效。")
+            QMessageBox.critical(self, "Sequence Interrupted", "Please enter or get valid coordinates for O point and End-Effect point first.")
+            self.status_bar.showMessage("Error: Sequence interrupted, O or E point data is invalid.")
             return
 
         initial_tcp_pose = self.get_current_tool_pose()
         if initial_tcp_pose is None:
-            QMessageBox.critical(self, "序列中断", "无法获取最新的机器人姿态。")
-            self.status_bar.showMessage("错误: 序列中断，无法获取机器人姿态。")
+            QMessageBox.critical(self, "Sequence Interrupted", "Cannot get the latest robot pose.")
+            self.status_bar.showMessage("Error: Sequence interrupted, cannot get robot pose.")
             return
             
         try:
@@ -1665,21 +1665,21 @@ class RobotControlWindow(QMainWindow):
             self.o_vars[1].setText(f"{p_o_new[1]:.2f}")
             self.o_vars[2].setText(f"{p_o_new[2]:.2f}")
         
-            self.status_bar.showMessage(f"状态: 序列 Step 1/5 完成。投影距离为 {projection_distance:.2f}。")
+            self.status_bar.showMessage(f"Status: Sequence Step 1/5 Completed. Projection distance is {projection_distance:.2f}.")
 
             # Step 2: 延时 200ms 后，切换到 TCP_O
             QTimer.singleShot(200, self._suitable_tcp_sequence_step_2)
 
         except Exception as e:
-            QMessageBox.critical(self, "序列中断", f"计算或 UI 更新失败: {e}")
-            self.status_bar.showMessage("错误: 序列中断，计算失败。")
+            QMessageBox.critical(self, "Sequence Interrupted", f"Calculation or UI update failed: {e}")
+            self.status_bar.showMessage("Error: Sequence interrupted, calculation failed.")
 
 
     def _suitable_tcp_sequence_step_2(self):
         """
         [序列 Step 2]：切换到 TCP_O，并延时执行下一步。
         """
-        self.status_bar.showMessage("状态: 序列 Step 2/5: 切换到 TCP_O...")
+        self.status_bar.showMessage("Status: Sequence Step 2/5: Switch to TCP_O...")
         # Step 2: 切换到 TCP_O
         self.set_tcp_o()
         
@@ -1692,7 +1692,7 @@ class RobotControlWindow(QMainWindow):
         [序列 Step 3]：设置 Cur TCP，并延时执行下一步。
         (原有的 _continue_suitable_tcp_sequence)
         """
-        self.status_bar.showMessage("状态: 序列 Step 3/5: 设置 Cur TCP...")
+        self.status_bar.showMessage("Status: Sequence Step 3/5: Set Cur TCP...")
         try:
             # Step 3: 发送 ConfigTCP 指令 ("设置Cur Tcp")
             self.send_set_tcp_command()
@@ -1701,30 +1701,30 @@ class RobotControlWindow(QMainWindow):
             QTimer.singleShot(200, self._finalize_suitable_tcp_sequence)
             
         except Exception as e:
-            QMessageBox.critical(self, "指令发送错误", f"序列中断 (设置 Cur TCP 失败): {e}")
-            self.status_bar.showMessage("错误: 序列中断，设置 Cur TCP 失败。")
+            QMessageBox.critical(self, "Command Send Error", f"Sequence Interrupted (Set Cur TCP failed): {e}")
+            self.status_bar.showMessage("Error: Sequence interrupted, Set Cur TCP failed.")
 
     def _finalize_suitable_tcp_sequence(self):
         """
         [序列 Step 4/5]：切换回 TCP_E，并弹出最终成功消息。
         (原有的 _finalize_suitable_tcp_sequence)
         """
-        self.status_bar.showMessage("状态: 序列 Step 4/5: 切换回 TCP_E...")
+        self.status_bar.showMessage("Status: Sequence Step 4/5: Switch back to TCP_E...")
         try:
             # Step 4: 切换回 TCP_E
             self.set_tcp_e()
             
-            self.status_bar.showMessage("状态: 序列 Step 5/5 完成。")
-            QMessageBox.information(self, "操作成功", 
-                                    "机器人指令序列 (切换TCP_E -> 获取E点 -> 计算 -> 切换TCP_O -> 设置Cur TCP -> 切换TCP_E) 已发送完成。"
+            self.status_bar.showMessage("Status: Sequence Step 5/5 Completed.")
+            QMessageBox.information(self, "Operation Successful", 
+                                    "Robot command sequence (Switch TCP_E -> Get E Point -> Calculate -> Switch TCP_O -> Set Cur TCP -> Switch TCP_E) completed."
                                    )
         except Exception as e:
-             QMessageBox.critical(self, "指令发送错误", f"序列中断 (切换 TCP_E 失败): {e}")
-             self.status_bar.showMessage("错误: 序列中断，切换 TCP_E 失败。")
+             QMessageBox.critical(self, "Command Send Error", f"Sequence Interrupted (Switch TCP_E failed): {e}")
+             self.status_bar.showMessage("Error: Sequence interrupted, Switch TCP_E failed.")
 
     def create_cur_tcp_group(self, layout):
         """新增：创建用于显示当前TCP坐标的Groupbox。"""
-        group = QGroupBox("当前TCP设置")
+        group = QGroupBox("Current TCP Settings")
         
         # 使用垂直布局作为主布局
         main_v_layout = QVBoxLayout(group)
@@ -1747,9 +1747,9 @@ class RobotControlWindow(QMainWindow):
         
         # 创建按钮并将其居中
         button_layout = QHBoxLayout()
-        self.read_cur_tcp_btn = QPushButton("读取Cur TCP")
-        self.read_tcp_o_btn = QPushButton("读取TCP_O")
-        self.read_tcp_tip_btn = QPushButton("读取TCP_tip")
+        self.read_cur_tcp_btn = QPushButton("Read Cur TCP")
+        self.read_tcp_o_btn = QPushButton("Read TCP_O")
+        self.read_tcp_tip_btn = QPushButton("Read TCP_tip")
         
         button_layout.addWidget(self.read_cur_tcp_btn)
         button_layout.addWidget(self.read_tcp_o_btn)
@@ -1761,15 +1761,15 @@ class RobotControlWindow(QMainWindow):
 
     def create_tcp_group(self, layout):
         """创建TCP连接和消息收发模块。"""
-        group = QGroupBox("TCP通信模块")
+        group = QGroupBox("TCP Communication Module")
         group_layout = QVBoxLayout(group)
         # IP和端口输入框布局。
         ip_port_layout = QHBoxLayout()
-        ip_port_layout.addWidget(QLabel("远程IP:"))
+        ip_port_layout.addWidget(QLabel("Remote IP:"))
         self.ip_entry = QLineEdit("192.168.10.10")
         self.ip_entry.setFixedWidth(200)
         ip_port_layout.addWidget(self.ip_entry)
-        ip_port_layout.addWidget(QLabel("端口:"))
+        ip_port_layout.addWidget(QLabel("Port:"))
         self.port_entry = QLineEdit("10003")
         self.port_entry.setFixedWidth(80)
         ip_port_layout.addWidget(self.port_entry)
@@ -1777,28 +1777,28 @@ class RobotControlWindow(QMainWindow):
         group_layout.addLayout(ip_port_layout)
         # 连接和断开按钮布局。
         btn_layout = QHBoxLayout()
-        self.connect_button = QPushButton("连接")
-        self.disconnect_button = QPushButton("断开")
+        self.connect_button = QPushButton("Connect")
+        self.disconnect_button = QPushButton("Disconnect")
         self.disconnect_button.setEnabled(False)
         btn_layout.addWidget(self.connect_button)
         btn_layout.addWidget(self.disconnect_button)
         group_layout.addLayout(btn_layout)
         # 连接状态标签。
-        self.tcp_status_label = QLabel("TCP状态: 未连接")
+        self.tcp_status_label = QLabel("TCP Status: Disconnected")
         self.tcp_status_label.setStyleSheet("color: blue;")
         group_layout.addWidget(self.tcp_status_label)
         # 接收消息文本框。
-        group_layout.addWidget(QLabel("接收消息:"))
+        group_layout.addWidget(QLabel("Received Messages:"))
         self.recv_text = QTextEdit()
         self.recv_text.setReadOnly(True)  # 设置为只读，用户无法编辑。
         self.recv_text.setStyleSheet("background-color: lightgrey;")
         group_layout.addWidget(self.recv_text) # Removed the index here
         # 发送消息输入框和按钮。
-        group_layout.addWidget(QLabel("发送消息:"))
+        group_layout.addWidget(QLabel("Send Message:"))
         send_layout = QHBoxLayout()
         self.send_entry = QLineEdit()
         self.send_entry.setEnabled(False)
-        self.send_button = QPushButton("发送")
+        self.send_button = QPushButton("Send")
         self.send_button.setEnabled(False)
         send_layout.addWidget(self.send_entry)
         send_layout.addWidget(self.send_button)
@@ -1811,11 +1811,11 @@ class RobotControlWindow(QMainWindow):
             
     def create_data_persistence_group(self, layout):
         """新增：创建用于保存和读取当前数据的Group。"""
-        group = QGroupBox("保存当前数据")
+        group = QGroupBox("Save Current Data")
         group_layout = QHBoxLayout(group)
         
-        self.save_data_btn = QPushButton("保存")
-        self.load_data_btn = QPushButton("读取")
+        self.save_data_btn = QPushButton("Save")
+        self.load_data_btn = QPushButton("Load")
         
         group_layout.addStretch()
         group_layout.addWidget(self.save_data_btn)
@@ -1962,7 +1962,7 @@ class RobotControlWindow(QMainWindow):
         """
         # 1. 检查 TCP_U 定义
         if self.tcp_u_definition_pose is None:
-            QMessageBox.warning(self, "警告", "请先连接机器人并确保已获取 TCP_U 定义。")
+            QMessageBox.warning(self, "Warning", "Please connect robot and ensure TCP_U definition has been acquired.")
             return
 
         # 2. 检查 A, O 点是否已设置且不重合
@@ -1971,7 +1971,7 @@ class RobotControlWindow(QMainWindow):
             o_point_val = self._get_ui_values(self.o_vars)
             
             if a_point_val is None or o_point_val is None:
-                QMessageBox.critical(self, "数据错误", "请先在 '机器人A、O和End-Effect位置' 模块中输入或获取有效的 A 点和 O 点坐标。")
+                QMessageBox.critical(self, "Data Error", "Please enter or get valid A and O point coordinates in the 'Robot A, O, and End-Effect Positions' module first.")
                 return
             
             a_point_pos = np.array(a_point_val[:3])
@@ -1979,11 +1979,11 @@ class RobotControlWindow(QMainWindow):
             
             # 检查 A 点和 O 点是否重合（导致 OA 轴无法定义）
             if np.linalg.norm(a_point_pos - o_point_pos) < 1e-6:
-                QMessageBox.critical(self, "几何错误", "A 点和 O 点坐标重合或过于接近，无法定义 OA 旋转轴。请重新输入或获取有效坐标。")
+                QMessageBox.critical(self, "Geometric Error", "A and O point coordinates coincide or are too close, unable to define OA rotation axis. Please re-enter or acquire valid coordinates.")
                 return
                 
         except ValueError:
-            QMessageBox.critical(self, "数据错误", "A点或O点坐标必须为有效数字。")
+            QMessageBox.critical(self, "Data Error", "A or O point coordinates must be valid numbers.")
             return
 
         # 3. 文件读取和解析 (使用文件对话框允许用户选择)
@@ -1994,8 +1994,8 @@ class RobotControlWindow(QMainWindow):
         
         if not os.path.exists(file_path):
              file_dialog = QFileDialog(self)
-             file_dialog.setWindowTitle("选择 B 点文件")
-             file_dialog.setNameFilter("文本文件 (*.txt);;所有文件 (*)")
+             file_dialog.setWindowTitle("Select B Point File")
+             file_dialog.setNameFilter("Text Files (*.txt);;All Files (*)")
              file_dialog.setFileMode(QFileDialog.ExistingFile) 
              
              if file_dialog.exec_() == QFileDialog.Accepted:
@@ -2005,7 +2005,7 @@ class RobotControlWindow(QMainWindow):
                  file_path = selected_files[0]
                  FILE_NAME = os.path.basename(file_path)
              else:
-                 self.status_bar.showMessage("状态: 用户取消选择文件。")
+                 self.status_bar.showMessage("Status: User cancelled file selection.")
                  return
         
         b_point_data_list = []
@@ -2022,7 +2022,7 @@ class RobotControlWindow(QMainWindow):
                     parts = line.split(',')
 
                     if len(parts) != 3:
-                        self.log_message(f"警告: 文件 {FILE_NAME} 第 {line_num} 行格式错误，期望 3 个位置参数 (X, Y, Z)，跳过: {line}")
+                        self.log_message(f"Warning: File {FILE_NAME} line {line_num} format error, expected 3 position parameters (X, Y, Z), skipped: {line}")
                         continue
                     
                     try:
@@ -2039,14 +2039,14 @@ class RobotControlWindow(QMainWindow):
                         index += 1 # 递增 index
                         
                     except ValueError as e:
-                        self.log_message(f"计算错误 (文件 {FILE_NAME} 行 {line_num})：无法将参数转换为数字或计算失败: {e}")
+                        self.log_message(f"Calculation Error (File {FILE_NAME} line {line_num}): Failed to convert parameters to numbers or calculation failed: {e}")
                         
         except Exception as e:
-            QMessageBox.critical(self, "文件读取或计算错误", f"处理文件时发生错误: {e}")
+            QMessageBox.critical(self, "File Read or Calculation Error", f"Error processing file: {e}")
             return
 
         if not b_point_data_list:
-            QMessageBox.warning(self, "警告", f"文件 {FILE_NAME} 中没有有效的 B 点数据可供计算。")
+            QMessageBox.warning(self, "Warning", f"File {FILE_NAME} contains no valid B point data for calculation.")
             return
 
         # 5. 弹出多选对话框
@@ -2069,7 +2069,7 @@ class RobotControlWindow(QMainWindow):
             return
         
         if index >= len(self.calculated_b_points):
-            self.status_bar.showMessage("警告: 下拉列表索引越界。")
+            self.status_bar.showMessage("Warning: Dropdown index out of bounds.")
             return
         # data: [p_u_pose (6), p_base_pose (6), rotation_angle_deg (1), index (1)]
         selected_data = self.calculated_b_points[index]
@@ -2088,10 +2088,10 @@ class RobotControlWindow(QMainWindow):
             self.b_vars_in_base[1].setText(f"{p_base_position[1]:.2f}")
             self.b_vars_in_base[2].setText(f"{p_base_position[2]:.2f}")
         except Exception as e:
-            self.status_bar.showMessage(f"写入 B 点坐标失败 (UI 引用错误): {e}")
+            self.status_bar.showMessage(f"Failed to write B point coordinates (UI reference error): {e}")
             return
 
-        self.status_bar.showMessage(f"状态: 已选择 B{b_index}，Base 坐标已更新 (绕OA轴角度: {rotation_angle:.2f} 度)。")
+        self.status_bar.showMessage(f"Status: Selected B{b_index}, Base coordinates updated (OA axis angle: {rotation_angle:.2f} degrees).")
 
     def _set_ui_values(self, var_list, data_list):
         """Helper to set QLineEdit values from a list of floats."""
@@ -2111,7 +2111,7 @@ class RobotControlWindow(QMainWindow):
             # data['b_point_in_tcp_u'] = self._get_ui_values(self.b_vars_in_tcp_u) # <--- REMOVED
 
             if any(v is None for v in [data['a_point'], data['o_point'], data['e_point']]): # <--- ADJUSTED CHECK
-                 raise ValueError("A/O/E点数据中存在无效数字。")
+                 raise ValueError("Invalid number in A/O/E point data.")
 
             # 新增：保存计算出的 B 点列表 (需要将 NumPy 数组转换为 List)
             # 结构: [p_u_pose (6), p_base_pose (6), angle (1), index (1)]
@@ -2125,23 +2125,23 @@ class RobotControlWindow(QMainWindow):
             data['calculated_b_points'] = calculated_b_points_serializable
 
         except ValueError as e:
-            QMessageBox.critical(self, "保存错误", f"数据收集失败: {e}")
+            QMessageBox.critical(self, "Save Error", f"Data collection failed: {e}")
             return
         
         # 2. 写入文件
         try:
             with open(DATA_FILE_NAME, 'w') as f:
                 json.dump(data, f, indent=4)
-            self.status_bar.showMessage(f"状态: 数据已成功保存到 {DATA_FILE_NAME}。")
-            QMessageBox.information(self, "保存成功", f"当前数据已保存到文件：{DATA_FILE_NAME}")
+            self.status_bar.showMessage(f"Status: Data successfully saved to {DATA_FILE_NAME}.")
+            QMessageBox.information(self, "Save Successful", f"Current data saved to file: {DATA_FILE_NAME}")
         except Exception as e:
-            QMessageBox.critical(self, "文件写入错误", f"保存数据到文件时失败: {e}")
+            QMessageBox.critical(self, "File Write Error", f"Failed to save data to file: {e}")
 
     def load_data(self):
         """从JSON文件读取数据，并恢复到当前的A/O/E点输入框。（已移除 B点 TCP_U 输入的加载）"""
         if not os.path.exists(DATA_FILE_NAME):
-            QMessageBox.warning(self, "读取失败", f"未找到数据文件: {DATA_FILE_NAME}")
-            self.status_bar.showMessage("状态: 未找到上次保存的数据文件。")
+            QMessageBox.warning(self, "Load Failed", f"Data file not found: {DATA_FILE_NAME}")
+            self.status_bar.showMessage("Status: Last saved data file not found.")
             return
         
         # 1. 读取文件
@@ -2149,7 +2149,7 @@ class RobotControlWindow(QMainWindow):
             with open(DATA_FILE_NAME, 'r') as f:
                 data = json.load(f)
         except Exception as e:
-            QMessageBox.critical(self, "文件读取错误", f"读取数据文件时失败: {e}")
+            QMessageBox.critical(self, "File Read Error", f"Failed to read data file: {e}")
             return
 
         # 2. 恢复数据到UI
@@ -2173,18 +2173,18 @@ class RobotControlWindow(QMainWindow):
                 # 调用处理函数来填充下拉列表和设置默认选中项
                 # 此函数会清空旧列表，填充新项，并触发 Base 坐标更新
                 self._handle_b_points_list_selection(restored_b_points)
-                self.status_bar.showMessage(f"状态: 数据已从 {DATA_FILE_NAME} 恢复，B点列表已还原。")
+                self.status_bar.showMessage(f"Status: Data restored from {DATA_FILE_NAME}, B point list recovered.")
             else:
                 # 如果没有保存的列表数据，则清空下拉列表
                 self.calculated_b_points = []
                 self.b_point_dropdown.clear()
-                self.b_point_dropdown.setPlaceholderText("数据从文件加载")
-                self.status_bar.showMessage(f"状态: 数据已从 {DATA_FILE_NAME} 恢复。")
+                self.b_point_dropdown.setPlaceholderText("Data loaded from file")
+                self.status_bar.showMessage(f"Status: Data restored from {DATA_FILE_NAME}.")
 
-            QMessageBox.information(self, "读取成功", "上次保存的数据已恢复。")
+            QMessageBox.information(self, "Load Successful", "Last saved data restored.")
             
         except Exception as e:
-            QMessageBox.critical(self, "数据恢复错误", f"恢复UI数据时失败: {e}")
+            QMessageBox.critical(self, "Data Recovery Error", f"Failed to restore UI data: {e}")
 
     def _handle_auto_tcp_u_definition_response(self, response):
         """
@@ -2209,16 +2209,16 @@ class RobotControlWindow(QMainWindow):
                 if len(tcp_u_pose) == 6:
                     self.tcp_u_definition_pose = tcp_u_pose
                     pose_str = ", ".join([f"{p:.2f}" for p in tcp_u_pose])
-                    self.log_message(f"系统: TCP_U 定义 (相对于 TCP_E) 已自动存储: [{pose_str}]")
+                    self.log_message(f"System: TCP_U Definition (relative to TCP_E) auto-stored: [{pose_str}]")
                     # [重要] 成功获取后，弹出提示，解决用户等待问题
-                    self.status_bar.showMessage("状态: TCP_U 定义已成功自动获取。")
+                    self.status_bar.showMessage("Status: TCP_U definition successfully auto-acquired.")
                 
             except Exception as e:
-                self.log_message(f"警告: 自动解析 TCP_U 定义数据失败: {e}")
+                self.log_message(f"Warning: Failed to auto-parse TCP_U definition data: {e}")
                 
         elif len(parts) > 1 and parts[1].strip() == 'Fail':
-            self.log_message(f"警告: 自动读取 TCP_U 定义失败: {response}")
-            QMessageBox.warning(self, "TCP_U 警告", "自动获取 TCP_U 定义失败，功能受限。")
+            self.log_message(f"Warning: Auto-read of TCP_U definition failed: {response}")
+            QMessageBox.warning(self, "TCP_U Warning", "Failed to auto-acquire TCP_U definition, functionality limited.")
 
     def _pose_to_matrix(self, pose_xyz_rpy):
         """
@@ -2254,11 +2254,11 @@ class RobotControlWindow(QMainWindow):
         self.b_point_dropdown.clear()
         
         if not self.calculated_b_points:
-            self.b_point_dropdown.setPlaceholderText("未选择任何点")
+            self.b_point_dropdown.setPlaceholderText("No points selected")
             # 确保 Base 坐标系 UI 重置
             self.b_point_position_in_base = np.zeros(3) 
             self._set_ui_values(self.b_vars_in_base, [0.0]*3)
-            self.status_bar.showMessage("状态: 已选择 0 个 B 点。")
+            self.status_bar.showMessage("Status: 0 B points selected.")
             return
             
         for data in selected_points_list:
@@ -2266,13 +2266,13 @@ class RobotControlWindow(QMainWindow):
             angle = data[2]
             index = data[3]
             # 格式: "B<编号>,<角度>度"
-            display_text = f"B{index}, {angle:.2f}度" 
+            display_text = f"B{index}, {angle:.2f}deg" 
             self.b_point_dropdown.addItem(display_text)
 
         # 3. 默认选中第一个点，这会触发 _handle_b_point_dropdown_selection 来更新红框区域
         self.b_point_dropdown.setCurrentIndex(0) 
         
-        self.status_bar.showMessage(f"状态: 已选择 {len(selected_points_list)} 个 B 点，列表已填充。")
+        self.status_bar.showMessage(f"Status: {len(selected_points_list)} B points selected, list populated.")
 
     def _continue_b_point_rotation(self):
         """
@@ -2341,7 +2341,7 @@ class RobotControlWindow(QMainWindow):
             self.log_message(command)
             # 提取累积旋转角度用于状态栏显示
             step_angle = np.rad2deg(pyrot.axis_angle_from_matrix(delta_rotation_matrix[:3, :3])[3])
-            self.log_message(f"状态: 绕OA旋转超声平面 (步骤 {self.current_b_point_step+1}/{len(self.b_point_rotation_steps)}，累积旋转 {step_angle:.2f} 度)...")
+            self.log_message(f"Status: Rotate Ultrasound Plane around OA (Step {self.current_b_point_step+1}/{len(self.b_point_rotation_steps)}, cumulative rotation {step_angle:.2f} degrees)...")
             
         else:
             # 7. 完成所有步骤
@@ -2349,5 +2349,5 @@ class RobotControlWindow(QMainWindow):
             self.current_b_point_step = -1
             self.initial_tcp_pose_for_b_rot = None
             self.b_point_o_point = None
-            self.status_bar.showMessage("状态: 绕OA旋转超声平面至B点任务完成。")
-            QMessageBox.information(self, "任务完成", "已完成超声平面绕OA轴旋转，使其经过B点的所有步骤。")
+            self.status_bar.showMessage("Status: Rotation of Ultrasound Plane around OA to B Point task completed.")
+            QMessageBox.information(self, "Task Completed", "Completed all steps for rotating ultrasound plane around OA axis to pass through B point.")
