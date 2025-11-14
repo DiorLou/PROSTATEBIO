@@ -738,39 +738,56 @@ class RobotControlWindow(QMainWindow):
 
     def rotate_ultrasound_plane_to_b(self):
         """
-        计算并发送指令，以使超声平面绕OA轴旋转，使其经过B点。
+        [修改]：开始执行新的对齐序列：先切换到 TCP_E，延时 200ms 后执行 B 点旋转的设置和启动。
         """
+        # 1. 检查连接状态
+        if not self.tcp_manager.is_connected:
+            QMessageBox.warning(self, "警告", "机器人未连接。")
+            return
+            
+        self.status_bar.showMessage("状态: 开始执行 '绕OA旋转超声平面使经过B点' 序列 (Step 0/2: 切换到 TCP_E)...")
+        
+        # Step 0: 切换到 TCP_E
+        self.set_tcp_e()
+        
+        # Step 1: 延时 200ms 后，执行核心启动逻辑
+        QTimer.singleShot(200, self._start_b_point_rotation_sequence)
+
+    def _start_b_point_rotation_sequence(self):
+        """
+        [序列 Step 1/2]：执行原有的 B 点旋转计算，设置序列状态，并发送第一个 WayPoint 指令。
+        """
+        self.status_bar.showMessage("状态: 序列 Step 1/2: 计算旋转步骤并发送第一个 WayPoint...")
+        
         try:
             a_point = np.array([float(self.a_vars[i].text()) for i in range(3)])
             o_point = np.array([float(self.o_vars[i].text()) for i in range(3)])
+            
+            # --- Input validation and B-point retrieval ---
             if np.all(self.b_point_position_in_base == 0):
-                QMessageBox.warning(self, "操作失败", "请先输入B点位置。")
+                QMessageBox.warning(self, "操作失败", "请先输入或选择有效的 B 点位置。")
                 return
             b_point = self.b_point_position_in_base
-        except ValueError:
-            self.status_bar.showMessage("错误: A、O、B点坐标必须为有效数字。")
-            return
-        
-        initial_tcp_pose = self.get_current_tool_pose()
-        if initial_tcp_pose is None:
-            self.status_bar.showMessage("警告: 无法获取当前的机器人姿态。")
-            return
-
-        # 0. 重置并计算所有步骤的旋转矩阵
-        self.b_point_rotation_steps = []
-        self.current_b_point_step = -1
-        self.initial_tcp_pose_for_b_rot = None
-        self.b_point_o_point = None
-
-        try:
-            # 1. 调用修改后的函数，它返回一个 delta_rotation_matrix 列表 (4x4 arrays)
+            
+            initial_tcp_pose = self.get_current_tool_pose()
+            if initial_tcp_pose is None:
+                self.status_bar.showMessage("警告: 无法获取当前的机器人姿态。")
+                return
+            
+            # 0. 重置并计算所有步骤的旋转矩阵
+            self.b_point_rotation_steps = []
+            self.current_b_point_step = -1
+            self.initial_tcp_pose_for_b_rot = None
+            self.b_point_o_point = None
+            
+            # 1. 调用函数，它返回一个 delta_rotation_matrix 列表
             delta_rotation_matrices = calculate_new_rpy_for_b_point(
                 a_point, o_point, b_point, initial_tcp_pose[3:]
             )
             
-            if not delta_rotation_matrices:
-                 self.status_bar.showMessage("错误: 姿态计算失败，未生成旋转步骤。")
-                 QMessageBox.critical(self, "计算错误", "姿态计算失败，未生成旋转步骤。")
+            if not delta_rotation_matrices or (len(delta_rotation_matrices) == 1 and np.allclose(delta_rotation_matrices[0], np.identity(4))):
+                 self.status_bar.showMessage("警告: 旋转角度接近0或计算失败，无需旋转。")
+                 QMessageBox.information(self, "完成", "旋转角度接近0或计算失败，无需旋转。")
                  return
                  
             # 2. 存储状态
@@ -780,18 +797,100 @@ class RobotControlWindow(QMainWindow):
             
             # 3. 启动第一个步骤 (通过将 step 设为 -1 并在 _continue 中递增到 0)
             self.current_b_point_step = -1
-            self._continue_b_point_rotation()
             
-            # 4. 更新 UI 状态
-            self.status_bar.showMessage("状态: 已开始分步发送 WayPoint 指令，使超声平面包含B点。")
-
+            # 4. 调用迭代器来发送第一个指令
+            self._continue_b_point_rotation() 
+            
+            # 5. 更新 UI 状态
+            self.status_bar.showMessage("状态: 序列 Step 2/2 完成。已开始分步发送 WayPoint 指令，使超声平面包含B点。")
+            QMessageBox.information(self, "任务开始", f"已开始 {len(delta_rotation_matrices)} 步旋转任务。")
+            
         except ValueError as e:
-            self.status_bar.showMessage(f"错误: {e}")
-            self.log_message(f"CALCULATION ERROR (ValueError): {e}")
+            self.status_bar.showMessage(f"错误: 旋转计算失败: {e}")
+            self.log_message(f"CALCULATION ERROR (ValueError): {e}") 
+            QMessageBox.critical(self, "计算错误", f"旋转计算失败: {e}")
         except Exception as e:
              self.status_bar.showMessage(f"致命错误: 姿态计算失败: {e}")
-             self.log_message(f"FATAL ERROR: Calculation or command preparation failed: {e}")
-        self.log_message("--- 绕OA旋转超声平面至B点功能启动 ---")
+             self.log_message(f"FATAL ERROR: Calculation failed: {e}")
+             QMessageBox.critical(self, "致命错误", f"姿态计算失败: {e}")
+             
+    # I must assume this method exists and is the main iterator/handler
+    def _continue_b_point_rotation(self):
+        """
+        当接收到 WayPoint 成功响应后，发送下一个旋转步骤的 WayPoint 指令。
+        [修改]: 延迟增加到 400ms。
+        """
+        # 如果不在 B 点旋转模式，则忽略
+        if not self.b_point_rotation_steps:
+            return
+
+        # 检查是否完成所有步骤
+        self.current_b_point_step += 1
+        
+        if self.current_b_point_step < len(self.b_point_rotation_steps):
+            # 1. 获取当前步骤的累积旋转矩阵
+            delta_rotation_matrix = self.b_point_rotation_steps[self.current_b_point_step]
+            
+            # 2. 从初始姿态计算目标姿态
+            initial_tcp_pose = self.initial_tcp_pose_for_b_rot
+            o_point = self.b_point_o_point
+            
+            # 3. 计算最终位置 P_final 
+            P_final = get_final_tcp_e_position_after_delta_rotation(
+                initial_tcp_pose[:3], 
+                delta_rotation_matrix, 
+                o_point
+            )
+            
+            # 4. 计算最终旋转矩阵 R_final 和 RPY
+            initial_rpy_rad = np.deg2rad(initial_tcp_pose[3:])
+            initial_rotation_matrix = pyrot.matrix_from_euler(initial_rpy_rad, 0, 1, 2, extrinsic=True)
+            R_final = np.dot(delta_rotation_matrix[:3,:3], initial_rotation_matrix)
+            final_rpy_rad = pyrot.euler_from_matrix(R_final, 0, 1, 2, extrinsic=True)
+            final_rpy_deg = np.rad2deg(final_rpy_rad)
+                                    
+            # 5. 构造 WayPoint 命令
+            dX_dY_dZ = P_final
+            dRx_dRy_dRz = final_rpy_deg
+            pos_str = ",".join([f"{val:.2f}" for val in dX_dY_dZ])
+            rpy_str = ",".join([f"{val:.2f}" for val in dRx_dRy_dRz])
+            pos_rpy_str = f"{pos_str},{rpy_str}"
+            dJ_zero = ",".join(["0.00"] * 6)
+            nRbtID = 0
+            sTcpName = "TCP"
+            sUcsName = "Base"
+            dVelocity = 50
+            dAcc = 250
+            dRadius = 0 
+            nMoveType = 0 
+            nIsUseJoint = 0 
+            nIsSeek = 0
+            nIOBit = 0
+            nIOState = 0
+            strCmdID = "ID1"
+            
+            command = (
+                f"WayPoint,{nRbtID},{pos_rpy_str},{dJ_zero},"
+                f"{sTcpName},{sUcsName},{dVelocity},{dAcc},{dRadius},{nMoveType},"
+                f"{nIsUseJoint},{nIsSeek},{nIOBit},{nIOState},{strCmdID};"
+            )
+            
+            # 6. [修改] 发送指令前，加入 400ms 延时
+            delay_ms = 400 # <-- NEW DELAY
+            QTimer.singleShot(delay_ms, lambda: self.tcp_manager.send_command(command))
+
+            # 提取累积旋转角度用于状态栏显示
+            step_angle = np.rad2deg(pyrot.axis_angle_from_matrix(delta_rotation_matrix[:3, :3])[3])
+            self.status_bar.showMessage(f"状态: 绕OA旋转超声平面 (步骤 {self.current_b_point_step+1}/{len(self.b_point_rotation_steps)}，累积旋转 {step_angle:.2f} 度)...")
+            
+        else:
+            # 7. 完成所有步骤
+            self.b_point_rotation_steps = []
+            self.current_b_point_step = -1
+            self.initial_tcp_pose_for_b_rot = None
+            self.b_point_o_point = None
+            self.status_bar.showMessage("状态: 绕OA旋转超声平面至B点任务完成。")
+            QMessageBox.information(self, "任务完成", "已完成超声平面绕OA轴旋转至B点任务。")
         
     def handle_read_tcp_byname_message(self, message):
         """解析 'ReadTCPByName' 消息，并更新新的TCP显示框。"""
@@ -1341,7 +1440,7 @@ class RobotControlWindow(QMainWindow):
         group_layout.addLayout(button_layout)
         
         # 旋转按钮
-        self.rotate_ultrasound_plane_to_b_btn = QPushButton("绕OA旋转超声平面使经过B点")
+        self.rotate_ultrasound_plane_to_b_btn = QPushButton("Rotate the ultrasound plane to pass through the biopsy point")
         group_layout.addWidget(self.rotate_ultrasound_plane_to_b_btn)
         
         group_layout.addStretch()
