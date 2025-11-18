@@ -196,8 +196,10 @@ class RobotKinematics:
         angle = []
         index = []
         for sol in solutions:
+            sign = np.sign(np.dot(np.cross(self.OB,self.OA), (sol - self.OA)))
             a = self._angle_of_rotation(self.OC0, sol, self.OA)
-            a = a%360
+            if sign == -1:
+                a = abs((a + 180) % 360 - 180)
             index.append(np.dot(np.cross(OD_cur - self.OA, self.OB - OD_cur), np.cross(sol - self.OA, OD_cur - sol)))
             angle.append(a)
         self.OC = solutions[np.argmax(index)]
@@ -214,8 +216,10 @@ class RobotKinematics:
         index = []
         
         for sol in solutions:
+            sign = np.sign(np.dot(np.cross(self.OB,self.OA), (sol - self.OB)))
             a = self._angle_of_rotation(self.OD0, sol, self.OB)
-            a = a % 360
+            if sign == -1:
+                a = abs((a + 180) % 360 - 180)
             index.append(np.dot(np.cross(self.OB - OC_cur, self.OA - self.OB), np.cross(sol - OC_cur, self.OB - sol)))
             angle.append(a)
         self.OD = solutions[np.argmax(index)]
@@ -252,9 +256,6 @@ class RobotKinematics:
             self.OC0 = self._rotate_vector_around_axis(self.OC00, self.OA, joint_values[1])
             # self.OC = self._rotate_vector_around_axis(self.OC0, self.OA, joint_values[2])
             val2_compensated = self._joint3_compensate_conversely(joint_values[2])
-            # with open("/home/jintao/Desktop/test.txt", "a+") as f:
-            #     f.write(str(val2_compensated - joint_values[2]))
-            #     f.write("\n")
             joint_values[2] = val2_compensated
         trans = self.get_T0n(n)
         res = trans.evalf(subs={self.variables[0]: joint_values[0],
@@ -310,7 +311,7 @@ class RobotKinematics:
         self.OD0 = self._rotate_vector_around_axis(self.OD00, self.OA, joint2_val)
         self.OC0 = self._rotate_vector_around_axis(self.OC00, self.OA, joint2_val)
         joint3_val_compensated = self._joint3_compensate(joint3_val)
-        # joint3_val_compensated = joint3_val_compensated + joint2_val
+        #joint3_val_compensated2 = joint3_val_compensated + joint2_val
         return np.array([joint2_val, joint3_val_compensated])
 
     def get_joint4_value(self, offset_from_rcm):
@@ -346,28 +347,42 @@ if __name__ == '__main__':
     # val4 = robot.get_joint4_value(0)
     # # print(val4)
 
-
-   
             
     # # 正逆正验证
-    # print("请检查输出第一行与第三行是否相同，第二行是否与给定数值相同")
-    # needle_vector = robot.get_needle_vector([0,0,261,0])
-    # print(needle_vector)
-    # calculated_joint23_value = robot.get_joint23_value(needle_vector, [0, 261])
-    # print(calculated_joint23_value)
-    # needle_vector_test = robot.get_needle_vector([0,calculated_joint23_value[0],calculated_joint23_value[1],0])
-    # print(needle_vector_test)
+    print("请检查输出第一行与第三行是否相同，第二行是否与给定数值相同")
+    needle_vector = robot.get_needle_vector([0,10,18,0])
+    print(needle_vector)
+    calculated_joint23_value = robot.get_joint23_value(needle_vector)
+    print(calculated_joint23_value)
+    calculated_joint23_value[1]=calculated_joint23_value[1]+calculated_joint23_value[0]
+    print(calculated_joint23_value)
+    #------计算正运动学时需要由真实电机旋转toDH关节旋转
+    calculated_joint23_value[1] = calculated_joint23_value[1] - calculated_joint23_value[0]
+    print(calculated_joint23_value)
+    needle_vector_test = robot.get_needle_vector([0,calculated_joint23_value[0],calculated_joint23_value[1],0])
+    print(needle_vector_test)
     
     # 逆正逆验证
-    # print("\n请检查输出第二行与第四行是否相同，第一行与第三行是否相同")
-    # target = [0,1,0.3]
-    # target = target/np.linalg.norm(target)
-    # print(target)
-    # calculated_joint23_value = robot.get_joint23_value(target)
-    # print(calculated_joint23_value)
-    # needle_vector_test = robot.get_needle_vector([0,calculated_joint23_value[0],calculated_joint23_value[1],0])
-    # print(needle_vector_test)
-    # calculated_joint23_value = robot.get_joint23_value(needle_vector_test)
-    # print(calculated_joint23_value)
-    # needle_vector_test = robot.get_needle_vector([0,calculated_joint23_value[0],calculated_joint23_value[1],0])
-    # print(needle_vector_test)
+    #print("\n请检查输出第二行与第四行是否相同，第一行与第三行是否相同")
+    #target = [0.2,1,0]
+    #target = target/np.linalg.norm(target)
+    #print(target)
+    #calculated_joint23_value = robot.get_joint23_value(target)
+    #print(calculated_joint23_value)
+    #needle_vector_test = robot.get_needle_vector([0,calculated_joint23_value[0],calculated_joint23_value[2],0])
+    #print(needle_vector_test)
+    #calculated_joint23_value = robot.get_joint23_value(needle_vector_test)
+    #print(calculated_joint23_value)
+
+    #needle_vector_sim = robot.get_needle_vector([0, 0, -45, 0])
+    #print(needle_vector_sim)
+    #calculated_joint23_value = robot.get_joint23_value(needle_vector_sim)
+    #print(calculated_joint23_value)
+
+    #rcm00 = robot.get_rcm_point([0,0,0,0])
+    #print(rcm00)
+
+    #d1 = robot.get_joint1_value(rcm00[2])
+    #print(d1)
+    #needle_tip = rcm00+1000*target
+    #print(needle_tip)
