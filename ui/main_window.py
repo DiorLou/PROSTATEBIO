@@ -236,6 +236,12 @@ class RobotControlWindow(QMainWindow):
         
         # 新增一个成员变量来存储最新的工具端姿态
         self.latest_tool_pose = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+        # [新增] 用于存储医疗用途的 TCP_E 值 (点击左转按钮时记录)
+        self.tcp_e_medical_value = None
+        
+        # [新增] 初始化 tcp_u_volume
+        self.tcp_u_volume = None
         
         # QTimer 用于实现按住按钮连续微调关节的功能。
         self.continuous_move_timer = QTimer(self)
@@ -1918,9 +1924,11 @@ class RobotControlWindow(QMainWindow):
         if self.tcp_u_definition_pose is None:
             raise ValueError("未读取 TCP_U 定义，无法进行坐标变换。")
             
-        pose_base_to_e = self.get_current_tool_pose()
-        if pose_base_to_e is None:
-            raise ValueError("无法获取当前的机器人姿态 (TCP_E)。请确保已连接机器人或已手动输入工具端位姿。")
+        # [修改]：使用 self.tcp_e_medical_value 代替实时的 latest_tool_pose
+        if self.tcp_e_medical_value is None:
+             raise ValueError("未记录 TCP_E_Medical_value，无法进行 B 点计算。请先点击'Ultrasound Probe Rotate Left x Deg'按钮来记录当前 TCP_E 姿态。")
+
+        pose_base_to_e = np.array(self.tcp_e_medical_value) # 使用记录的值
 
         a_point_val = self._get_ui_values(self.a_vars)
         o_point_val = self._get_ui_values(self.o_vars)
@@ -1963,6 +1971,11 @@ class RobotControlWindow(QMainWindow):
         # 1. 检查 TCP_U 定义
         if self.tcp_u_definition_pose is None:
             QMessageBox.warning(self, "Warning", "Please connect robot and ensure TCP_U definition has been acquired.")
+            return
+
+        # [新增]：检查 TCP_E_Medical_value 是否存在
+        if self.tcp_e_medical_value is None:
+            QMessageBox.warning(self, "Warning", "Please click 'Ultrasound Probe Rotate Left x Deg' button first to record the necessary TCP_E_Medical_value for calculation.")
             return
 
         # 2. 检查 A, O 点是否已设置且不重合
@@ -2351,3 +2364,46 @@ class RobotControlWindow(QMainWindow):
             self.b_point_o_point = None
             self.status_bar.showMessage("Status: Rotation of Ultrasound Plane around OA to B Point task completed.")
             QMessageBox.information(self, "Task Completed", "Completed all steps for rotating ultrasound plane around OA axis to pass through B point.")
+            
+    def compute_and_store_tcp_u_volume(self):
+        """
+        根据当前的 tcp_e_medical_value 和 tcp_u_definition_pose，
+        计算并记录 tcp_u_volume (Base坐标系下的 TCP_U 姿态)。
+        计算公式: T_Base_U = T_Base_E * T_E_U
+        """
+        # 检查必要的数据是否存在
+        if self.tcp_e_medical_value is None:
+            self.log_message("Error: tcp_e_medical_value is None, cannot calculate tcp_u_volume.")
+            return
+
+        if self.tcp_u_definition_pose is None:
+            self.log_message("Warning: TCP_U definition is missing (not read from robot yet). Cannot calculate tcp_u_volume.")
+            self.tcp_u_volume = None
+            return
+
+        try:
+            # 1. T_Base_E: 将 tcp_e_medical_value (Base->E) 转为 4x4 矩阵
+            T_Base_E = self._pose_to_matrix(self.tcp_e_medical_value)
+            
+            # 2. T_E_U: 将 tcp_u_definition_pose (E->U) 转为 4x4 矩阵
+            T_E_U = self._pose_to_matrix(self.tcp_u_definition_pose)
+            
+            # 3. T_Base_U = T_Base_E * T_E_U
+            T_Base_U = np.dot(T_Base_E, T_E_U)
+            
+            # 4. 从矩阵中提取姿态 (XYZ + RPY)
+            trans = T_Base_U[:3, 3]
+            rot_matrix = T_Base_U[:3, :3]
+            rpy_rad = pyrot.euler_from_matrix(rot_matrix, 0, 1, 2, extrinsic=True)
+            rpy_deg = np.rad2deg(rpy_rad)
+            
+            # 5. 保存结果
+            self.tcp_u_volume = np.concatenate((trans, rpy_deg)).tolist()
+            
+            # 打印日志
+            u_vol_str = ", ".join([f"{v:.2f}" for v in self.tcp_u_volume])
+            self.log_message(f"System: Calculated and stored tcp_u_volume: [{u_vol_str}]")
+            
+        except Exception as e:
+            self.log_message(f"Error calculating tcp_u_volume: {e}")
+            self.tcp_u_volume = None
