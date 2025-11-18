@@ -528,6 +528,28 @@ class UltrasoundTab(QWidget):
         if x is None:
             return
             
+        # 执行 TCP_E 检查和姿态记录
+        robot_control_window = self.main_window
+        if not robot_control_window or not hasattr(robot_control_window, 'latest_tool_pose'):
+            QMessageBox.warning(self, "Connection Error", "Cannot access robot pose data. Please ensure the robot is connected and data is streaming.")
+            return
+
+        # 检查当前激活的 TCP 名称
+        if robot_control_window.current_tcp_name != "TCP_E":
+            QMessageBox.critical(self, "TCP Error", f"Current TCP must be 'TCP_E' ({robot_control_window.current_tcp_name} is active) before recording the pose for medical use. Please switch to TCP_E.")
+            return
+            
+        # 记录当前的 latest_tool_pose 到新的全局变量 self.tcp_e_medical_value 中
+        # 使用 list() 确保是拷贝而不是引用
+        robot_control_window.tcp_e_medical_value = list(robot_control_window.latest_tool_pose)
+        
+        # 记录完成后，发送状态信息
+        pose_str = ", ".join([f"{p:.2f}" for p in robot_control_window.tcp_e_medical_value])
+        robot_control_window.status_bar.showMessage(f"Status: TCP_E_Medical_value recorded: [{pose_str}]")
+        
+        # 立即触发 tcp_u_volume 的计算
+        robot_control_window.compute_and_store_tcp_u_volume()
+            
         # MoveRelJ, nRbtID, nAxisId, nDirection, dDistance;
         # nRbtID=0, nAxisId=5 (关节六), nDirection=0 (反向), dDistance=x
         command = f"MoveRelJ,0,5,{BACKWARD},{x};"
