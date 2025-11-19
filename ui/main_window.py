@@ -614,22 +614,64 @@ class RobotControlWindow(QMainWindow):
             self.log_message(f"Warning: Received invalid ReadActPos message: {message}")
 
     def get_a_point_position(self):
-        """将最新的工具端位置记录到A点文本框中。"""
+        """
+        [修改]：开始执行切换到 TCP_tip -> 延时 300ms -> 获取 A 点位置 的序列。
+        """
+        if not self.tcp_manager.is_connected:
+            QMessageBox.warning(self, "Warning", "Robot is disconnected.")
+            return
+            
+        self.status_bar.showMessage("Status: Starting 'Get A Point' sequence (Step 1/3: Switch to TCP_tip)...")
+        
+        # Step 1: 切换到 TCP_tip
+        self.set_tcp_tip()
+        
+        # Step 2: 延时 300ms 后，执行核心逻辑
+        QTimer.singleShot(300, self._finalize_get_a_point_position)
+
+    def _finalize_get_a_point_position(self):
+        """
+        [新增]：序列 Step 3/3: 执行原有的核心逻辑，获取最新的姿态。
+        """
+        self.status_bar.showMessage("Status: Sequence Step 3/3: Get A Point Position...")
+
         if not self.latest_tool_pose:
             self.status_bar.showMessage("Warning: Cannot get position, please connect robot and wait for data update first.")
             return
         
+        # Core Logic
         self.a_vars[0].setText(f"{self.latest_tool_pose[0]:.2f}")
         self.a_vars[1].setText(f"{self.latest_tool_pose[1]:.2f}")
         self.a_vars[2].setText(f"{self.latest_tool_pose[2]:.2f}")
         self.status_bar.showMessage("Status: A point position obtained.")
 
     def get_o_point_position(self):
-        """将最新的工具端位置记录到O点文本框中。"""
+        """
+        [修改]：开始执行切换到 TCP_tip -> 延时 300ms -> 获取 O 点位置 的序列。
+        """
+        if not self.tcp_manager.is_connected:
+            QMessageBox.warning(self, "Warning", "Robot is disconnected.")
+            return
+            
+        self.status_bar.showMessage("Status: Starting 'Get O Point' sequence (Step 1/3: Switch to TCP_tip)...")
+        
+        # Step 1: 切换到 TCP_tip
+        self.set_tcp_tip()
+        
+        # Step 2: 延时 300ms 后，执行核心逻辑
+        QTimer.singleShot(300, self._finalize_get_o_point_position)
+
+    def _finalize_get_o_point_position(self):
+        """
+        [新增]：序列 Step 3/3: 执行原有的核心逻辑，获取最新的姿态。
+        """
+        self.status_bar.showMessage("Status: Sequence Step 3/3: Get O Point Position...")
+
         if not self.latest_tool_pose:
             self.status_bar.showMessage("Warning: Cannot get position, please connect robot and wait for data update first.")
             return
         
+        # Core Logic
         self.o_vars[0].setText(f"{self.latest_tool_pose[0]:.2f}")
         self.o_vars[1].setText(f"{self.latest_tool_pose[1]:.2f}")
         self.o_vars[2].setText(f"{self.latest_tool_pose[2]:.2f}")
