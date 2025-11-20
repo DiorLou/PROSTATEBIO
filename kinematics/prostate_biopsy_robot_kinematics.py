@@ -330,11 +330,10 @@ def valid(num, error=1e-3):
 if __name__ == '__main__':
     # 定义需要作为符号的变量名
     variable_names = ['x0', 'x1', 'x2', 'x3']
-    
-    a_params = [247.204, 0, 0, 0]
+    a_params = [245.472, 0, 0, 0]
     alpha_params = [0, -65, -30, 34]
-    # d_params和theta_params中现在使用字符串来表示变量
-    d_params = ['x0 - 184.845', 545.517, 0, 'x3 + 60.7']
+    # d_params和theta_params中现在使用字符串来表示变量  
+    d_params = ['x0 - 174.830', 541.695, 0, 'x3 - 26.0']
     theta_params = [30, 'x1', 'x2 + 85.96', 0]
     
     # 初始化类实例
