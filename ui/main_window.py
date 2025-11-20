@@ -160,9 +160,9 @@ class RobotControlWindow(QMainWindow):
     """
     # --- Kinematics Constants: 机器人 DH 参数 --- #
     VARIABLE_NAMES = ['x0', 'x1', 'x2', 'x3']
-    A_PARAMS = [247.204, 0, 0, 0]
+    A_PARAMS = [245.472, 0, 0, 0]
     ALPHA_PARAMS = [0, -65, -30, 34]
-    D_PARAMS = ['x0 - 184.845', 545.517, 0, 'x3 + 60.7']
+    D_PARAMS = ['x0 - 174.830', 541.695, 0, 'x3 - 26.0']
     THETA_PARAMS = [30, 'x1', 'x2 + 85.96', 0]
     
     def __init__(self):
