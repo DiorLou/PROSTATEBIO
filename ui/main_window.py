@@ -220,6 +220,14 @@ class RobotControlWindow(QMainWindow):
         
         self.init_joint_pos_btn = None # 新增初始化关节按钮成员变量
         
+        # [新增] 用于存储对齐到穿刺点后的工具姿态
+        self.puncture_point_tool_pose = None
+        
+        # [新增] 用于检查机器人运动状态的定时器和标志位
+        self.is_waiting_for_puncture_alignment = False
+        self.fsm_check_timer = QTimer(self)
+        self.fsm_check_timer.timeout.connect(self._check_fsm_status)
+        
         self.set_tcp_o_btn = None
         self.set_tcp_p_btn = None  # <--- 新增: TCP_P 按钮成员变量
         self.set_tcp_u_btn = None  # <--- 新增: TCP_U 按钮成员变量
@@ -472,6 +480,8 @@ class RobotControlWindow(QMainWindow):
         elif message.startswith("MoveRelJ,OK"):
             # 如果是，通知 ultrasound_tab 继续下一步操作
             self.ultrasound_tab.continue_rotation()
+        elif message.startswith("ReadCurFSM"):
+            self.handle_fsm_message(message)
         elif message.startswith("MoveRelJ"):
             # 说明指令未完成，开启报错
             self.log_message(message)
@@ -781,8 +791,16 @@ class RobotControlWindow(QMainWindow):
         
         # 发送指令
         self.tcp_manager.send_command(command)
-        self.status_bar.showMessage(f"Status: Sequence Step 3/3 Completed. Sent command to align ultrasound plane with AOE plane, Joint 6 rotated {rotation_angle_deg:.2f} degrees.")
-        QMessageBox.information(self, "Sequence Completed", f"Rotation command sent, Joint 6 rotated {rotation_angle_deg:.2f} degrees.")
+        
+        # [新增/修改]：指令发送后，启动状态机检查，确保运动到位后再记录
+        self.log_message(f"System: Sent rotation command ({dDeltaVal:.2f} deg). Waiting for completion...")
+        
+        self.is_waiting_for_puncture_alignment = True
+        # 启动定时器，每 500ms 查询一次状态机
+        # 延时一点启动，避免刚发指令还没动的时候就查到 33
+        QTimer.singleShot(500, lambda: self.fsm_check_timer.start(500)) 
+
+        self.status_bar.showMessage(f"Status: Waiting for robot to reach puncture point...")
 
     def rotate_ultrasound_plane_to_b(self):
         """
@@ -1958,19 +1976,26 @@ class RobotControlWindow(QMainWindow):
 
     def _calculate_b_point_data(self, p_b_in_u_pose, index):
         """
-        执行单个B点的所有计算：Base坐标系姿态和OA轴旋转角度，并返回索引。
-        p_b_in_u_pose: B点在TCP_U下的 [X, Y, Z, Rx, Ry, Rz] (度) 姿态。
-        index: B点编号 (1-based integer).
+        执行单个B点的所有计算：
+        1. Base坐标系姿态 (T_Base_to_B): 使用 self.tcp_e_medical_value
+        2. OA轴旋转角度: 使用 self.puncture_point_tool_pose (提供 initial_rpy)
         """
         # --- 0. 检查和读取依赖数据 ---
         if self.tcp_u_definition_pose is None:
             raise ValueError("未读取 TCP_U 定义，无法进行坐标变换。")
             
-        # [修改]：使用 self.tcp_e_medical_value 代替实时的 latest_tool_pose
+        # [修改] 分别检查两个必要的数据源
         if self.tcp_e_medical_value is None:
-             raise ValueError("未记录 TCP_E_Medical_value，无法进行 B 点计算。请先点击'Ultrasound Probe Rotate Left x Deg'按钮来记录当前 TCP_E 姿态。")
+             raise ValueError("未记录 TCP_E_Medical_value。请先在超声界面执行左转操作记录该值。")
 
-        pose_base_to_e = np.array(self.tcp_e_medical_value) # 使用记录的值
+        if self.puncture_point_tool_pose is None:
+             raise ValueError("未记录 Puncture Point Tool Pose。请先执行 'Rotate the ultrasound plane to pass through the puncture point' 并等待运动完成。")
+
+        # [关键修改 1] 获取用于计算 B 点位置的 Base->E 变换 (来自 Medical Value)
+        pose_base_to_e_medical = np.array(self.tcp_e_medical_value)
+        
+        # [关键修改 2] 获取用于计算旋转角度的 Base->E 变换 (来自 Puncture Point Pose)
+        pose_base_to_e_puncture = np.array(self.puncture_point_tool_pose)
 
         a_point_val = self._get_ui_values(self.a_vars)
         o_point_val = self._get_ui_values(self.o_vars)
@@ -1980,11 +2005,14 @@ class RobotControlWindow(QMainWindow):
 
         a_point = np.array(a_point_val[:3])
         o_point = np.array(o_point_val[:3])
-        initial_rpy_deg = pose_base_to_e[3:] # 提取 RPY 姿态角
+        
+        # 提取用于旋转计算的 RPY (来自 Puncture Pose)
+        initial_rpy_deg_for_rotation = pose_base_to_e_puncture[3:] 
 
-        # --- 1. 计算 T_Base_to_B (Base 坐标系下的 B 点姿态) ---
+        # --- 1. 计算 T_Base_to_B (使用 Medical Value) ---
         T_U_to_B = self._pose_to_matrix(p_b_in_u_pose)
-        T_Base_to_E = self._pose_to_matrix(pose_base_to_e)
+        # 使用 tcp_e_medical_value 构建 T_Base_to_E
+        T_Base_to_E = self._pose_to_matrix(pose_base_to_e_medical)
         T_E_to_U = self._pose_to_matrix(self.tcp_u_definition_pose)
         
         T_Base_to_B = T_Base_to_E @ T_E_to_U @ T_U_to_B
@@ -1993,13 +2021,12 @@ class RobotControlWindow(QMainWindow):
         r_b_in_base_rpy = pyrot.euler_from_matrix(T_Base_to_B[:3, :3], 0, 1, 2, extrinsic=True) 
         p_b_in_base_pose = np.append(p_b_in_base, np.rad2deg(r_b_in_base_rpy))
 
-        # --- 2. 计算 OA 轴旋转角度 ---
-        # 传递所有需要的参数和用于打印调试信息的原始 B 点 TCP_U 姿态
+        # --- 2. 计算 OA 轴旋转角度 (使用 Puncture Pose 的 RPY) ---
         rotation_angle_deg = self._calculate_oa_rotation_angle(
             a_point, 
             o_point, 
             p_b_in_base, 
-            initial_rpy_deg,
+            initial_rpy_deg_for_rotation, # 使用 puncture_point_tool_pose 的 RPY
             p_b_in_u_pose 
         )
         
@@ -2007,17 +2034,22 @@ class RobotControlWindow(QMainWindow):
     
     def read_b_points_in_tcp_u_from_file(self):
         """
-        [修改]：读取TXT文件，解析B点(TCP_U)位置(X,Y,Z)，计算Base姿态和旋转角度，
-               弹出多选对话框，并处理返回的选定点列表。
+        读取TXT文件，解析B点(TCP_U)位置，计算Base姿态和旋转角度。
         """
         # 1. 检查 TCP_U 定义
         if self.tcp_u_definition_pose is None:
             QMessageBox.warning(self, "Warning", "Please connect robot and ensure TCP_U definition has been acquired.")
             return
 
-        # [新增]：检查 TCP_E_Medical_value 是否存在
+        # [修改] 确保两个关键姿态都已记录
+        missing_data = []
         if self.tcp_e_medical_value is None:
-            QMessageBox.warning(self, "Warning", "Please click 'Ultrasound Probe Rotate Left x Deg' button first to record the necessary TCP_E_Medical_value for calculation.")
+            missing_data.append("TCP_E_Medical_value (Rotate Left)")
+        if self.puncture_point_tool_pose is None:
+            missing_data.append("Puncture_Point_Tool_Pose (Align to Puncture Point)")
+            
+        if missing_data:
+            QMessageBox.warning(self, "Data Missing", f"Please record the following data first:\n- " + "\n- ".join(missing_data))
             return
 
         # 2. 检查 A, O 点是否已设置且不重合
@@ -2026,25 +2058,22 @@ class RobotControlWindow(QMainWindow):
             o_point_val = self._get_ui_values(self.o_vars)
             
             if a_point_val is None or o_point_val is None:
-                QMessageBox.critical(self, "Data Error", "Please enter or get valid A and O point coordinates in the 'Robot A, O, and End-Effect Positions' module first.")
+                QMessageBox.critical(self, "Data Error", "Please enter or get valid A and O point coordinates.")
                 return
             
             a_point_pos = np.array(a_point_val[:3])
             o_point_pos = np.array(o_point_val[:3])
             
-            # 检查 A 点和 O 点是否重合（导致 OA 轴无法定义）
             if np.linalg.norm(a_point_pos - o_point_pos) < 1e-6:
-                QMessageBox.critical(self, "Geometric Error", "A and O point coordinates coincide or are too close, unable to define OA rotation axis. Please re-enter or acquire valid coordinates.")
+                QMessageBox.critical(self, "Geometric Error", "A and O point coordinates coincide or are too close.")
                 return
                 
         except ValueError:
             QMessageBox.critical(self, "Data Error", "A or O point coordinates must be valid numbers.")
             return
 
-        # 3. 文件读取和解析 (使用文件对话框允许用户选择)
+        # 3. 文件读取和解析
         FILE_NAME = "TCP_U_B_LIST.txt"
-        
-        # 优先查找当前目录下的文件
         file_path = os.path.join(os.getcwd(), FILE_NAME)
         
         if not os.path.exists(file_path):
@@ -2060,53 +2089,48 @@ class RobotControlWindow(QMainWindow):
                  file_path = selected_files[0]
                  FILE_NAME = os.path.basename(file_path)
              else:
-                 self.status_bar.showMessage("Status: User cancelled file selection.")
                  return
         
         b_point_data_list = []
         try:
             with open(file_path, 'r') as f:
-                index = 1 # <--- ADDED: 从 1 开始编号
+                index = 1 
                 for line_num, line in enumerate(f, 1):
                     line = line.strip()
                     if not line:
                         continue
                     
-                    # 清理输入行，移除方括号和空格
                     line = line.strip('[] \t\n')
                     parts = line.split(',')
 
                     if len(parts) != 3:
-                        self.log_message(f"Warning: File {FILE_NAME} line {line_num} format error, expected 3 position parameters (X, Y, Z), skipped: {line}")
+                        self.log_message(f"Warning: File {FILE_NAME} line {line_num} format error, skipped.")
                         continue
                     
                     try:
                         p_b_in_u_pos = [float(p.strip()) for p in parts]
                         p_b_in_u_pose = np.array(p_b_in_u_pos + [0.0, 0.0, 0.0])
                         
-                        # 4. 执行计算 
-                        # 传入当前 index
+                        # 调用计算方法
                         p_b_in_base_pose, rotation_angle_deg, calculated_index = self._calculate_b_point_data(p_b_in_u_pose, index) 
                         
-                        # 存储: (TCP_U 姿态, Base 姿态, 旋转角度, 索引)
                         b_point_data_list.append((p_b_in_u_pose, p_b_in_base_pose, rotation_angle_deg, calculated_index))
                         
-                        index += 1 # 递增 index
+                        index += 1 
                         
                     except ValueError as e:
-                        self.log_message(f"Calculation Error (File {FILE_NAME} line {line_num}): Failed to convert parameters to numbers or calculation failed: {e}")
+                        self.log_message(f"Calculation Error (File {FILE_NAME} line {line_num}): {e}")
                         
         except Exception as e:
-            QMessageBox.critical(self, "File Read or Calculation Error", f"Error processing file: {e}")
+            QMessageBox.critical(self, "File Error", f"Error processing file: {e}")
             return
 
         if not b_point_data_list:
-            QMessageBox.warning(self, "Warning", f"File {FILE_NAME} contains no valid B point data for calculation.")
+            QMessageBox.warning(self, "Warning", f"File {FILE_NAME} contains no valid B point data.")
             return
 
         # 5. 弹出多选对话框
         dialog = BPointSelectionDialog(b_point_data_list, self)
-        # 关键：连接新的信号
         dialog.b_points_selected.connect(self._handle_b_points_list_selection) 
         dialog.exec_()
         
@@ -2419,7 +2443,7 @@ class RobotControlWindow(QMainWindow):
             return
 
         if self.tcp_u_definition_pose is None:
-            self.log_message("Warning: TCP_U definition is missing (not read from robot yet). Cannot calculate tcp_u_volume.")
+            self.log_message("Warning: TCP_U definition is missing. Cannot calculate tcp_u_volume.")
             self.tcp_u_volume = None
             return
 
@@ -2449,3 +2473,42 @@ class RobotControlWindow(QMainWindow):
         except Exception as e:
             self.log_message(f"Error calculating tcp_u_volume: {e}")
             self.tcp_u_volume = None
+            
+    def _check_fsm_status(self):
+        """定时发送查询状态机指令"""
+        self.tcp_manager.send_command("ReadCurFSM,0;")
+
+    def handle_fsm_message(self, message):
+        """
+        处理 ReadCurFSM 消息。
+        格式示例: ReadCurFSM,OK,33,; (33 代表空闲/就绪)
+        """
+        if not self.is_waiting_for_puncture_alignment:
+            return
+
+        # 简单的字符串检查，或者你可以 split(',')
+        # 假设 33 代表 Idle/Done
+        if ",33," in message:
+            self.fsm_check_timer.stop()
+            self.is_waiting_for_puncture_alignment = False
+            
+            # [修改]：检测到运动停止后，延时 300ms 再记录姿态，确保数据稳定
+            self.log_message("System: Motion finished detected (FSM=33). Waiting 300ms to record pose...")
+            QTimer.singleShot(300, self._finalize_puncture_point_recording)
+            
+    def _finalize_puncture_point_recording(self):
+        """
+        [新增]：延时结束后执行的最终记录逻辑。
+        """
+        # 运动完成，记录当前的姿态作为 puncture_point_tool_pose
+        if self.latest_tool_pose:
+            self.puncture_point_tool_pose = list(self.latest_tool_pose)
+            
+            # 格式化用于显示
+            pose_str = ", ".join([f"{v:.2f}" for v in self.puncture_point_tool_pose])
+            self.log_message(f"System: Puncture Point Tool Pose Recorded: [{pose_str}]")
+            self.status_bar.showMessage("Status: Aligned to puncture point & Pose recorded.")
+            QMessageBox.information(self, "Alignment Completed", "Robot has rotated to the puncture point and pose has been recorded.")
+        else:
+            self.log_message("Error: Motion finished but latest_tool_pose is empty.")
+            QMessageBox.warning(self, "Error", "Motion finished but could not record pose (no data).")
