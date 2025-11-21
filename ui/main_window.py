@@ -209,6 +209,11 @@ class RobotControlWindow(QMainWindow):
         # [新增] 用于标记期待的响应类型 (替代按钮，改为连接时期待)
         self.temp_expected_response = None
         
+        # [新增] 微调探头相关变量
+        self.fine_tune_probe_btn = None
+        self.is_fine_tuning_allowed = False # 控制 +/- 按钮是否可用
+        self.is_fine_tuning_process = False # 标记是否正在执行 Fine tune probe 的序列
+        
         self.get_a_btn = None
         self.get_o_btn = None
         self.get_e_btn = None
@@ -381,7 +386,7 @@ class RobotControlWindow(QMainWindow):
         self.set_tcp_e_btn.clicked.connect(self.set_tcp_e) # <--- 新增连接
         self.read_tcp_tip_btn.clicked.connect(self.read_tcp_tip)
         self.set_tcp_tip_btn.clicked.connect(self.set_tcp_tip)
-        self.get_suitable_tcp_btn.clicked.connect(self.get_suitable_tcp)
+        self.get_suitable_tcp_btn.clicked.connect(self.on_get_virtual_rcm_o_clicked)
         self.rotate_ultrasound_plane_to_b_btn.clicked.connect(self.rotate_ultrasound_plane_to_b)
         self.load_b_points_intcp_u_txt_btn.clicked.connect(self.read_b_points_in_tcp_u_from_file)
         self.get_a_btn.clicked.connect(self.get_a_point_position)
@@ -714,7 +719,13 @@ class RobotControlWindow(QMainWindow):
     def align_ultrasound_plane_to_aoe(self):
         """
         [修改]：开始执行新的对齐序列：切换到 TCP_E，获取 End-Effect 位置，然后执行计算和旋转。
+        [新增]：点击此按钮时（Rotate to Puncture Point），重置 Fine tune probe 按钮状态，禁用微调。
         """
+        # [新增] 重置 Fine tune probe 按钮状态
+        if self.fine_tune_probe_btn:
+            self.fine_tune_probe_btn.setStyleSheet("") # 恢复默认颜色
+        self.is_fine_tuning_allowed = False # 禁用 +/- 按钮
+
         # 1. 检查连接状态 (可选但推荐)
         if not self.tcp_manager.is_connected:
             QMessageBox.warning(self, "Warning", "Robot is disconnected.")
@@ -1108,11 +1119,9 @@ class RobotControlWindow(QMainWindow):
         """
         # nRbtID 设为 0
         nRobotID = 0
-        # ***** 关键修改: 根据 Tool 坐标系复选框状态设置 nToolMotion *****
-        if self.tool_coord_checkbox and self.tool_coord_checkbox.isChecked():
-            nToolMotion = 1 # 在 Tool 坐标系下运动
-        else:
-            nToolMotion = 0 # 在 Base 坐标系下运动
+        # ***** [修改]: 强制 nToolMotion 为 1，始终在 Tool 坐标系下运动 *****
+        # 移除了对 self.tool_coord_checkbox 的检查
+        nToolMotion = 1 
         
         # nDirection 的值根据传入的 direction 参数确定
         nDirection = direction # direction = 1 为正向，0 为反向
@@ -1129,9 +1138,10 @@ class RobotControlWindow(QMainWindow):
         command = f"MoveRelL,{nRobotID},{nAxisId},{nDirection},{dDistance:.2f},{nToolMotion};"
         self.tcp_manager.send_command(command)
         
-        # 更新状态栏显示，这里可能需要根据 nAxisId 重新映射标签
+        # 更新状态栏显示
         axis_labels = ["X", "Y", "Z", "Rx", "Ry", "Rz"]
-        coord_sys = "Tool" if nToolMotion == 1 else "Base"
+        # 显示现在的坐标系是 Tool
+        coord_sys = "Tool" 
         self.status_bar.showMessage(f"Status: Tcp_{axis_labels[nAxisId]} fine-tuning in {coord_sys} coordinate system...")
 
     def _start_tcp_continuous_mode(self):
@@ -1143,6 +1153,12 @@ class RobotControlWindow(QMainWindow):
 
     def start_tcp_move(self, tcp_index, direction):
         """开始微调TCP坐标运动：设置参数，并启动2秒延迟定时器。"""
+        # [新增] 检查是否允许微调
+        if not self.is_fine_tuning_allowed:
+            self.status_bar.showMessage("Warning: Fine tuning is disabled. Please click 'Fine tune probe' first.")
+            QMessageBox.warning(self, "Operation Denied", "Fine tuning is disabled. Please click the 'Fine tune probe' button and wait for it to turn green.")
+            return
+
         self._moving_tcp_index = tcp_index
         self._moving_direction = direction
         self._is_continuous_tcp_mode_active = False # 假定非连续模式
@@ -1296,7 +1312,7 @@ class RobotControlWindow(QMainWindow):
         layout.addWidget(group)
 
     def create_tool_state_group(self, layout):
-        """创建用于显示机器人工具端实时状态并包含微调按钮的模块。（已修改为只读）"""
+        """创建用于显示机器人工具端实时状态并包含微调按钮的模块。（已修改为只读，且移除了坐标系选择复选框）"""
         group = QGroupBox("Robot Tool Real-time Status")
         group_layout = QGridLayout(group)
         self.tool_pose_labels = {}
@@ -1366,9 +1382,10 @@ class RobotControlWindow(QMainWindow):
             group_layout.addWidget(value_label, row_value, col_start + 1, alignment=Qt.AlignLeft) 
             group_layout.addLayout(btn_layout, row_buttons, col_start, 1, 2)
         
-        # 6. 添加 Tool 坐标系复选框 (放在下一行，即第 4 行，跨越所有列)
-        self.tool_coord_checkbox = QCheckBox("Move in Tool Coordinate System?")
-        group_layout.addWidget(self.tool_coord_checkbox, 4, 0, 1, 6, alignment=Qt.AlignCenter)
+        # 6. [修改] 在原 Checkbox 位置添加 "Fine tune probe" 按钮
+        self.fine_tune_probe_btn = QPushButton("Fine tune probe")
+        self.fine_tune_probe_btn.clicked.connect(self.on_fine_tune_probe_clicked)
+        group_layout.addWidget(self.fine_tune_probe_btn, 4, 0, 1, 6, alignment=Qt.AlignCenter)
         
         layout.addWidget(group)
         
@@ -1772,9 +1789,25 @@ class RobotControlWindow(QMainWindow):
 
     def _finalize_suitable_tcp_sequence(self):
         """
-        [序列 Step 4/5]：切换回 TCP_E，并弹出最终成功消息。
-        (原有的 _finalize_suitable_tcp_sequence)
+        [序列 Step 4/5]：根据流程标志决定是切换回 TCP_E 还是停留在 TCP_O 并激活微调。
         """
+        # [新增] 如果是微调流程
+        if self.is_fine_tuning_process:
+            self.status_bar.showMessage("Status: Fine tuning sequence completed. Switched to TCP_O.")
+            
+            # 按钮变绿
+            self.fine_tune_probe_btn.setStyleSheet("background-color: lightgreen; color: black;")
+            
+            # 允许按 + - 按钮
+            self.is_fine_tuning_allowed = True
+            
+            # 重置流程标志
+            self.is_fine_tuning_process = False
+            
+            QMessageBox.information(self, "Fine Tune Ready", "Probe fine tuning enabled (TCP_O). You can now use +/- buttons.")
+            return
+
+        # [原有逻辑] 如果是普通 Get Virtual RCM_O 流程
         self.status_bar.showMessage("Status: Sequence Step 4/5: Switch back to TCP_E...")
         try:
             # Step 4: 切换回 TCP_E
@@ -2512,3 +2545,15 @@ class RobotControlWindow(QMainWindow):
         else:
             self.log_message("Error: Motion finished but latest_tool_pose is empty.")
             QMessageBox.warning(self, "Error", "Motion finished but could not record pose (no data).")
+            
+    # [新增] 处理 "Fine tune probe" 按钮点击
+    def on_fine_tune_probe_clicked(self):
+        """点击 Fine tune probe 按钮：标记为微调流程，并执行 Get Suitable TCP 序列"""
+        self.is_fine_tuning_process = True
+        self.get_suitable_tcp()
+
+    # [新增] 处理 "Get Virtual RCM_O" 按钮点击
+    def on_get_virtual_rcm_o_clicked(self):
+        """点击 Get Virtual RCM_O 按钮：标记为非微调流程，并执行 Get Suitable TCP 序列"""
+        self.is_fine_tuning_process = False
+        self.get_suitable_tcp()
