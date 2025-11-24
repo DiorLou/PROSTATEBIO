@@ -118,10 +118,13 @@ class LeftPanel(QWidget):
         self.b_point_position_in_base = np.zeros(3)
         self.calculated_b_points = []
         
-        # 关键数据
+        # 点击左转x度的时候记录的 E 点位置
         self.tcp_e_medical_value = None
-        self.puncture_point_tool_pose = None
+        # 录了超声平面刚刚对齐到 AOE 平面（即穿刺平面）时的机器臂状态
+        self.tool_pose_in_puncture_position = None
+        # 由示教器定义的TCP_U
         self.tcp_u_definition_pose = None 
+        # 点击左转x度的时候记录的 U 点位置
         self.tcp_u_volume = None
 
         # 旋转序列变量
@@ -582,9 +585,9 @@ class LeftPanel(QWidget):
             
     def _finalize_puncture_point_recording(self):
         if self.latest_tool_pose:
-            self.puncture_point_tool_pose = list(self.latest_tool_pose)
+            self.tool_pose_in_puncture_position = list(self.latest_tool_pose)
             if self.main_window and self.main_window.right_panel:
-                self.main_window.right_panel.log_message(f"System: Puncture Point Tool Pose Recorded: {self.puncture_point_tool_pose}")
+                self.main_window.right_panel.log_message(f"System: Puncture Point Tool Pose Recorded: {self.tool_pose_in_puncture_position}")
             if self.main_window and self.main_window.status_bar:
                 self.main_window.status_bar.showMessage("Status: Aligned to puncture point & Pose recorded.")
 
@@ -610,7 +613,9 @@ class LeftPanel(QWidget):
             b = self.b_point_position_in_base
             init_pose = self.get_current_tool_pose()
             
+            # 计算旋转矩阵列表 deltas (这里会使用默认或你传入的 step_size_deg)
             deltas = calculate_new_rpy_for_b_point(a, o, b, init_pose[3:])
+            
             if not deltas or (len(deltas)==1 and np.allclose(deltas[0], np.identity(4))):
                 QMessageBox.information(self, "Info", "No rotation needed.")
                 return
@@ -618,8 +623,43 @@ class LeftPanel(QWidget):
             self.b_point_rotation_steps = deltas
             self.initial_tcp_pose_for_b_rot = init_pose
             self.b_point_o_point = o
+            
+            # =========================================================================
+            # [新增代码] 遍历所有步进，预计算并打印每一步的 E 点目标姿态
+            # =========================================================================
+            print(f"\n--- [预计算] 即将执行的 {len(deltas)} 个步进的目标 E 点姿态 ---")
+            
+            # 提前准备初始旋转矩阵 (R_init)
+            init_rpy_rad = np.deg2rad(init_pose[3:])
+            R_init = pyrot.matrix_from_euler(init_rpy_rad, 0, 1, 2, extrinsic=True)
+            
+            for i, delta in enumerate(deltas):
+                # 1. 计算该步的位置 (Position)
+                # 使用 core/ultrasound_plane.py 中已有的函数
+                P_final = get_final_tcp_e_position_after_delta_rotation(init_pose[:3], delta, o)
+                
+                # 2. 计算该步的姿态 (Rotation RPY)
+                # R_final = Delta_R * R_init
+                R_final = np.dot(delta[:3, :3], R_init)
+                final_rpy_deg = np.rad2deg(pyrot.euler_from_matrix(R_final, 0, 1, 2, extrinsic=True))
+                
+                # 3. 拼接并打印: [x, y, z, rx, ry, rz]
+                full_pose = np.concatenate((P_final, final_rpy_deg))
+                pose_str = ", ".join([f"{v:.4f}" for v in full_pose])
+                
+                # 打印到控制台
+                print(f"Step {i+1}/{len(deltas)} Target E-Pose: [{pose_str}]")
+                
+                # (可选) 同时打印到软件界面的日志窗口，方便查看
+                if self.main_window and hasattr(self.main_window, 'right_panel'):
+                     self.main_window.right_panel.log_message(f"[Predict] Step {i+1}: [{pose_str}]")
+            
+            print("-----------------------------------------------------------------\n")
+            # =========================================================================
+
             self.current_b_point_step = -1
             self._continue_b_point_rotation()
+            
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Rotation Calc Failed: {e}")
 
@@ -637,8 +677,9 @@ class LeftPanel(QWidget):
             
             pos_rpy_str = ",".join([f"{v:.2f}" for v in np.concatenate((P_final, final_rpy_deg))])
             dJ_zero = ",".join(["0.00"] * 6)
-            cmd = f"WayPoint,0,{pos_rpy_str},{dJ_zero},TCP,Base,50,250,0,0,0,0,0,0,ID1;"
+            cmd = f"WayPoint,0,{pos_rpy_str},{dJ_zero},TCP,Base,50,250,0,1,0,0,0,0,ID1;"
             QTimer.singleShot(400, lambda: self.tcp_manager.send_command(cmd))
+            print(cmd)
             
             step_angle = np.rad2deg(pyrot.axis_angle_from_matrix(delta[:3, :3])[3])
             if self.main_window and self.main_window.right_panel:
@@ -672,8 +713,8 @@ class LeftPanel(QWidget):
         if self.tcp_u_definition_pose is None:
             QMessageBox.warning(self, "Warning", "TCP_U definition missing.")
             return
-        if self.tcp_e_medical_value is None or self.puncture_point_tool_pose is None:
-            QMessageBox.warning(self, "Missing Data", "Record TCP_E_Medical and Puncture Pose first.")
+        if self.tcp_e_medical_value is None or self.tool_pose_in_puncture_position is None:
+            QMessageBox.warning(self, "Missing Data", "Record tcp_e_medical_value and tool_pose_in_puncture_position first.")
             return
         
         # ... (Simplified file dialog logic similar to original) ...
@@ -704,7 +745,7 @@ class LeftPanel(QWidget):
         dialog.exec_()
 
     def _calculate_b_point_data(self, p_b_in_u_pose, index):
-        if self.tcp_e_medical_value is None or self.puncture_point_tool_pose is None: raise ValueError("Missing poses")
+        if self.tcp_e_medical_value is None or self.tool_pose_in_puncture_position is None: raise ValueError("Missing poses")
         T_U_to_B = self._pose_to_matrix(p_b_in_u_pose)
         T_Base_to_E = self._pose_to_matrix(self.tcp_e_medical_value)
         T_E_to_U = self._pose_to_matrix(self.tcp_u_definition_pose)
@@ -716,7 +757,7 @@ class LeftPanel(QWidget):
         
         a = np.array([float(v.text()) for v in self.a_vars])
         o = np.array([float(v.text()) for v in self.o_vars])
-        angle = self._calculate_oa_rotation_angle(a, o, p_b_in_base, np.array(self.puncture_point_tool_pose)[3:], p_b_in_u_pose)
+        angle = self._calculate_oa_rotation_angle(a, o, p_b_in_base, np.array(self.tool_pose_in_puncture_position)[3:], p_b_in_u_pose)
         return p_b_in_base_pose, angle, index
 
     def _calculate_oa_rotation_angle(self, a, o, b, initial_rpy, p_b_u):
@@ -768,28 +809,60 @@ class LeftPanel(QWidget):
     def save_data(self):
         try:
             data = {
+                # 原有的保存项
                 'a_point': self._get_ui_values(self.a_vars),
                 'o_point': self._get_ui_values(self.o_vars),
                 'e_point': self._get_ui_values(self.e_vars),
-                'calculated_b_points': [(d[0].tolist(), d[1].tolist(), d[2], d[3]) for d in self.calculated_b_points]
+                'calculated_b_points': [(d[0].tolist(), d[1].tolist(), d[2], d[3]) for d in self.calculated_b_points],
+                
+                # --- 新增保存的变量 ---
+                'tcp_e_medical_value': self.tcp_e_medical_value,
+                'tool_pose_in_puncture_position': self.tool_pose_in_puncture_position,
+                'tcp_u_volume': self.tcp_u_volume
             }
-            with open(DATA_FILE_NAME, 'w') as f: json.dump(data, f, indent=4)
+            
+            with open(DATA_FILE_NAME, 'w') as f: 
+                json.dump(data, f, indent=4)
+                
             QMessageBox.information(self, "Saved", f"Saved to {DATA_FILE_NAME}")
-        except Exception as e: QMessageBox.critical(self, "Error", str(e))
+        except Exception as e: 
+            QMessageBox.critical(self, "Error", str(e))
 
     def load_data(self):
         if not os.path.exists(DATA_FILE_NAME): return
         try:
-            with open(DATA_FILE_NAME, 'r') as f: data = json.load(f)
+            with open(DATA_FILE_NAME, 'r') as f: 
+                data = json.load(f)
+            
+            # 1. 恢复界面上的 A, O, E 点数值
             for i in range(3):
                 self.a_vars[i].setText(f"{data.get('a_point',[0]*3)[i]:.2f}")
                 self.o_vars[i].setText(f"{data.get('o_point',[0]*3)[i]:.2f}")
                 self.e_vars[i].setText(f"{data.get('e_point',[0]*3)[i]:.2f}")
             
+            # 2. 恢复计算过的 B 点列表
             self.calculated_b_points = []
             for p_u, p_base, ang, idx in data.get('calculated_b_points', []):
                 self.calculated_b_points.append((np.array(p_u), np.array(p_base), float(ang), int(idx)))
+            
+            # 3. 刷新 B 点下拉框
             self.b_point_dropdown.clear()
             for d in self.calculated_b_points:
                 self.b_point_dropdown.addItem(f"B{d[3]}, {d[2]:.2f}deg")
-        except Exception as e: QMessageBox.critical(self, "Error", str(e))
+                
+            # --- 4. 恢复新增的变量 ---
+            # 使用 .get() 方法以防止旧的 json 文件中没有这些键而报错
+            self.tcp_e_medical_value = data.get('tcp_e_medical_value')
+            self.tool_pose_in_puncture_position = data.get('tool_pose_in_puncture_position')
+            self.tcp_u_volume = data.get('tcp_u_volume')
+
+            # 可选：在控制台打印一下，确认加载成功
+            print("Loaded additional robot states:")
+            print(f"  - TCP_E Medical: {self.tcp_e_medical_value}")
+            print(f"  - Puncture Pose: {self.tool_pose_in_puncture_position}")
+            print(f"  - TCP_U Volume: {self.tcp_u_volume}")
+            
+            QMessageBox.information(self, "Success", "Data loaded successfully.")
+
+        except Exception as e: 
+            QMessageBox.critical(self, "Error", str(e))
