@@ -20,3 +20,10 @@ Beckhoff通信部分:
 通过读写倍福变量,写reset变量为一触发reset使穿刺结构到默认位置;
 写theta1,theta2数组控制针移动轨迹
 
+点击左转x度时, 记录tcp_e_medical_value 和 计算 tcp_u_volume, 然后点击 rotate_and_capture_2x, 采集完图像后, 点击 Rotate the ultrasound plane to pass through the puncture point,
+这一步会更新 e 点, 转弯后, 更新 tool_pose_in_puncture_position. 然后点击 Read B Points in TCP_U from TXT File, 这一步会根据 tcp_e_medical_value 来计算
+Base 系下的 B 点, 更新完后, 会根据 tool_pose_in_puncture_position 以及 Base 系下的 B 点 来计算 需要绕 OA 旋转多少度， 计算每一个 B 点需要绕 OA 旋转的度数.
+然后点击 Rotate the ultrasound plane to pass through the biopsy point, 这一步会根据列表中选中的 B point in base 以及当前姿态来计算下一步需要绕 OA 旋转的度数,
+
+
+
