@@ -155,7 +155,7 @@ class UltrasoundTab(QWidget):
         # 旋转按钮设置
         self.left_x_btn.setFixedSize(250, 40)
         self.right_2x_btn.setFixedSize(250, 40)
-        self.left_x_btn.setEnabled(False)
+        self.left_x_btn.setEnabled(True)
         self.right_2x_btn.setEnabled(False)
 
         btn_layout.addStretch()
@@ -236,7 +236,7 @@ class UltrasoundTab(QWidget):
             self.start_btn.setEnabled(True)
             self.save_btn.setEnabled(False)
             self.single_save_btn.setEnabled(False) # [修改] 启用/禁用单次保存按钮
-            self.left_x_btn.setEnabled(False)
+            # self.left_x_btn.setEnabled(False)
             self.right_2x_btn.setEnabled(False)
             self.image_label.setText("Cannot open camera.")
             self.camera = None
