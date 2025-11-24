@@ -400,6 +400,8 @@ class LeftPanel(QWidget):
             self._handle_override_message(message)
         elif message.startswith("WayPoint,OK"):
             self._continue_b_point_rotation()
+        elif message.startswith("WayPoint"):
+            self.main_window.right_panel.log_message(message)
         elif message.startswith("ReadCurFSM"):
             self.handle_fsm_message(message)
 

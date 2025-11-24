@@ -34,7 +34,7 @@ class RightPanel(QWidget):
         # 3. TCP 设置 (Tar TCP)
         self.create_set_tcp_group(layout)
         
-        # 4. 当前 TCP 显示 (此处修复了按钮丢失问题)
+        # 4. 当前 TCP 显示
         self.create_cur_tcp_group(layout)
         
         # 5. 通信模块
@@ -292,6 +292,7 @@ class RightPanel(QWidget):
         if not msg.startswith(high_freq_msgs): 
              self.log_message(msg) 
         
+        # 下面是具体的功能处理逻辑
         if msg.startswith("ReadCurTCP") or msg.startswith("ReadTCPByName"):
             self._handle_tcp_msg(msg)
             if self.temp_expected_response == "TCP_U_DEF" and "ReadTCPByName" in msg:
