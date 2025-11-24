@@ -118,7 +118,7 @@ class TCPManager(QObject):
             if not command.endswith(';'):
                 command += ';'  # 确保命令以分号结尾，符合协议。
             self.client_socket.sendall(command.encode('utf-8'))
-            self.message_received.emit(f"发送 UR 指令: {command}")
+            # self.message_received.emit(f"发送 UR 指令: {command}")
         except Exception as e:
             self.message_received.emit(f"UR指令发送失败: {e}")
             self.disconnect()
