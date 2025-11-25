@@ -254,14 +254,35 @@ class RightPanel(QWidget):
         except:
             QMessageBox.critical(self, "Error", "Invalid TCP params")
 
+    # =========================================================================
+    # [修改] 连接 TCP 函数：增加连接成功后的初始化指令
+    # =========================================================================
     def connect_tcp(self):
         ip = self.ip_entry.text()
         try:
             port = int(self.port_entry.text())
             res = self.tcp_manager.connect(ip, port)
+            
+            # 检查连接结果
             if "成功" in res or "Connected" in res:
+                # 1. 默认操作：请求 TCP_U 定义
                 self.tcp_manager.send_command("ReadTCPByName,0,TCP_U;")
                 self.temp_expected_response = "TCP_U_DEF"
+                
+                # 2. [新增] 自动切换到 TCP_E
+                self.tcp_manager.send_command("SetTCPByName,0,TCP_E;")
+                self.current_tcp_name = "TCP_E"
+                self.log_message("System: Auto-switched to TCP_E on connect.")
+
+                # 3. [新增] 自动设置 Override 为 0.2
+                self.tcp_manager.send_command("SetOverride,0,0.20;")
+                self.log_message("System: Auto-set Override to 0.20 on connect.")
+
+                # 4. [新增] 同步更新 LeftPanel 的滑块 UI
+                if self.main_window and hasattr(self.main_window, 'left_panel'):
+                    # 更新滑块位置到 20 (对应 0.20)
+                    # 注意：setValue 会触发 valueChanged 信号，从而自动更新 Label 文字
+                    self.main_window.left_panel.override_slider.setValue(20)
             else:
                 QMessageBox.critical(self, "Connection Error", res)
         except ValueError:
@@ -292,7 +313,6 @@ class RightPanel(QWidget):
         if not msg.startswith(high_freq_msgs): 
              self.log_message(msg) 
         
-        # 下面是具体的功能处理逻辑
         if msg.startswith("ReadCurTCP") or msg.startswith("ReadTCPByName"):
             self._handle_tcp_msg(msg)
             if self.temp_expected_response == "TCP_U_DEF" and "ReadTCPByName" in msg:
