@@ -122,8 +122,10 @@ class LeftPanel(QWidget):
         self.tcp_e_medical_value = None
         # 录了超声平面刚刚对齐到 AOE 平面（即穿刺平面）时的机器臂状态
         self.tool_pose_in_puncture_position = None
-        # 由示教器定义的TCP_U
+        # 存储 TCP_U 的定义
         self.tcp_u_definition_pose = None 
+        # 存储 TCP_tip 的定义
+        self.tcp_tip_definition_pose = None  
         # 点击左转x度的时候记录的 U 点位置
         self.tcp_u_volume = None
 

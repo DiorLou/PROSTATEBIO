@@ -317,6 +317,8 @@ class RightPanel(QWidget):
             self._handle_tcp_msg(msg)
             if self.temp_expected_response == "TCP_U_DEF" and "ReadTCPByName" in msg:
                 self._handle_tcp_u_def(msg)
+            elif self.temp_expected_response == "TCP_TIP_DEF" and "ReadTCPByName" in msg:
+                self._handle_tcp_tip_def(msg)
         elif msg.startswith("ReadRobotState"):
             self._update_state(msg)
         elif msg.startswith("ReadEmergencyInfo"):
@@ -360,10 +362,31 @@ class RightPanel(QWidget):
         if len(parts) == 8 and parts[1] == 'OK':
             try:
                 tcp_u = [float(p) for p in parts[2:]]
-                if self.main_window and self.main_window.left_panel:
+                if self.main_window and hasattr(self.main_window, 'left_panel'):
                     self.main_window.left_panel.tcp_u_definition_pose = tcp_u
                     self.log_message(f"System: TCP_U Definition stored: {tcp_u}")
+                
+                # --- [新增] 自动链式请求 TCP_tip ---
+                # 在成功获取 TCP_U 后，自动请求 TCP_tip
+                self.tcp_manager.send_command("ReadTCPByName,0,TCP_tip;")
+                self.temp_expected_response = "TCP_TIP_DEF"
+                self.log_message("System: Auto-requesting TCP_tip definition...")
+                
             except: pass
+            
+    def _handle_tcp_tip_def(self, msg):
+        """[新增] 处理 TCP_tip 定义的返回消息并存储到 LeftPanel。"""
+        self.temp_expected_response = None  # 重置状态
+        parts = msg.strip(';').strip(',').split(',')
+        if len(parts) == 8 and parts[1] == 'OK':
+            try:
+                # 解析 (x, y, z, rx, ry, rz)
+                tcp_tip = [float(p) for p in parts[2:]]
+                if self.main_window and hasattr(self.main_window, 'left_panel'):
+                    self.main_window.left_panel.tcp_tip_definition_pose = tcp_tip
+                    self.log_message(f"System: TCP_tip Definition stored: {tcp_tip}")
+            except Exception as e:
+                self.log_message(f"Error parsing TCP_tip def: {e}")
 
     def start_get_suitable_tcp_sequence(self, is_fine_tune):
         if not self.tcp_manager.is_connected: return
