@@ -629,10 +629,127 @@ class LeftPanel(QWidget):
                 self.main_window.status_bar.showMessage("Status: Aligned to puncture point & Pose recorded.")
 
     def on_fine_tune_probe_clicked(self):
-        self.is_fine_tuning_process = True
-        # Trigger logic in RightPanel
+        # 情况 1: 当前已经是允许微调状态 (绿色) -> 执行关闭逻辑
+        if self.is_fine_tuning_allowed:
+            # 1. 恢复按钮默认颜色
+            self.fine_tune_probe_btn.setStyleSheet("")
+            
+            # 2. 禁止微调
+            self.is_fine_tuning_allowed = False
+            self.is_fine_tuning_process = False 
+            
+            # 3. 切换回 TCP_E
+            if self.tcp_manager.is_connected:
+                self.tcp_manager.send_command("SetTCPByName,0,TCP_E;")
+                if self.main_window and hasattr(self.main_window, 'right_panel'):
+                    self.main_window.right_panel.log_message("System: Fine tune disabled. Switched back to TCP_E.")
+            
+            QMessageBox.information(self, "Status", "Fine tune disabled. Switched to TCP_E.")
+
+        # 情况 2: 当前是初始状态 -> 准备执行开启序列
+        else:
+            # =================================================================
+            # [新增] 限制：检查 O 点是否已获取 (判断是否全为 0)
+            # =================================================================
+            try:
+                o_values = [float(v.text()) for v in self.o_vars]
+                # 如果 O 点坐标全为 0，则视为未获取
+                if all(v == 0.0 for v in o_values):
+                     QMessageBox.warning(self, "Operation Denied", "Please 'Get O Point Position' (or Load Data) first.")
+                     return
+            except ValueError:
+                 QMessageBox.warning(self, "Error", "Invalid O Point data found.")
+                 return
+            # =================================================================
+
+            self.is_fine_tuning_process = True
+            # 调用序列逻辑
+            self.start_get_suitable_tcp_sequence(is_fine_tune=True)
+    
+    def start_get_suitable_tcp_sequence(self, is_fine_tune):
+        if not self.tcp_manager.is_connected: return
+        self.is_fine_tuning_process = is_fine_tune
+        
+        # 日志记录 (调用右侧面板)
         if self.main_window and hasattr(self.main_window, 'right_panel'):
-            self.main_window.right_panel.start_get_suitable_tcp_sequence(is_fine_tune=True)
+            self.main_window.right_panel.log_message("System: Starting Get Suitable TCP Sequence (Logic in LeftPanel)...")
+            
+        # 1. 切换到 TCP_E
+        self.tcp_manager.send_command("SetTCPByName,0,TCP_E;")
+        QTimer.singleShot(200, self._step_1_get_e)
+
+    def _step_1_get_e(self):
+        # 2. 获取当前 E 点位置 (直接调用自身方法)
+        self.get_e_point_position()
+        QTimer.singleShot(200, self._step_2_calc)
+
+    def _step_2_calc(self):
+        # 3. 计算逻辑
+        try:
+            # 获取 O 点和 E 点数值 (自身变量)
+            o_pt = np.array([float(v.text()) for v in self.o_vars])
+            e_pt = np.array([float(v.text()) for v in self.e_vars])
+            
+            # 获取当前工具姿态 (自身变量)
+            cur_pose = self.latest_tool_pose
+            if not cur_pose: return
+
+            # 计算 Z 轴方向上的投影距离
+            rpy_rad = np.deg2rad(cur_pose[3:])
+            rot = pyrot.matrix_from_euler(rpy_rad, 0, 1, 2, extrinsic=True)
+            z_vec = rot[:, 2]
+            dist = np.dot(o_pt - e_pt, z_vec)
+            
+            # --- 跨面板操作：更新 RightPanel 的 TCP 输入框 ---
+            if self.main_window and hasattr(self.main_window, 'right_panel'):
+                rp = self.main_window.right_panel
+                # 重置输入框
+                for le in rp.tcp_input_entries: le.setText("0.00")
+                # 设置 Z 值 (Calculated distance)
+                rp.tcp_input_entries[2].setText(f"{dist:.2f}")
+                # 设置 Rz 值 (Fixed offset)
+                rp.tcp_input_entries[5].setText("157.50")
+            
+            # 更新自身的 O 点显示 (新的 O 点是 E 点沿 Z 轴偏移后的位置)
+            p_o_new = cur_pose[:3] + dist * z_vec
+            for i in range(3): self.o_vars[i].setText(f"{p_o_new[i]:.2f}")
+            
+            # 发送切换到 TCP_O (此时 TCP_O 还是旧值，或者是全0，准备在下一步更新)
+            # 注意：原始逻辑这里是为了确保后续 SetCurTCP 有效，或者先切到一个临时状态
+            self.tcp_manager.send_command("SetTCPByName,0,TCP_O;")
+            QTimer.singleShot(200, self._step_3_set_cur)
+            
+        except Exception as e: 
+            if self.main_window and hasattr(self.main_window, 'right_panel'):
+                self.main_window.right_panel.log_message(f"Error in calc: {e}")
+
+    def _step_3_set_cur(self):
+        # 4. 触发 RightPanel 的 "Set Cur TCP" 逻辑 (发送 ConfigTCP 指令)
+        if self.main_window and hasattr(self.main_window, 'right_panel'):
+            self.main_window.right_panel.send_set_tcp_command()
+        QTimer.singleShot(200, self._finalize_sequence)
+        
+    def _finalize_sequence(self):
+        if self.is_fine_tuning_process:
+            # [关键修改] 额外强制切换到 TCP_O
+            # 这是为了覆盖可能因 SetCurTCP 指令导致的 TCP 切换副作用
+            self.tcp_manager.send_command("SetTCPByName,0,TCP_O;")
+            
+            # 允许微调 (启用 "+","-" 按钮逻辑)
+            self.is_fine_tuning_allowed = True
+            
+            # 按钮变色 (绿色)
+            self.fine_tune_probe_btn.setStyleSheet("background-color: lightgreen;")
+            
+            # 反馈
+            if self.main_window and hasattr(self.main_window, 'right_panel'):
+                self.main_window.right_panel.log_message("System: Fine tune enabled (Switched to TCP_O).")
+            QMessageBox.information(self, "Ready", "Fine tuning enabled (TCP_O).")
+            
+        else:
+            # 如果不是 fine tune 流程（虽然目前只有 fine tune 用这个），默认切回 TCP_E
+            self.tcp_manager.send_command("SetTCPByName,0,TCP_E;")
+            QMessageBox.information(self, "Success", "Sequence completed.")
 
     # --- B Point Logic ---
     def rotate_ultrasound_plane_to_b(self):

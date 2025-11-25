@@ -108,10 +108,7 @@ class RightPanel(QWidget):
         h2 = QHBoxLayout()
         self.btn_set_cur = QPushButton("Set Cur TCP")
         self.btn_set_cur.clicked.connect(self.send_set_tcp_command)
-        self.btn_get_virtual = QPushButton("Get Virtual RCM_O")
-        self.btn_get_virtual.clicked.connect(lambda: self.start_get_suitable_tcp_sequence(False))
         h2.addWidget(self.btn_set_cur)
-        h2.addWidget(self.btn_get_virtual)
         
         v_layout.addLayout(h1)
         v_layout.addLayout(h2)
@@ -387,56 +384,3 @@ class RightPanel(QWidget):
                     self.log_message(f"System: TCP_tip Definition stored: {tcp_tip}")
             except Exception as e:
                 self.log_message(f"Error parsing TCP_tip def: {e}")
-
-    def start_get_suitable_tcp_sequence(self, is_fine_tune):
-        if not self.tcp_manager.is_connected: return
-        self.is_fine_tuning_process = is_fine_tune
-        self.log_message("System: Starting Get Suitable TCP Sequence...")
-        self.tcp_manager.send_command("SetTCPByName,0,TCP_E;")
-        QTimer.singleShot(200, self._step_1_get_e)
-
-    def _step_1_get_e(self):
-        if self.main_window:
-            self.main_window.left_panel.get_e_point_position()
-            QTimer.singleShot(200, self._step_2_calc)
-
-    def _step_2_calc(self):
-        if not self.main_window: return
-        try:
-            lp = self.main_window.left_panel
-            o_pt = np.array([float(v.text()) for v in lp.o_vars])
-            e_pt = np.array([float(v.text()) for v in lp.e_vars])
-            cur_pose = lp.latest_tool_pose
-            if not cur_pose: return
-
-            rpy_rad = np.deg2rad(cur_pose[3:])
-            rot = pyrot.matrix_from_euler(rpy_rad, 0, 1, 2, extrinsic=True)
-            z_vec = rot[:, 2]
-            dist = np.dot(o_pt - e_pt, z_vec)
-            
-            for le in self.tcp_input_entries: le.setText("0.00")
-            self.tcp_input_entries[2].setText(f"{dist:.2f}")
-            self.tcp_input_entries[5].setText("157.50")
-            
-            p_o_new = cur_pose[:3] + dist * z_vec
-            for i in range(3): lp.o_vars[i].setText(f"{p_o_new[i]:.2f}")
-            
-            self.tcp_manager.send_command("SetTCPByName,0,TCP_O;")
-            QTimer.singleShot(200, self._step_3_set_cur)
-        except Exception as e: 
-            self.log_message(f"Error in calc: {e}")
-
-    def _step_3_set_cur(self):
-        self.send_set_tcp_command()
-        QTimer.singleShot(200, self._finalize_sequence)
-
-    def _finalize_sequence(self):
-        if self.is_fine_tuning_process:
-            if self.main_window and self.main_window.left_panel:
-                lp = self.main_window.left_panel
-                lp.is_fine_tuning_allowed = True
-                lp.fine_tune_probe_btn.setStyleSheet("background-color: lightgreen;")
-                QMessageBox.information(self, "Ready", "Fine tuning enabled (TCP_O).")
-        else:
-            self.tcp_manager.send_command("SetTCPByName,0,TCP_E;")
-            QMessageBox.information(self, "Success", "Get Virtual RCM_O sequence completed.")
