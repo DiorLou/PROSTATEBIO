@@ -126,8 +126,12 @@ class LeftPanel(QWidget):
         self.tcp_u_definition_pose = None 
         # 存储 TCP_tip 的定义
         self.tcp_tip_definition_pose = None  
+        # 存储 TCP_P 的定义
+        self.tcp_p_definition_pose = None
         # 点击左转x度的时候记录的 U 点位置
         self.tcp_u_volume = None
+        # 存储计算后的 B 点在 TCP_P 坐标系下的位置
+        self.b_point_in_tcp_p = None
 
         # 旋转序列变量
         self.b_point_rotation_steps = []
@@ -841,7 +845,58 @@ class LeftPanel(QWidget):
                 self.main_window.right_panel.log_message(f"Status: Rotating Step {self.current_b_point_step+1}/{len(self.b_point_rotation_steps)}, cumulative {step_angle:.2f} deg")
         else:
             self.b_point_rotation_steps = []
-            QMessageBox.information(self, "Done", "Rotation to B point completed.")
+            # =================================================================
+            # [新增] 旋转完成，计算 B 点在 TCP_P 坐标系下的位置
+            # =================================================================
+            QTimer.singleShot(300, lambda: self._calculate_b_point_in_tcp_p())
+            
+            QMessageBox.information(self, "Done", "Rotation to B point completed.\nB point in TCP_P calculated.")
+            
+    def _calculate_b_point_in_tcp_p(self):
+        """计算 B 点在 TCP_P 坐标系下的位置。"""
+        # 1. 检查必要数据
+        if self.tcp_p_definition_pose is None:
+            print("Error: TCP_P definition is missing.")
+            return
+        if self.latest_tool_pose is None:
+            print("Error: Robot tool pose is missing.")
+            return
+        if self.b_point_position_in_base is None:
+            print("Error: B point (Base) is not selected.")
+            return
+
+        try:
+            # 2. 获取当前机器臂(TCP_E)在 Base 下的位姿矩阵 T_Base_E
+            # 此时机器臂已经运动到了目标位置
+            T_Base_E = self._pose_to_matrix(self.latest_tool_pose)
+
+            # 3. 获取 TCP_P 在 TCP_E 下的位姿矩阵 T_E_P
+            # 根据需求：tcp_p_definition_pose 记录的是相对于工具端(TCP_E)的姿态
+            T_E_P = self._pose_to_matrix(self.tcp_p_definition_pose)
+
+            # 4. 计算 TCP_P 在 Base 下的位姿矩阵 T_Base_P
+            # T_Base_P = T_Base_E * T_E_P
+            T_Base_P = np.dot(T_Base_E, T_E_P)
+
+            # 5. 获取 B 点在 Base 下的坐标 P_B_Base (补齐为齐次坐标)
+            # self.b_point_position_in_base 是 [x, y, z]
+            b_point_base = np.append(self.b_point_position_in_base, 1.0)
+
+            # 6. 计算 B 点在 TCP_P 下的坐标 P_B_P
+            # P_B_P = inv(T_Base_P) * P_B_Base
+            T_Base_P_Inv = np.linalg.inv(T_Base_P)
+            b_point_p_homogeneous = np.dot(T_Base_P_Inv, b_point_base)
+            
+            # 提取 x, y, z
+            self.b_point_in_tcp_p = b_point_p_homogeneous[:3].tolist()
+            
+            # 打印日志方便调试
+            print(f"Calculated B point in TCP_P: {self.b_point_in_tcp_p}")
+            if self.main_window and hasattr(self.main_window, 'right_panel'):
+                self.main_window.right_panel.log_message(f"System: B point in TCP_P calculated: {self.b_point_in_tcp_p}")
+
+        except Exception as e:
+            print(f"Calculation Error: {e}")
 
     def compute_and_store_tcp_u_volume(self):
         if self.tcp_e_medical_value is None or self.tcp_u_definition_pose is None: return
@@ -972,7 +1027,8 @@ class LeftPanel(QWidget):
                 # --- 新增保存的变量 ---
                 'tcp_e_medical_value': self.tcp_e_medical_value,
                 'tool_pose_in_puncture_position': self.tool_pose_in_puncture_position,
-                'tcp_u_volume': self.tcp_u_volume
+                'tcp_u_volume': self.tcp_u_volume,
+                'b_point_in_tcp_p': self.b_point_in_tcp_p
             }
             
             with open(DATA_FILE_NAME, 'w') as f: 
@@ -1009,12 +1065,14 @@ class LeftPanel(QWidget):
             self.tcp_e_medical_value = data.get('tcp_e_medical_value')
             self.tool_pose_in_puncture_position = data.get('tool_pose_in_puncture_position')
             self.tcp_u_volume = data.get('tcp_u_volume')
+            self.b_point_in_tcp_p = data.get('b_point_in_tcp_p')
 
             # 可选：在控制台打印一下，确认加载成功
             print("Loaded additional robot states:")
             print(f"  - TCP_E Medical: {self.tcp_e_medical_value}")
             print(f"  - Puncture Pose: {self.tool_pose_in_puncture_position}")
             print(f"  - TCP_U Volume: {self.tcp_u_volume}")
+            print(f"  - B_point_in_TCP_P: {self.b_point_in_tcp_p}")
             
             QMessageBox.information(self, "Success", "Data loaded successfully.")
 
