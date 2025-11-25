@@ -517,16 +517,51 @@ class LeftPanel(QWidget):
     def _start_point_record(self, name):
         if not self.tcp_manager.is_connected: return
         if self.main_window and self.main_window.status_bar:
-             self.main_window.status_bar.showMessage(f"Status: Getting {name} Point (Switching TCP_tip)...")
-        self.tcp_manager.send_command("SetTCPByName,0,TCP_tip;")
+             # [修改] 提示切换到 TCP_E
+             self.main_window.status_bar.showMessage(f"Status: Getting {name} Point (Switching TCP_E)...")
+        
+        # [修改] 发送切换到 TCP_E 的指令
+        self.tcp_manager.send_command("SetTCPByName,0,TCP_E;")
+        
+        # 延时等待状态刷新后进行计算
         QTimer.singleShot(300, lambda: self._finalize_point_record(name))
         
     def _finalize_point_record(self, name):
-        if not self.latest_tool_pose: return
-        targets = self.a_vars if name == "A" else self.o_vars
-        for i in range(3): targets[i].setText(f"{self.latest_tool_pose[i]:.2f}")
-        if self.main_window and self.main_window.status_bar:
-             self.main_window.status_bar.showMessage(f"Status: {name} point position obtained.")
+        # 1. 检查必要数据是否存在
+        if not self.latest_tool_pose:
+            QMessageBox.warning(self, "Warning", "No real-time robot pose data.")
+            return
+        
+        if not self.tcp_tip_definition_pose:
+            QMessageBox.warning(self, "Warning", "TCP_tip definition missing. Please Connect to robot or Load data.")
+            return
+
+        try:
+            # 2. 获取当前 TCP_E 在 Base 系下的位姿矩阵 (T_Base_E)
+            # self.latest_tool_pose此时对应的是 TCP_E
+            T_Base_E = self._pose_to_matrix(self.latest_tool_pose)
+
+            # 3. 获取 TCP_tip 在 TCP_E 系下的相对位姿矩阵 (T_E_Tip)
+            # 根据您的描述：tcp_tip_definition_pose 是基于 TCP_E 的
+            T_E_Tip = self._pose_to_matrix(self.tcp_tip_definition_pose)
+
+            # 4. 计算 TCP_tip 在 Base 系下的位姿 (T_Base_Tip)
+            # 矩阵乘法：Base_Tip = Base_E * E_Tip
+            T_Base_Tip = np.dot(T_Base_E, T_E_Tip)
+
+            # 5. 提取位置 (x, y, z)
+            tip_position_base = T_Base_Tip[:3, 3]
+
+            # 6. 更新 UI 界面
+            targets = self.a_vars if name == "A" else self.o_vars
+            for i in range(3): 
+                targets[i].setText(f"{tip_position_base[i]:.2f}")
+            
+            # 7. 状态栏反馈
+            self.main_window.right_panel.log_message(f"Status: {name} point position calculated (Derived from TCP_E).")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Calculation Error", f"Failed to calculate point: {e}")
 
     def get_e_point_position(self):
         if not self.latest_tool_pose: return
