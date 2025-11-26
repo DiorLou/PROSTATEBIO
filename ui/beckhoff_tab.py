@@ -204,7 +204,6 @@ class BeckhoffTab(QWidget):
         self.setup_connections()
 
     def init_ui(self):
-        """构建UI：移除 'Move to Target' 按钮，移动 'Reset' 按钮。"""
         main_layout = QVBoxLayout(self)
 
         # -----------------------------------------------------------------
@@ -223,9 +222,24 @@ class BeckhoffTab(QWidget):
             input_grid.addWidget(label, 0, i * 2)
             input_grid.addWidget(text_box, 0, i * 2 + 1)
         
-        self.input_vector_btn = QPushButton("Calculate Joint Values (ΔJ2, ΔJ3)")
+        # --- [修改] 按钮布局区域 ---
+        btns_layout = QHBoxLayout()
+        
+        # 1. 创建 Calc ΔJ1 按钮 (放左边)
+        self.calc_j1_btn = QPushButton("Calc ΔJ1")
+        self.calc_j1_btn.setFixedWidth(100)
+        
+        # 2. 创建/修改 Calc ΔJ2, ΔJ3 按钮 (放右边，改名)
+        self.input_vector_btn = QPushButton("Calc ΔJ2, ΔJ3")
+        # self.input_vector_btn.setFixedWidth(120) # 可选：设置固定宽度
+
+        btns_layout.addStretch()
+        btns_layout.addWidget(self.calc_j1_btn)       # 左
+        btns_layout.addWidget(self.input_vector_btn)  # 右
+        btns_layout.addStretch()
+
         vector_layout.addLayout(input_grid)
-        vector_layout.addWidget(self.input_vector_btn, alignment=Qt.AlignCenter)
+        vector_layout.addLayout(btns_layout)
         
         # 结果显示部分
         result_group = QGroupBox("Position Control")
@@ -237,25 +251,37 @@ class BeckhoffTab(QWidget):
         self.result_labels["J3"] = QLineEdit("0.00")
         self.motion_time_input = QLineEdit("5000") 
 
-        # --- Increase 输入 ---
+        # --- [修改] Increase J1 (Height) 输入 ---
+        # 按钮已经移走了，这里只保留显示框
+        inc_j1_label = QLabel("Increase J1 (mm):")
+        inc_j1_label.setAlignment(Qt.AlignVCenter)
+        self.inc_j1_input = QLineEdit("0.00") 
+        self.inc_j1_input.setFixedWidth(100)
+        
+        result_layout.addWidget(inc_j1_label, 0, 0) 
+        result_layout.addWidget(self.inc_j1_input, 0, 1)
+        # 注意：这里不再添加 self.calc_j1_btn
+        
+        # --- Increase J2 输入 ---
         inc_j2_label = QLabel("Increase J2 (Deg):")
         inc_j2_label.setAlignment(Qt.AlignVCenter)
         self.inc_j2_input = QLineEdit("0.00") 
         self.inc_j2_input.setFixedWidth(100)
-        result_layout.addWidget(inc_j2_label, 0, 0) 
-        result_layout.addWidget(self.inc_j2_input, 0, 1) 
+        result_layout.addWidget(inc_j2_label, 1, 0) 
+        result_layout.addWidget(self.inc_j2_input, 1, 1) 
         
+        # --- Increase J3 输入 ---
         inc_j3_label = QLabel("Increase J3 (Deg):")
         inc_j3_label.setAlignment(Qt.AlignVCenter)
         self.inc_j3_input = QLineEdit("0.00") 
         self.inc_j3_input.setFixedWidth(100)
-        result_layout.addWidget(inc_j3_label, 1, 0) 
-        result_layout.addWidget(self.inc_j3_input, 1, 1) 
+        result_layout.addWidget(inc_j3_label, 2, 0) 
+        result_layout.addWidget(self.inc_j3_input, 2, 1) 
         
         # --- 间隔 ---
         spacer_label = QLabel(" ")
         spacer_label.setFixedWidth(20) 
-        result_layout.addWidget(spacer_label, 0, 2)
+        result_layout.addWidget(spacer_label, 1, 2)
         
         # --- Current 显示 ---
         pos_labels = ["Current J2 (Deg):", "Current J3 (Deg):"]
@@ -268,8 +294,8 @@ class BeckhoffTab(QWidget):
         self.pos_labels[pos_keys[0]].setReadOnly(True)
         self.pos_labels[pos_keys[0]].setFixedWidth(100)
         self.pos_labels[pos_keys[0]].setStyleSheet("background-color: #D4EDF7; border: 1px inset grey;")
-        result_layout.addWidget(cur_j2_label, 0, 3)
-        result_layout.addWidget(self.pos_labels[pos_keys[0]], 0, 4)
+        result_layout.addWidget(cur_j2_label, 1, 3)
+        result_layout.addWidget(self.pos_labels[pos_keys[0]], 1, 4)
         
         # Current J3
         cur_j3_label = QLabel(pos_labels[1])
@@ -278,18 +304,18 @@ class BeckhoffTab(QWidget):
         self.pos_labels[pos_keys[1]].setReadOnly(True)
         self.pos_labels[pos_keys[1]].setFixedWidth(100)
         self.pos_labels[pos_keys[1]].setStyleSheet("background-color: #D4EDF7; border: 1px inset grey;")
-        result_layout.addWidget(cur_j3_label, 1, 3)
-        result_layout.addWidget(self.pos_labels[pos_keys[1]], 1, 4)
+        result_layout.addWidget(cur_j3_label, 2, 3)
+        result_layout.addWidget(self.pos_labels[pos_keys[1]], 2, 4)
 
         # --- 底部按钮 ---
-        # 1. Apply Increment 按钮 (左下)
-        self.apply_inc_btn = QPushButton("Apply Increment (Calc from Reset)")
-        result_layout.addWidget(self.apply_inc_btn, 2, 0, 1, 2) 
+        # 1. Apply Increment 按钮
+        self.apply_inc_btn = QPushButton("Apply Increment (J2, J3)")
+        result_layout.addWidget(self.apply_inc_btn, 3, 0, 1, 2) 
 
-        # 2. Reset 按钮 (移动到右下，Current J3 下方)
+        # 2. Reset 按钮
         self.reset_j2j3_btn = QPushButton("Reset J2, J3")
-        self.reset_j2j3_btn.setEnabled(False) # 初始禁用，连接后启用
-        result_layout.addWidget(self.reset_j2j3_btn, 2, 3, 1, 2)
+        self.reset_j2j3_btn.setEnabled(False) 
+        result_layout.addWidget(self.reset_j2j3_btn, 3, 3, 1, 2)
         
         result_content_layout.addLayout(result_layout)
         result_content_layout.addStretch(1) 
