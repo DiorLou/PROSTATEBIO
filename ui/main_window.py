@@ -69,6 +69,10 @@ class RobotControlWindow(QMainWindow):
     @property
     def tcp_e_medical_value(self):
         return self.left_panel.tcp_e_medical_value
+    
+    @property
+    def a_point_in_tcp_p(self):
+        return self.left_panel.a_point_in_tcp_p
 
     @tcp_e_medical_value.setter
     def tcp_e_medical_value(self, value):
