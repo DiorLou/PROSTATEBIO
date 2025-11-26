@@ -8,7 +8,7 @@ import pyads
 import threading
 import time
 
-# ====== ADS 配置和变量名（已修改，新增当前位置变量）======
+# ====== ADS 配置和变量名 ======
 AMS_NET_ID = "192.168.10.100.1.1"
 PLC_IP     = "192.168.10.100"
 PLC_PORT   = 851
@@ -26,12 +26,10 @@ ENABLE_STATUS = "MAIN.MotorButtonEnable"
 # 设置运动时间
 MOTION_TIME = "MAIN.t5"   
 
-# 新增：当前位置变量名 (从 WriteTest.py 复制)
+# 新增：当前位置变量名
 POS1_PV = "MAIN.MotorCurPos[2]"   # 只读：当前位置1 (LREAL)
 POS2_PV = "MAIN.MotorCurPos[3]"   # 只读：当前位置2 (LREAL)
 
-# 目标与判据
-# DONE_TOL   = 0.05                  # 判定完成阈值 (已移除)
 READ_LREAL_T   = pyads.PLCTYPE_LREAL
 WRITE_LREAL_T  = pyads.PLCTYPE_LREAL
 WRITE_INT_T    = pyads.PLCTYPE_INT
@@ -39,7 +37,7 @@ WRITE_INT_T    = pyads.PLCTYPE_INT
 
 class ADS:
     def __init__(self, ams, port, ip):
-        super().__init__() # pyads.Connection 继承自 threading.Thread，但这里不显式调用
+        super().__init__()
         self._c = pyads.Connection(ams, port, ip)
         self.connected = False
         self.lock = threading.Lock()
@@ -81,34 +79,27 @@ class ADS:
             
     def read_bool(self, name: str) -> bool:
         with self.lock:
-            # pyads 读取 PLCTYPE_BOOL 类型时返回 Python 布尔值
             return bool(self._c.read_by_name(name, pyads.PLCTYPE_BOOL))
 
 # ====================================================================
-# 新增：ADS 轮询线程 (负责实时读取位置和运动监控)
+# ADS 轮询线程
 # ====================================================================
 class ADSPollThread(QThread):
-    """一个独立的线程，用于持续轮询读取当前位置，并监控运动到位状态。"""
-    # 信号1：实时位置更新 (J2, J3)
     position_update = pyqtSignal(float, float)
-    # 信号2：运动状态更新 (例如：就绪, 运动中, 运动完成)
     movement_status_update = pyqtSignal(str)
-    # 信号3：新增使能状态更新
     enable_status_update = pyqtSignal(bool)
     
     def __init__(self, ads_client, parent=None):
         super().__init__(parent)
         self.ads = ads_client
         self.is_running = True
-        self.moving = False          # 标记是否正在监控运动
+        self.moving = False 
         
-        # 目标值 (由 BeckhoffTab 在触发运动前设置)
         self.target_j2 = 0.0
         self.target_j3 = 0.0
         self.motion_time = 0.0
 
     def start_monitoring_move(self, target_j2, target_j3):
-        """设置目标值，并开始监控运动。（已移除 _stable_cnt 重置）"""
         self.target_j2 = target_j2
         self.target_j3 = target_j3
         self.moving = True
@@ -120,23 +111,17 @@ class ADSPollThread(QThread):
                 # 1. 读取当前位置
                 p1 = self.ads.read_lreal(POS1_PV)
                 p2 = self.ads.read_lreal(POS2_PV)
-                
-                # 2. 发送信号更新 UI
                 self.position_update.emit(p1, p2)
 
-                # 3. [新增] 读取使能状态并更新 UI
+                # 3. 读取使能状态
                 is_enabled = self.ads.read_bool(ENABLE_STATUS)
                 self.enable_status_update.emit(is_enabled)
 
                 if self.moving:
-                    # 4. 判定到位：读取 PLC 中的 START_BOOL (MAIN.Position_5)
                     is_moving_flag = self.ads.read_bool(START_BOOL)
-                    
                     if not is_moving_flag:
-                        # 4. 到位：PLC 已将 Position_5 置回 False，运动完成。
                         self.moving = False
                         self.movement_status_update.emit("Movement Completed")
-                        
                     else:
                         if last_status != "Moving":
                             self.movement_status_update.emit("Moving")
@@ -147,94 +132,79 @@ class ADSPollThread(QThread):
                         last_status = "Ready"
 
             except Exception as e:
-                # 只有在连接仍然存在时才报告错误，否则是断开操作导致的
                 if self.ads.connected: 
                     self.movement_status_update.emit(f"Polling Read Failed: {e}")
                 break
-            
-            time.sleep(0.15) # 0.15 秒轮询间隔
-        
+            time.sleep(0.15)
         print("ADS 轮询线程已退出。")
 
     def stop(self):
         self.is_running = False
         self.wait()
 
-
 # ====================================================================
-# 修改：ADSThread (现在仅负责发送启动命令)
+# ADSThread (发送启动命令)
 # ====================================================================
 class ADSThread(QThread):
-    """一个独立的线程用于执行 ADS 运动命令的发送。"""
-    movement_status_update = pyqtSignal(str) # 负责发送执行状态
+    movement_status_update = pyqtSignal(str)
 
     def __init__(self, ads_client, target_j2, target_j3, target_time, parent=None):
         super().__init__(parent)
         self.ads = ads_client
         self.target_j2 = target_j2
         self.target_j3 = target_j3
-        self.motion_time = target_time # 此处 target_time 期望为毫秒 (ms)
+        self.motion_time = target_time
 
     def run(self):
         self.movement_status_update.emit("Sending Target...")
         try:
-            # 1. 写入目标 J2/J3/TIME
             self.ads.write_lreal(J2_PV, self.target_j2)
             self.ads.write_lreal(J3_PV, self.target_j3)
-            # MOTION_TIME (MAIN.t5) 期望单位为毫秒 (ms)
             self.ads.write_int(MOTION_TIME, self.motion_time) 
-            
-            # 2. 启动运动 (Position_5 = True)
             self.ads.write_bool(START_BOOL, True)
             self.movement_status_update.emit("Movement command sent, preparing to monitor...")
-            
         except Exception as e:
             self.movement_status_update.emit(f"ADS Write or Start Failed: {e}")
 
 
 # ====================================================================
-# 修改：BeckhoffTab 类
+# BeckhoffTab 类
 # ====================================================================
 class BeckhoffTab(QWidget):
-    """
-    Beckhoff通信和穿刺针运动学计算标签页。
-    """
+    # 定义复位常量
+    RESET_J2 = 67.569
+    RESET_J3 = 20.347
+
     def __init__(self, robot_kinematics, parent=None):
         super().__init__(parent)
         self.robot = robot_kinematics
         
-        # ADS 客户端实例
         self.ads_client = ADS(AMS_NET_ID, PLC_PORT, PLC_IP)
-        self.ads_command_thread = None  # 用于执行 ADS 写入命令的线程
-        self.ads_poll_thread = None     # 新增：用于实时轮询和运动监控的线程
+        self.ads_command_thread = None
+        self.ads_poll_thread = None
 
-        # UI 元素存储
         self.vector_inputs = [None] * 3  
         self.result_labels = {}         
         self.ads_status_label = QLabel("ADS: Disconnected") 
-        self.pos_labels = {}            # 新增：实时位置显示标签
-        self.motion_time_input = None   # 新增：目标运动时间输入框
-        self.enable_motor_btn = None    # 新增：使能按钮
+        self.pos_labels = {}
+        self.motion_time_input = None
+        self.enable_motor_btn = None
         
-        self.inc_j2_input = None        # 增加 J2 输入框
-        self.inc_j3_input = None        # 增加 J3 输入框
-        self.apply_inc_btn = None       # 应用增量按钮
+        self.inc_j2_input = None
+        self.inc_j3_input = None
+        self.apply_inc_btn = None
         
-        # 存储计算出的 J2, J3 值 (用于暂存，但实际目标以 QLineEdit 为准)
         self.latest_j2 = 0.0
         self.latest_j3 = 0.0
         
-        # 恢复按钮成员变量引用
         self.reset_j2j3_btn = None 
-        self.trigger_j2j3_btn = None 
         self.input_vector_btn = None
         
-        # UI 初始化，调用 init_ui 会创建所有按钮实例
         self.init_ui()
         self.setup_connections()
 
     def init_ui(self):
-        """构建Beckhoff通信标签页的UI。（关键修改：设置 QGridLayout 居左）"""
+        """构建UI：移除 'Move to Target' 按钮，移动 'Reset' 按钮。"""
         main_layout = QVBoxLayout(self)
 
         # -----------------------------------------------------------------
@@ -243,7 +213,6 @@ class BeckhoffTab(QWidget):
         vector_group = QGroupBox("Needle Vector Positioning (Inverse Kinematics)")
         vector_layout = QVBoxLayout(vector_group)
 
-        # Vector 输入部分
         input_grid = QGridLayout()
         vector_labels = ["X:", "Y:", "Z:"]
         for i, label_text in enumerate(vector_labels):
@@ -255,126 +224,78 @@ class BeckhoffTab(QWidget):
             input_grid.addWidget(text_box, 0, i * 2 + 1)
         
         self.input_vector_btn = QPushButton("Calculate Joint Values (J2, J3)")
-        
         vector_layout.addLayout(input_grid)
         vector_layout.addWidget(self.input_vector_btn, alignment=Qt.AlignCenter)
         
         # 结果显示部分
-        result_group = QGroupBox("Position Status")
-        
-        # 创建一个 QHBoxLayout 来包装 QGridLayout，并将其左对齐
+        result_group = QGroupBox("Position Control")
         result_content_layout = QHBoxLayout()
         result_layout = QGridLayout()
         
-        # 目标位置显示 (改为 QLineEdit 实现可读写)
-        result_labels = ["Target J2 (Deg):", "Target J3 (Deg):"]
-        result_keys = ["J2", "J3"]
-        
-        # 行索引
-        row = 0
-        for i, label_text in enumerate(result_labels):
-            label = QLabel(label_text)
-            # 确保标签左对齐
-            label.setAlignment(Qt.AlignVCenter) 
-            
-            # 目标输入框：设置固定宽度
-            value_input = QLineEdit("0.00") 
-            value_input.setReadOnly(False) 
-            value_input.setFixedWidth(100) 
-            value_input.setStyleSheet("background-color: white; border: 1px inset grey;")
-            self.result_labels[result_keys[i]] = value_input
-            
-            # Column 0: Target Label
-            result_layout.addWidget(label, row, 0)
-            # Column 1: Target Input
-            result_layout.addWidget(value_input, row, 1) 
-            row += 1 # 递增行索引
-            
-        # *********** 目标运动时间输入框 ***********
-        
-        # 目标运动时间输入
-        time_label = QLabel("Target Motion Time (ms):")
-        # 确保标签左对齐
-        time_label.setAlignment(Qt.AlignVCenter) 
-        
-        self.motion_time_input = QLineEdit("5000") # 默认 5000ms
-        self.motion_time_input.setReadOnly(False)
-        self.motion_time_input.setFixedWidth(100)
-        self.motion_time_input.setStyleSheet("background-color: white; border: 1px inset grey;")
-        
-        # Row 2, Col 0: Label (此时 row = 2)
-        result_layout.addWidget(time_label, row, 0)
-        # Row 2, Col 1: Input
-        result_layout.addWidget(self.motion_time_input, row, 1) 
-        row += 1 # 递增行索引
-        
-        # *************************************************************************
+        # 隐藏的 Target 输入框
+        self.result_labels["J2"] = QLineEdit("0.00")
+        self.result_labels["J3"] = QLineEdit("0.00")
+        self.motion_time_input = QLineEdit("5000") 
 
-        # *** 新增固定间隔列 (Column 2) ***
-        spacer_label = QLabel(" ")
-        spacer_label.setFixedWidth(20) # 减小间隔
-        # 更新间隔列，以包含新增的第三行 (共 row 行)
-        # 此时 row = 2
-        for r in range(row):
-            result_layout.addWidget(QLabel(" "), r, 2) 
-            
-        # 实时当前位置显示 (QLineEdit) - 保持不变，仍在 Col 3/4
-        pos_labels = ["Current J2 (Deg):", "Current J3 (Deg):"]
-        pos_keys = ["CurJ2", "CurJ3"]
-        row_cur = 0
-        for i, label_text in enumerate(pos_labels):
-            label = QLabel(label_text)
-            # 确保标签左对齐
-            label.setAlignment(Qt.AlignVCenter)
-            
-            # 使用 QLineEdit 替换 QLabel，以实现可选中和复制
-            value_label = QLineEdit("--")
-            value_label.setReadOnly(True) 
-            value_label.setFixedWidth(100) 
-            value_label.setStyleSheet("background-color: #D4EDF7; border: 1px inset grey;") 
-            self.pos_labels[pos_keys[i]] = value_label
-            
-            # Column 3: Current Label 
-            result_layout.addWidget(label, row_cur, 3)
-            # Column 4: Current Value (QLineEdit)
-            result_layout.addWidget(value_label, row_cur, 4)
-            row_cur += 1
-
-        # --- [新增] 增量输入列 (Column 5/6) ---
-        
-        # 增加 J2 增量输入
+        # --- Increase 输入 ---
         inc_j2_label = QLabel("Increase J2 (Deg):")
         inc_j2_label.setAlignment(Qt.AlignVCenter)
-        self.inc_j2_input = QLineEdit("0.00") # 增量输入框
+        self.inc_j2_input = QLineEdit("0.00") 
         self.inc_j2_input.setFixedWidth(100)
+        result_layout.addWidget(inc_j2_label, 0, 0) 
+        result_layout.addWidget(self.inc_j2_input, 0, 1) 
         
-        result_layout.addWidget(inc_j2_label, 0, 5) # Row 0, Col 5
-        result_layout.addWidget(self.inc_j2_input, 0, 6) # Row 0, Col 6
-        
-        # 增加 J3 增量输入
         inc_j3_label = QLabel("Increase J3 (Deg):")
         inc_j3_label.setAlignment(Qt.AlignVCenter)
-        self.inc_j3_input = QLineEdit("0.00") # 增量输入框
+        self.inc_j3_input = QLineEdit("0.00") 
         self.inc_j3_input.setFixedWidth(100)
+        result_layout.addWidget(inc_j3_label, 1, 0) 
+        result_layout.addWidget(self.inc_j3_input, 1, 1) 
         
-        result_layout.addWidget(inc_j3_label, 1, 5) # Row 1, Col 5
-        result_layout.addWidget(self.inc_j3_input, 1, 6) # Row 1, Col 6
+        # --- 间隔 ---
+        spacer_label = QLabel(" ")
+        spacer_label.setFixedWidth(20) 
+        result_layout.addWidget(spacer_label, 0, 2)
         
-        # --- [新增] 应用增量按钮 (修正位置) ---
-        self.apply_inc_btn = QPushButton("Apply Increment")
-        # 关键修正：使用 row - 1 来确保按钮位于 '目标运动时间' (row 2) 所在的行
-        # 此时 row = 3，使用 row - 1 = 2 即可定位到正确行
-        result_layout.addWidget(self.apply_inc_btn, row - 1, 5, 1, 2) 
+        # --- Current 显示 ---
+        pos_labels = ["Current J2 (Deg):", "Current J3 (Deg):"]
+        pos_keys = ["CurJ2", "CurJ3"]
         
-        # 将 result_layout (QGridLayout) 添加到 result_content_layout (QHBoxLayout) 中
+        # Current J2
+        cur_j2_label = QLabel(pos_labels[0])
+        cur_j2_label.setAlignment(Qt.AlignVCenter)
+        self.pos_labels[pos_keys[0]] = QLineEdit("--")
+        self.pos_labels[pos_keys[0]].setReadOnly(True)
+        self.pos_labels[pos_keys[0]].setFixedWidth(100)
+        self.pos_labels[pos_keys[0]].setStyleSheet("background-color: #D4EDF7; border: 1px inset grey;")
+        result_layout.addWidget(cur_j2_label, 0, 3)
+        result_layout.addWidget(self.pos_labels[pos_keys[0]], 0, 4)
+        
+        # Current J3
+        cur_j3_label = QLabel(pos_labels[1])
+        cur_j3_label.setAlignment(Qt.AlignVCenter)
+        self.pos_labels[pos_keys[1]] = QLineEdit("--")
+        self.pos_labels[pos_keys[1]].setReadOnly(True)
+        self.pos_labels[pos_keys[1]].setFixedWidth(100)
+        self.pos_labels[pos_keys[1]].setStyleSheet("background-color: #D4EDF7; border: 1px inset grey;")
+        result_layout.addWidget(cur_j3_label, 1, 3)
+        result_layout.addWidget(self.pos_labels[pos_keys[1]], 1, 4)
+
+        # --- 底部按钮 ---
+        # 1. Apply Increment 按钮 (左下)
+        self.apply_inc_btn = QPushButton("Apply Increment (Calc from Reset)")
+        result_layout.addWidget(self.apply_inc_btn, 2, 0, 1, 2) 
+
+        # 2. Reset 按钮 (移动到右下，Current J3 下方)
+        self.reset_j2j3_btn = QPushButton("Reset J2, J3")
+        self.reset_j2j3_btn.setEnabled(False) # 初始禁用，连接后启用
+        result_layout.addWidget(self.reset_j2j3_btn, 2, 3, 1, 2)
+        
         result_content_layout.addLayout(result_layout)
-        # 添加 stretch，将 QGridLayout 推到左侧
         result_content_layout.addStretch(1) 
         
-        result_group.setLayout(result_content_layout) # 设置 GroupBox 的布局
-        
+        result_group.setLayout(result_content_layout)
         vector_layout.addWidget(result_group)
-        
         main_layout.addWidget(vector_group)
         
         # -----------------------------------------------------------------
@@ -389,31 +310,18 @@ class BeckhoffTab(QWidget):
         self.disconnect_ads_btn = QPushButton("Disconnect ADS")
         self.disconnect_ads_btn.setEnabled(False)
         
-        # [新增] 使能按钮
+        # 使能按钮
         self.enable_motor_btn = QPushButton("Enable")
         self.enable_motor_btn.setEnabled(False)
         self.enable_motor_btn.setStyleSheet("background-color: lightgray;")
         
         conn_layout.addWidget(self.connect_ads_btn)
         conn_layout.addWidget(self.disconnect_ads_btn)
-        conn_layout.addWidget(self.enable_motor_btn) # 添加使能按钮
+        conn_layout.addWidget(self.enable_motor_btn) 
         conn_layout.addWidget(self.ads_status_label)
         beckhoff_comm_layout.addLayout(conn_layout)
 
-        # J2/J3 触发按钮行
-        trigger_layout = QHBoxLayout()
-        
-        self.reset_j2j3_btn = QPushButton("Reset J2, J3")
-        self.reset_j2j3_btn.setEnabled(False)
-        
-        self.trigger_j2j3_btn = QPushButton("Move to Target J2, J3")
-        self.trigger_j2j3_btn.setEnabled(False) 
-        
-        trigger_layout.addWidget(self.reset_j2j3_btn) 
-        trigger_layout.addWidget(self.trigger_j2j3_btn) 
-        beckhoff_comm_layout.addLayout(trigger_layout)
-        
-        # 新增一个 QLabel 用于显示运动状态
+        # 运动状态
         self.movement_status_label = QLabel("Movement Status: Standby")
         beckhoff_comm_layout.addWidget(self.movement_status_label)
 
@@ -421,42 +329,32 @@ class BeckhoffTab(QWidget):
         main_layout.addStretch()
 
     def setup_connections(self):
-        """连接信号和槽。"""
         self.input_vector_btn.clicked.connect(self.calculate_joint_values)
         self.connect_ads_btn.clicked.connect(self.connect_ads)
         self.disconnect_ads_btn.clicked.connect(self.disconnect_ads)
-        self.trigger_j2j3_btn.clicked.connect(self.trigger_j2j3_move)
+        # 移除了 self.trigger_j2j3_btn.clicked.connect(...)
         self.reset_j2j3_btn.clicked.connect(self.trigger_j2j3_reset)
         self.apply_inc_btn.clicked.connect(self.apply_joint_increment)
         self.enable_motor_btn.clicked.connect(self.toggle_motor_enable)
 
-# ====================================================================
-# 新增：轮询管理方法
-# ====================================================================
     def _start_poll(self):
-        """启动 ADS 轮询线程。"""
         if self.ads_poll_thread is None or not self.ads_poll_thread.isRunning():
             self.ads_poll_thread = ADSPollThread(self.ads_client)
-            # 连接轮询线程的信号
             self.ads_poll_thread.position_update.connect(self._update_current_positions)
             self.ads_poll_thread.movement_status_update.connect(self.update_movement_status)
-            self.ads_poll_thread.enable_status_update.connect(self._update_enable_button) # [新增] 连接使能状态更新
+            self.ads_poll_thread.enable_status_update.connect(self._update_enable_button)
             self.ads_poll_thread.start()
 
     def _stop_poll(self):
-        """停止 ADS 轮询线程。"""
         if self.ads_poll_thread and self.ads_poll_thread.isRunning():
             self.ads_poll_thread.stop()
             self.ads_poll_thread = None
 
     def _update_current_positions(self, j2_pos, j3_pos):
-        """槽函数：接收并更新当前的 J2 和 J3 关节位置。"""
-        # 实时显示当前位置
         self.pos_labels["CurJ2"].setText(f"{j2_pos:.3f}")
         self.pos_labels["CurJ3"].setText(f"{j3_pos:.3f}")
         
     def _update_enable_button(self, is_enabled: bool):
-        """槽函数：接收使能状态并更新按钮颜色和文本。"""
         if is_enabled:
             self.enable_motor_btn.setText("Enabled")
             self.enable_motor_btn.setStyleSheet("background-color: lightgreen;")
@@ -464,68 +362,50 @@ class BeckhoffTab(QWidget):
             self.enable_motor_btn.setText("Enable")
             self.enable_motor_btn.setStyleSheet("background-color: lightgray;")
 
-
     def connect_ads(self):
-        """尝试连接到 ADS。（新增：启动轮询线程）"""
         ok, msg = self.ads_client.open()
         self.ads_status_label.setText(f"ADS: {msg}")
         self.connect_ads_btn.setEnabled(not ok)
         self.disconnect_ads_btn.setEnabled(ok)
-        self.trigger_j2j3_btn.setEnabled(ok)
+        # 移除了 self.trigger_j2j3_btn.setEnabled(ok)
         self.reset_j2j3_btn.setEnabled(ok)
-        self.enable_motor_btn.setEnabled(ok) # [新增] 连接成功后启用使能按钮
+        self.enable_motor_btn.setEnabled(ok)
         
         if ok:
-            self._start_poll() # 启动轮询线程
+            self._start_poll()
 
     def disconnect_ads(self):
-        """断开 ADS 连接。（已移除强制回落 START_BOOL 的代码）"""
-        self._stop_poll() # 停止轮询线程
-
+        self._stop_poll()
         self.ads_client.close()
         self.ads_status_label.setText("ADS: Disconnected")
         self.connect_ads_btn.setEnabled(True)
         self.disconnect_ads_btn.setEnabled(False)
-        self.trigger_j2j3_btn.setEnabled(False)
+        # 移除了 self.trigger_j2j3_btn.setEnabled(False)
         self.reset_j2j3_btn.setEnabled(False)
-        self.enable_motor_btn.setEnabled(False) # [新增] 断开连接后禁用使能按钮
+        self.enable_motor_btn.setEnabled(False)
         
-        # 清除当前位置显示
         self.pos_labels["CurJ2"].setText("--")
         self.pos_labels["CurJ3"].setText("--")
 
     def toggle_motor_enable(self):
-        """点击使能按钮，根据当前状态切换 ENABLE_STATUS 的布尔值。"""
         if not self.ads_client.connected:
             QMessageBox.warning(self, "Warning", "ADS is disconnected. Please connect Beckhoff PLC first.")
             return
-            
         try:
-            # 1. 读取当前使能状态
             current_state = self.ads_client.read_bool(ENABLE_STATUS)
-            
-            # 2. 切换状态：如果已使能则置为 False (去使能)，否则置为 True (使能)
             new_state = not current_state
-            
-            # 3. 写入新的状态
             self.ads_client.write_bool(ENABLE_STATUS, new_state)
-            
             action = "Disable" if not new_state else "Enable"
             self.movement_status_label.setText(f"Movement Status: Sent {action} command ({new_state})")
-            
         except Exception as e:
             QMessageBox.critical(self, "ADS Write Error", f"Failed to send Enable/Disable command: {e}")
 
     def calculate_joint_values(self):
-        """读取 Vector 值，计算 J2 和 J3 关节角，并显示结果。"""
         try:
             x = float(self.vector_inputs[0].text())
             y = float(self.vector_inputs[1].text())
             z = float(self.vector_inputs[2].text())
-            
             needle_vector = np.array([x, y, z])
-            
-            # 自动归一化处理
             norm = np.linalg.norm(needle_vector)
             if not np.isclose(norm, 1.0) and norm > 1e-6:
                  QMessageBox.warning(self, "Warning", f"Input vector magnitude is {norm:.4f}, automatically normalized.")
@@ -533,57 +413,39 @@ class BeckhoffTab(QWidget):
             elif norm < 1e-6:
                  QMessageBox.critical(self, "Input Error", "Vector magnitude is close to zero, cannot define direction.")
                  return
-            
-            # 调用运动学逆解函数
             joint_values = self.robot.get_joint23_value(needle_vector)
-            
-            # 存储最新的 J2/J3 值
             self.latest_j2 = joint_values[0]
             self.latest_j3 = joint_values[1]
-            
-            # 显示结果：设置 QLineEdit 的文本
             self.result_labels["J2"].setText(f"{self.latest_j2:.4f}")
             self.result_labels["J3"].setText(f"{self.latest_j3:.4f}")
-            
             self.movement_status_label.setText("Movement Status: J2/J3 Calculation Completed")
-
-            # 尝试更新主窗口的状态栏
             parent_window = self.parent()
             if hasattr(parent_window, 'status_bar'):
                 parent_window.status_bar.showMessage(f"Status: Joint J2={self.latest_j2:.4f}, J3={self.latest_j3:.4f} calculation completed.")
-            
         except ValueError:
             QMessageBox.critical(self, "Input Error", "Vector X, Y, Z must be valid numbers!")
         except Exception as e:
             QMessageBox.critical(self, "Calculation Error", f"Inverse kinematics solution failed: {e}")
 
     def update_movement_status(self, msg):
-        """槽函数：更新运动状态标签。"""
         self.movement_status_label.setText(f"Movement Status: {msg}")
 
-# ====================================================================
-# 修改：运动触发方法 (直接读取并使用 ms 值)
-# ====================================================================
     def trigger_j2j3_move(self):
         """触发 J2/J3 关节运动。"""
         if not self.ads_client.connected:
             QMessageBox.warning(self, "Warning", "ADS is disconnected. Please connect Beckhoff PLC first.")
             return
-            
-        # 检查是否正在监控运动
         if self.ads_poll_thread and self.ads_poll_thread.moving:
             QMessageBox.warning(self, "Warning", "Movement monitoring task is in progress, please wait.")
             return
 
-        # 1. 强制从 QLineEdit 中读取目标值
         try:
             target_j2 = float(self.result_labels["J2"].text())
             target_j3 = float(self.result_labels["J3"].text())
         except ValueError:
-            QMessageBox.critical(self, "Input Error", "Target J2/J3 must be valid numbers.")
+            QMessageBox.critical(self, "Input Error", "Target J2/J3 must be valid numbers (Internal Error).")
             return
             
-        # 2. 读取运动时间（ms），并直接使用
         try:
             target_time = float(self.motion_time_input.text())
             if target_time <= 0:
@@ -592,27 +454,22 @@ class BeckhoffTab(QWidget):
             QMessageBox.critical(self, "Input Error", "Target motion time (ms) must be a valid number greater than zero!")
             return
         
-        # 3. 启动 ADS 写入线程 (发送指令)
-        self.ads_command_thread = ADSThread(self.ads_client, target_j2, target_j3, target_time) # 直接传递毫秒值
+        self.ads_command_thread = ADSThread(self.ads_client, target_j2, target_j3, target_time)
         self.ads_command_thread.movement_status_update.connect(self.update_movement_status)
-        # 关键：指令线程结束后，启动轮询线程的运动监控
         self.ads_command_thread.finished.connect(lambda: self._start_poll_monitoring(target_j2, target_j3))
         self.ads_command_thread.start()
 
     def trigger_j2j3_reset(self):
-        """触发 J2/J3 关节运动到预设的重置位置。"""
         if not self.ads_client.connected:
             QMessageBox.warning(self, "Warning", "ADS is disconnected. Please connect Beckhoff PLC first.")
             return
-            
         if self.ads_poll_thread and self.ads_poll_thread.moving:
             QMessageBox.warning(self, "Warning", "Movement monitoring task is in progress, please wait.")
             return
 
-        RESET_J2 = 67.569
-        RESET_J3 = 20.347
+        reset_j2 = self.RESET_J2
+        reset_j3 = self.RESET_J3
         
-        # 1. 读取运动时间（ms），并直接使用
         try:
             target_time = float(self.motion_time_input.text())
             if target_time <= 0:
@@ -621,69 +478,50 @@ class BeckhoffTab(QWidget):
             QMessageBox.critical(self, "Input Error", "Target motion time (ms) must be a valid number greater than zero!")
             return
 
-        # 2. 立即更新 QLineEdit 文本
-        self.result_labels["J2"].setText(f"{RESET_J2:.4f}")
-        self.result_labels["J3"].setText(f"{RESET_J3:.4f}")
+        self.result_labels["J2"].setText(f"{reset_j2:.4f}")
+        self.result_labels["J3"].setText(f"{reset_j3:.4f}")
 
-        # 3. 启动 ADS 写入线程 (发送指令)
-        self.ads_command_thread = ADSThread(self.ads_client, RESET_J2, RESET_J3, target_time) # 直接传递毫秒值
+        self.ads_command_thread = ADSThread(self.ads_client, reset_j2, reset_j3, target_time)
         self.ads_command_thread.movement_status_update.connect(self.update_movement_status)
-        self.ads_command_thread.finished.connect(lambda: self._start_poll_monitoring(RESET_J2, RESET_J3))
+        self.ads_command_thread.finished.connect(lambda: self._start_poll_monitoring(reset_j2, reset_j3))
         self.ads_command_thread.start()
         
-        # 立即更新状态栏
         parent_window = self.parent()
         if hasattr(parent_window, 'status_bar'):
-             parent_window.status_bar.showMessage(f"Status: Reset command sent: J2={RESET_J2:.2f}, J3={RESET_J3:.2f}.")
+             parent_window.status_bar.showMessage(f"Status: Reset command sent: J2={reset_j2:.2f}, J3={reset_j3:.2f}.")
 
     def _start_poll_monitoring(self, target_j2, target_j3):
-        """在运动指令发送完成后，启动轮询线程的运动监控。"""
         if self.ads_poll_thread:
-            # 目标位置已在 ADSThread 中写入，现在通知轮询线程开始监控到位状态
             self.ads_poll_thread.start_monitoring_move(target_j2, target_j3)
             self.update_movement_status("Movement started, starting monitoring completion...")
 
-
     def cleanup(self):
-        """在标签页关闭或主窗口关闭时调用，用于清理资源。（新增：停止轮询线程）"""
         self._stop_poll()
         self.disconnect_ads()
         if self.ads_command_thread and self.ads_command_thread.isRunning():
-            self.ads_command_thread.wait() # 确保指令线程结束
+            self.ads_command_thread.wait()
             
     def apply_joint_increment(self):
         """
         点击“应用该增量”按钮时调用。
-        将“当前 J2/J3”值加上“增加 J2/J3”值，并将结果输入到“目标 J2/J3”中。
+        计算新的目标值 (基于 RESET 值 + 增量)，然后【直接触发运动】。
         """
         try:
-            # 1. 读取当前位置 (CurJ2/CurJ3)
-            # 检查是否有实时数据，若无则默认为 0.00
-            cur_j2_text = self.pos_labels["CurJ2"].text()
-            cur_j3_text = self.pos_labels["CurJ3"].text()
-            
-            if cur_j2_text == "--" or cur_j3_text == "--":
-                 QMessageBox.warning(self, "Warning", "Current J2/J3 data is invalid, please ensure ADS is connected and receiving real-time data.")
-                 return
-
-            cur_j2 = float(cur_j2_text)
-            cur_j3 = float(cur_j3_text)
-
-            # 2. 读取增量值 (IncJ2/IncJ3)
             inc_j2 = float(self.inc_j2_input.text())
             inc_j3 = float(self.inc_j3_input.text())
 
-            # 3. 计算新的目标值
-            new_target_j2 = cur_j2 + inc_j2
-            new_target_j3 = cur_j3 + inc_j3
+            new_target_j2 = self.RESET_J2 + inc_j2
+            new_target_j3 = self.RESET_J3 + inc_j3
 
-            # 4. 更新目标输入框 (Target J2/Target J3)
             self.result_labels["J2"].setText(f"{new_target_j2:.4f}")
             self.result_labels["J3"].setText(f"{new_target_j3:.4f}")
             
-            self.movement_status_label.setText("Movement Status: Target joint values updated by increment calculation.")
+            self.movement_status_label.setText("Movement Status: Target calculated. Executing Move...")
+            
+            # [修改点] 直接调用触发函数，不再需要用户手动点击 Move 按钮
+            self.trigger_j2j3_move()
             
         except ValueError:
-            QMessageBox.critical(self, "Input Error", "Current position or increment value must be valid numbers!")
+            QMessageBox.critical(self, "Input Error", "Increment value must be valid numbers!")
         except Exception as e:
             QMessageBox.critical(self, "Calculation Error", f"An error occurred while applying increment: {e}")

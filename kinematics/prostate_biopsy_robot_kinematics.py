@@ -254,7 +254,6 @@ class RobotKinematics:
             self.OB = self._rotate_vector_around_axis(self.OB00, self.OA, joint_values[1])
             self.OD0 = self._rotate_vector_around_axis(self.OD00, self.OA, joint_values[1])
             self.OC0 = self._rotate_vector_around_axis(self.OC00, self.OA, joint_values[1])
-            # self.OC = self._rotate_vector_around_axis(self.OC0, self.OA, joint_values[2])
             val2_compensated = self._joint3_compensate_conversely(joint_values[2])
             joint_values[2] = val2_compensated
         trans = self.get_T0n(n)
