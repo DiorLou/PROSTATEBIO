@@ -223,7 +223,7 @@ class BeckhoffTab(QWidget):
             input_grid.addWidget(label, 0, i * 2)
             input_grid.addWidget(text_box, 0, i * 2 + 1)
         
-        self.input_vector_btn = QPushButton("Calculate Joint Values (J2, J3)")
+        self.input_vector_btn = QPushButton("Calculate Joint Values (ΔJ2, ΔJ3)")
         vector_layout.addLayout(input_grid)
         vector_layout.addWidget(self.input_vector_btn, alignment=Qt.AlignCenter)
         
@@ -415,9 +415,18 @@ class BeckhoffTab(QWidget):
                  return
             joint_values = self.robot.get_joint23_value(needle_vector)
             self.latest_j2 = joint_values[0]
-            self.latest_j3 = joint_values[1]
-            self.result_labels["J2"].setText(f"{self.latest_j2:.4f}")
-            self.result_labels["J3"].setText(f"{self.latest_j3:.4f}")
+            self.latest_j3 = joint_values[1] + joint_values[0]
+            
+            # --- [修改部分开始] ---
+            # 原代码将结果放入了 result_labels (Target J2/J3)
+            # self.result_labels["J2"].setText(f"{self.latest_j2:.4f}")
+            # self.result_labels["J3"].setText(f"{self.latest_j3:.4f}")
+
+            # 新代码：将结果放入 Increase J2/J3 文本框
+            self.inc_j2_input.setText(f"{self.latest_j2:.4f}")
+            self.inc_j3_input.setText(f"{self.latest_j3:.4f}")
+            # --- [修改部分结束] ---
+
             self.movement_status_label.setText("Movement Status: J2/J3 Calculation Completed")
             parent_window = self.parent()
             if hasattr(parent_window, 'status_bar'):
