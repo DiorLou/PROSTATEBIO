@@ -9,27 +9,27 @@ import pyads
 import threading
 import time
 
-# ====== ADS 配置和变量名 ======
+# ====== ADS Configuration ======
 AMS_NET_ID = "192.168.10.100.1.1"
 PLC_IP     = "192.168.10.100"
 PLC_PORT   = 851
 
-# 目标位置变量名 (J0, J1, J2, J3)
+# Target Position Variables (J0, J1, J2, J3)
 J0_PV   = "MAIN.J0"              
 J1_PV   = "MAIN.J1"              
 J2_PV   = "MAIN.J2"              
 J3_PV   = "MAIN.J3"              
 
-# 运动使能变量名
+# Motion Enable Variable
 START_BOOL = "MAIN.Position_5"    
 
-# 新增：Beckhoff 电机使能变量
+# Motor Enable Status
 ENABLE_STATUS = "MAIN.MotorButtonEnable"
 
-# 设置运动时间
+# Motion Time
 MOTION_TIME = "MAIN.t5"   
 
-# 当前位置变量名 (LREAL)
+# Current Position Variables (LREAL)
 POS_J0_PV = "MAIN.MotorCurPos[0]" 
 POS_J1_PV = "MAIN.MotorCurPos[1]" 
 POS_J2_PV = "MAIN.MotorCurPos[2]" 
@@ -52,7 +52,7 @@ class ADS:
             return True, "Connected"
         try:
             self._c.open()
-            self._c.read_state()  # 健康检查
+            self._c.read_state()  # Health check
             self.connected = True
             return True, "ADS Connection Successful"
         except Exception as e:
@@ -87,7 +87,7 @@ class ADS:
             return bool(self._c.read_by_name(name, pyads.PLCTYPE_BOOL))
 
 # ====================================================================
-# ADS 轮询线程
+# ADS Poll Thread
 # ====================================================================
 class ADSPollThread(QThread):
     position_update = pyqtSignal(float, float, float, float)
@@ -149,7 +149,7 @@ class ADSPollThread(QThread):
         self.wait()
 
 # ====================================================================
-# ADSThread (发送启动命令)
+# ADS Command Thread
 # ====================================================================
 class ADSThread(QThread):
     movement_status_update = pyqtSignal(str)
@@ -166,7 +166,7 @@ class ADSThread(QThread):
     def run(self):
         self.movement_status_update.emit("Sending Target...")
         try:
-            # 写入所有关节目标
+            # Write all joint targets
             self.ads.write_lreal(J0_PV, self.target_j0)
             self.ads.write_lreal(J1_PV, self.target_j1)
             self.ads.write_lreal(J2_PV, self.target_j2)
@@ -178,7 +178,7 @@ class ADSThread(QThread):
             self.movement_status_update.emit(f"ADS Write or Start Failed: {e}")
 
 # ====================================================================
-# BeckhoffTab 类
+# BeckhoffTab Class
 # ====================================================================
 class BeckhoffTab(QWidget):
     RESET_J0 = 0.000
@@ -205,8 +205,11 @@ class BeckhoffTab(QWidget):
         self.inc_j2_input = None
         self.inc_j3_input = None
         
-        # 流程图控件
-        self.flow_trocar_in_btn = None
+        # Flowchart Controls
+        # [MODIFIED]: Split Trocar Insertion into Phase 1 and Phase 2
+        self.flow_trocar_in_p1_btn = None 
+        self.flow_trocar_in_p2_btn = None
+        
         self.flow_calc_btn = None
         self.flow_adj_dir_btn = None
         self.flow_needle_in_btn = None
@@ -216,24 +219,21 @@ class BeckhoffTab(QWidget):
         self.init_ui()
         self.setup_connections()
 
-    # --- 辅助函数：创建各种实线箭头控件 ---
+    # --- Helper Functions for Arrows ---
     def _create_h_arrow_widget(self):
-        """创建一个水平实线箭头 (────►)，固定宽度实现紧凑布局"""
+        """Creates a horizontal solid arrow (────►)"""
         w = QWidget()
-        # 设置固定宽度，确保紧凑
         w.setFixedWidth(50) 
         layout = QHBoxLayout(w)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         
-        # 实线部分 (使用 QFrame)
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
         line.setFrameShadow(QFrame.Plain)
         line.setStyleSheet("background-color: #444; min-height: 2px; max-height: 2px; border: none;")
         line.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         
-        # 箭头头部
         head = QLabel("►")
         head.setStyleSheet("color: #444; font-size: 14px; font-weight: bold; border: none; margin-left: -2px;")
         head.setAlignment(Qt.AlignCenter)
@@ -244,46 +244,41 @@ class BeckhoffTab(QWidget):
         return w
 
     def _create_v_arrow_widget(self):
-        """创建一个垂直实线箭头 (↓)"""
+        """Creates a vertical solid arrow (↓)"""
         w = QWidget()
         layout = QVBoxLayout(w)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.setAlignment(Qt.AlignCenter) # 确保整体居中
+        layout.setAlignment(Qt.AlignCenter)
         
-        # 实线部分
         line = QFrame()
         line.setFrameShape(QFrame.VLine)
         line.setStyleSheet("background-color: #444; min-width: 2px; max-width: 2px; border: none;")
-        line.setFixedWidth(2)  # 强制固定宽度
-        line.setFixedHeight(12) # 缩短高度以更紧凑
+        line.setFixedWidth(2)
+        line.setFixedHeight(12)
         
-        # 箭头头部
         head = QLabel("▼")
         head.setStyleSheet("color: #444; font-size: 12px; font-weight: bold; border: none; margin-top: -3px;")
-        head.setAlignment(Qt.AlignCenter) # 强制文字内容居中
+        head.setAlignment(Qt.AlignCenter)
         head.setFixedHeight(12)
-        head.setFixedWidth(20) # 给定宽度确保对其中心
+        head.setFixedWidth(20)
         
-        # 添加时使用 AlignHCenter 强制对齐中心线
         layout.addWidget(line, 0, Qt.AlignHCenter)
         layout.addWidget(head, 0, Qt.AlignHCenter)
         return w
 
     def _create_loop_back_line(self):
-        """创建一个向左指的长回环线 (◄────────)"""
+        """Creates a loop back line (◄────────)"""
         w = QWidget()
         layout = QHBoxLayout(w)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         
-        # 箭头头部 (左)
         head = QLabel("◄")
         head.setStyleSheet("color: #444; font-size: 14px; font-weight: bold; border: none; margin-right: -2px;")
         head.setAlignment(Qt.AlignCenter)
         head.setFixedWidth(15)
 
-        # 实线部分
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
         line.setStyleSheet("background-color: #444; min-height: 2px; max-height: 2px; border: none;")
@@ -294,7 +289,7 @@ class BeckhoffTab(QWidget):
         return w
         
     def _create_up_arrow_widget(self):
-        """创建一个向上箭头 (用于回环起点)"""
+        """Creates an up arrow (▲)"""
         w = QWidget()
         layout = QVBoxLayout(w)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -311,9 +306,8 @@ class BeckhoffTab(QWidget):
         line.setFrameShape(QFrame.VLine)
         line.setStyleSheet("background-color: #444; min-width: 2px; max-width: 2px; border: none;")
         line.setFixedWidth(2)
-        line.setFixedHeight(12) # 缩短高度
+        line.setFixedHeight(12)
         
-        # 添加时使用 AlignHCenter 强制对齐中心线
         layout.addWidget(head, 0, Qt.AlignHCenter)
         layout.addWidget(line, 0, Qt.AlignHCenter)
         return w
@@ -362,7 +356,6 @@ class BeckhoffTab(QWidget):
         self.result_labels["J3"] = QLineEdit("0.00")
         self.motion_time_input = QLineEdit("5000") 
 
-        # J0 - J3 Rows
         for idx, axis in enumerate(["J0", "J1", "J2", "J3"]):
             unit = "(mm)" if idx < 2 else "(Deg)"
             
@@ -404,30 +397,29 @@ class BeckhoffTab(QWidget):
         main_layout.addWidget(vector_group)
         
         # -----------------------------------------------------------------
-        # 3. Biopsy Interface (Flowchart) - 紧凑版布局
+        # 3. Biopsy Interface (Flowchart)
         # -----------------------------------------------------------------
         biopsy_group = QGroupBox("Biopsy Interface")
         biopsy_layout = QGridLayout(biopsy_group)
-        
-        # 设置更小的间距以实现紧凑效果
         biopsy_layout.setSpacing(5) 
         biopsy_layout.setContentsMargins(10, 10, 10, 10)
 
-        # 定义按钮
-        self.flow_trocar_in_btn = QPushButton("Trocar Insertion")
+        # Define Buttons
+        # [MODIFIED]: Two buttons for Trocar Insertion
+        self.flow_trocar_in_p1_btn = QPushButton("Trocar Insertion Phase 1")
+        self.flow_trocar_in_p2_btn = QPushButton("Trocar Insertion Phase 2")
         self.flow_calc_btn = QPushButton("Calculate Joint 2/3")
         self.flow_adj_dir_btn = QPushButton("Adjust Needle Dir")
         self.flow_needle_in_btn = QPushButton("Needle Insertion")
         self.flow_needle_out_btn = QPushButton("Needle Retraction")
         self.flow_trocar_out_btn = QPushButton("Trocar Retraction")
 
-        # 稍微缩小按钮宽度以适应紧凑布局
         BTN_WIDTH = 160 
-        for btn in [self.flow_trocar_in_btn, self.flow_calc_btn, self.flow_adj_dir_btn, 
-                    self.flow_needle_in_btn, self.flow_needle_out_btn, self.flow_trocar_out_btn]:
+        for btn in [self.flow_trocar_in_p1_btn, self.flow_trocar_in_p2_btn, self.flow_calc_btn, 
+                    self.flow_adj_dir_btn, self.flow_needle_in_btn, self.flow_needle_out_btn, 
+                    self.flow_trocar_out_btn]:
             btn.setFixedWidth(BTN_WIDTH)
 
-        # 定义节点 Label
         def make_node_label(text):
             l = QLabel(text)
             l.setAlignment(Qt.AlignCenter)
@@ -438,33 +430,37 @@ class BeckhoffTab(QWidget):
         self.flow_start_lbl = make_node_label("Start")
         self.flow_end_lbl = make_node_label("End")
 
-        # --- 布局逻辑 (Grid) ---
-        # 移除了 setColumnStretch 以防止自动拉伸，实现紧凑靠左
+        # --- Grid Layout Logic ---
 
         # 1. Start Column (Col 0)
-        # 显式 alignment=Qt.AlignCenter 确保组件在格子中心，从而让箭头与按钮中线对齐
         biopsy_layout.addWidget(self.flow_start_lbl, 0, 0, alignment=Qt.AlignCenter)
         biopsy_layout.addWidget(self._create_v_arrow_widget(), 1, 0, alignment=Qt.AlignCenter) 
-        biopsy_layout.addWidget(self.flow_trocar_in_btn, 2, 0, alignment=Qt.AlignCenter)
+        
+        # [MODIFIED]: Place a Vertical Layout container for the split buttons
+        trocar_container = QWidget()
+        trocar_layout = QVBoxLayout(trocar_container)
+        trocar_layout.setContentsMargins(0, 0, 0, 0)
+        trocar_layout.setSpacing(0)
+        trocar_layout.addWidget(self.flow_trocar_in_p1_btn, alignment=Qt.AlignCenter)
+        trocar_layout.addWidget(self._create_v_arrow_widget(), alignment=Qt.AlignCenter)
+        trocar_layout.addWidget(self.flow_trocar_in_p2_btn, alignment=Qt.AlignCenter)
+        
+        biopsy_layout.addWidget(trocar_container, 2, 0, alignment=Qt.AlignCenter)
+
         biopsy_layout.addWidget(self._create_v_arrow_widget(), 3, 0, alignment=Qt.AlignCenter) 
         
         # 2. Main Loop Row (Row 4)
         biopsy_layout.addWidget(self.flow_calc_btn, 4, 0, alignment=Qt.AlignCenter)
-        biopsy_layout.addWidget(self._create_h_arrow_widget(), 4, 1) # 实线水平箭头 (固定宽度)
+        biopsy_layout.addWidget(self._create_h_arrow_widget(), 4, 1) 
         biopsy_layout.addWidget(self.flow_adj_dir_btn, 4, 2, alignment=Qt.AlignCenter)
-        biopsy_layout.addWidget(self._create_h_arrow_widget(), 4, 3) # 实线水平箭头
+        biopsy_layout.addWidget(self._create_h_arrow_widget(), 4, 3) 
         biopsy_layout.addWidget(self.flow_needle_in_btn, 4, 4, alignment=Qt.AlignCenter)
-        biopsy_layout.addWidget(self._create_h_arrow_widget(), 4, 5) # 实线水平箭头
+        biopsy_layout.addWidget(self._create_h_arrow_widget(), 4, 5) 
         biopsy_layout.addWidget(self.flow_needle_out_btn, 4, 6, alignment=Qt.AlignCenter)
 
         # 3. Loop Return Path (Row 5)
-        # Col 0: Up Arrow (Back to Calc)
         biopsy_layout.addWidget(self._create_up_arrow_widget(), 5, 0, alignment=Qt.AlignCenter)
-        
-        # Col 1-5: Long Left Arrow Line (跨列实线)
         biopsy_layout.addWidget(self._create_loop_back_line(), 5, 1, 1, 5)
-        
-        # Col 6: Down Arrow (Continue to End)
         biopsy_layout.addWidget(self._create_v_arrow_widget(), 5, 6, alignment=Qt.AlignCenter)
 
         # 4. End Column (Col 6)
@@ -472,7 +468,6 @@ class BeckhoffTab(QWidget):
         biopsy_layout.addWidget(self._create_v_arrow_widget(), 7, 6, alignment=Qt.AlignCenter)
         biopsy_layout.addWidget(self.flow_end_lbl, 8, 6, alignment=Qt.AlignCenter)
 
-        # 最后一列加上 Stretch 填充剩余空白，让前面的组件保持紧凑
         biopsy_layout.setColumnStretch(7, 1)
 
         main_layout.addWidget(biopsy_group)
@@ -511,9 +506,13 @@ class BeckhoffTab(QWidget):
         self.apply_inc_btn.clicked.connect(self.apply_joint_increment)
         self.enable_motor_btn.clicked.connect(self.toggle_motor_enable)
         
-        # Biopsy Interface 按钮连接 (示例)
+        # Biopsy Interface Button Connections
         self.flow_calc_btn.clicked.connect(self.calculate_joint_values)
-        self.flow_trocar_in_btn.clicked.connect(lambda: print("Flow: Trocar Insertion Clicked"))
+        
+        # [MODIFIED]: Connect split buttons
+        self.flow_trocar_in_p1_btn.clicked.connect(lambda: print("Flow: Trocar Insertion Phase 1 Clicked"))
+        self.flow_trocar_in_p2_btn.clicked.connect(lambda: print("Flow: Trocar Insertion Phase 2 Clicked"))
+        
         self.flow_adj_dir_btn.clicked.connect(lambda: print("Flow: Adjust Needle Direction Clicked"))
         self.flow_needle_in_btn.clicked.connect(lambda: print("Flow: Needle Insertion Clicked"))
         self.flow_needle_out_btn.clicked.connect(lambda: print("Flow: Needle Retraction Clicked"))
