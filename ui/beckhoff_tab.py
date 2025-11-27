@@ -1,9 +1,10 @@
 import numpy as np
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, 
-    QLabel, QLineEdit, QPushButton, QMessageBox, QGroupBox
+    QLabel, QLineEdit, QPushButton, QMessageBox, QGroupBox, 
+    QFrame, QSizePolicy
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject 
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
 import pyads 
 import threading
 import time
@@ -14,12 +15,12 @@ PLC_IP     = "192.168.10.100"
 PLC_PORT   = 851
 
 # 目标位置变量名 (J0, J1, J2, J3)
-J0_PV   = "MAIN.J0"              # 新增 J0
-J1_PV   = "MAIN.J1"              # 新增 J1
+J0_PV   = "MAIN.J0"              
+J1_PV   = "MAIN.J1"              
 J2_PV   = "MAIN.J2"              
 J3_PV   = "MAIN.J3"              
 
-# 运动使能变量名：需要持续 True，完成后置回 False
+# 运动使能变量名
 START_BOOL = "MAIN.Position_5"    
 
 # 新增：Beckhoff 电机使能变量
@@ -29,10 +30,10 @@ ENABLE_STATUS = "MAIN.MotorButtonEnable"
 MOTION_TIME = "MAIN.t5"   
 
 # 当前位置变量名 (LREAL)
-POS_J0_PV = "MAIN.MotorCurPos[0]" # 新增 J0 当前位置
-POS_J1_PV = "MAIN.MotorCurPos[1]" # 新增 J1 当前位置
-POS_J2_PV = "MAIN.MotorCurPos[2]" # 原 POS1_PV
-POS_J3_PV = "MAIN.MotorCurPos[3]" # 原 POS2_PV
+POS_J0_PV = "MAIN.MotorCurPos[0]" 
+POS_J1_PV = "MAIN.MotorCurPos[1]" 
+POS_J2_PV = "MAIN.MotorCurPos[2]" 
+POS_J3_PV = "MAIN.MotorCurPos[3]" 
 
 READ_LREAL_T   = pyads.PLCTYPE_LREAL
 WRITE_LREAL_T  = pyads.PLCTYPE_LREAL
@@ -89,7 +90,6 @@ class ADS:
 # ADS 轮询线程
 # ====================================================================
 class ADSPollThread(QThread):
-    # 更新信号：J0, J1, J2, J3
     position_update = pyqtSignal(float, float, float, float)
     movement_status_update = pyqtSignal(str)
     enable_status_update = pyqtSignal(bool)
@@ -99,7 +99,6 @@ class ADSPollThread(QThread):
         self.ads = ads_client
         self.is_running = True
         self.moving = False 
-        
         self.target_j0 = 0.0
         self.target_j1 = 0.0
         self.target_j2 = 0.0
@@ -116,18 +115,15 @@ class ADSPollThread(QThread):
         last_status = ""
         while self.is_running and self.ads.connected:
             try:
-                # 1. 读取当前位置 (J0 - J3)
                 p0 = self.ads.read_lreal(POS_J0_PV)
                 p1 = self.ads.read_lreal(POS_J1_PV)
                 p2 = self.ads.read_lreal(POS_J2_PV)
                 p3 = self.ads.read_lreal(POS_J3_PV)
                 self.position_update.emit(p0, p1, p2, p3)
 
-                # 2. 读取使能状态
                 is_enabled = self.ads.read_bool(ENABLE_STATUS)
                 self.enable_status_update.emit(is_enabled)
 
-                # 3. 检查运动状态
                 if self.moving:
                     is_moving_flag = self.ads.read_bool(START_BOOL)
                     if not is_moving_flag:
@@ -147,7 +143,6 @@ class ADSPollThread(QThread):
                     self.movement_status_update.emit(f"Polling Read Failed: {e}")
                 break
             time.sleep(0.15)
-        print("ADS 轮询线程已退出。")
 
     def stop(self):
         self.is_running = False
@@ -176,22 +171,18 @@ class ADSThread(QThread):
             self.ads.write_lreal(J1_PV, self.target_j1)
             self.ads.write_lreal(J2_PV, self.target_j2)
             self.ads.write_lreal(J3_PV, self.target_j3)
-            
-            # 写入时间并触发
             self.ads.write_int(MOTION_TIME, self.motion_time) 
             self.ads.write_bool(START_BOOL, True)
             self.movement_status_update.emit("Movement command sent, preparing to monitor...")
         except Exception as e:
             self.movement_status_update.emit(f"ADS Write or Start Failed: {e}")
 
-
 # ====================================================================
 # BeckhoffTab 类
 # ====================================================================
 class BeckhoffTab(QWidget):
-    # 定义复位常量
-    RESET_J0 = 0.000   # 默认重置值，连接后会被更新
-    RESET_J1 = 0.000   # 默认重置值，连接后会被更新
+    RESET_J0 = 0.000
+    RESET_J1 = 0.000
     RESET_J2 = 67.569
     RESET_J3 = 20.347
 
@@ -204,33 +195,134 @@ class BeckhoffTab(QWidget):
         self.ads_poll_thread = None
 
         self.vector_inputs = [None] * 3  
-        self.result_labels = {}  # 存储目标值的隐藏字段       
+        self.result_labels = {}
         self.ads_status_label = QLabel("ADS: Disconnected") 
         self.pos_labels = {}
         self.motion_time_input = None
-        self.enable_motor_btn = None
         
         self.inc_j0_input = None
         self.inc_j1_input = None
         self.inc_j2_input = None
         self.inc_j3_input = None
         
-        self.apply_inc_btn = None
-        
-        self.latest_j2 = 0.0
-        self.latest_j3 = 0.0
-        
-        self.reset_all_btn = None 
-        self.input_vector_btn = None
+        # 流程图控件
+        self.flow_trocar_in_btn = None
+        self.flow_calc_btn = None
+        self.flow_adj_dir_btn = None
+        self.flow_needle_in_btn = None
+        self.flow_needle_out_btn = None
+        self.flow_trocar_out_btn = None
         
         self.init_ui()
         self.setup_connections()
+
+    # --- 辅助函数：创建各种实线箭头控件 ---
+    def _create_h_arrow_widget(self):
+        """创建一个水平实线箭头 (────►)，固定宽度实现紧凑布局"""
+        w = QWidget()
+        # 设置固定宽度，确保紧凑
+        w.setFixedWidth(50) 
+        layout = QHBoxLayout(w)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        
+        # 实线部分 (使用 QFrame)
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setFrameShadow(QFrame.Plain)
+        line.setStyleSheet("background-color: #444; min-height: 2px; max-height: 2px; border: none;")
+        line.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        
+        # 箭头头部
+        head = QLabel("►")
+        head.setStyleSheet("color: #444; font-size: 14px; font-weight: bold; border: none; margin-left: -2px;")
+        head.setAlignment(Qt.AlignCenter)
+        head.setFixedWidth(15)
+        
+        layout.addWidget(line)
+        layout.addWidget(head)
+        return w
+
+    def _create_v_arrow_widget(self):
+        """创建一个垂直实线箭头 (↓)"""
+        w = QWidget()
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.setAlignment(Qt.AlignCenter) # 确保整体居中
+        
+        # 实线部分
+        line = QFrame()
+        line.setFrameShape(QFrame.VLine)
+        line.setStyleSheet("background-color: #444; min-width: 2px; max-width: 2px; border: none;")
+        line.setFixedWidth(2)  # 强制固定宽度
+        line.setFixedHeight(12) # 缩短高度以更紧凑
+        
+        # 箭头头部
+        head = QLabel("▼")
+        head.setStyleSheet("color: #444; font-size: 12px; font-weight: bold; border: none; margin-top: -3px;")
+        head.setAlignment(Qt.AlignCenter) # 强制文字内容居中
+        head.setFixedHeight(12)
+        head.setFixedWidth(20) # 给定宽度确保对其中心
+        
+        # 添加时使用 AlignHCenter 强制对齐中心线
+        layout.addWidget(line, 0, Qt.AlignHCenter)
+        layout.addWidget(head, 0, Qt.AlignHCenter)
+        return w
+
+    def _create_loop_back_line(self):
+        """创建一个向左指的长回环线 (◄────────)"""
+        w = QWidget()
+        layout = QHBoxLayout(w)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        
+        # 箭头头部 (左)
+        head = QLabel("◄")
+        head.setStyleSheet("color: #444; font-size: 14px; font-weight: bold; border: none; margin-right: -2px;")
+        head.setAlignment(Qt.AlignCenter)
+        head.setFixedWidth(15)
+
+        # 实线部分
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setStyleSheet("background-color: #444; min-height: 2px; max-height: 2px; border: none;")
+        line.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        
+        layout.addWidget(head)
+        layout.addWidget(line)
+        return w
+        
+    def _create_up_arrow_widget(self):
+        """创建一个向上箭头 (用于回环起点)"""
+        w = QWidget()
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.setAlignment(Qt.AlignCenter)
+        
+        head = QLabel("▲")
+        head.setStyleSheet("color: #444; font-size: 12px; font-weight: bold; border: none; margin-bottom: -3px;")
+        head.setAlignment(Qt.AlignCenter)
+        head.setFixedHeight(12)
+        head.setFixedWidth(20)
+        
+        line = QFrame()
+        line.setFrameShape(QFrame.VLine)
+        line.setStyleSheet("background-color: #444; min-width: 2px; max-width: 2px; border: none;")
+        line.setFixedWidth(2)
+        line.setFixedHeight(12) # 缩短高度
+        
+        # 添加时使用 AlignHCenter 强制对齐中心线
+        layout.addWidget(head, 0, Qt.AlignHCenter)
+        layout.addWidget(line, 0, Qt.AlignHCenter)
+        return w
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
 
         # -----------------------------------------------------------------
-        # 1. 穿刺针 Vector 定位模块
+        # 1. Needle Vector Positioning
         # -----------------------------------------------------------------
         vector_group = QGroupBox("Needle Vector Positioning (Inverse Kinematics)")
         vector_layout = QVBoxLayout(vector_group)
@@ -245,142 +337,156 @@ class BeckhoffTab(QWidget):
             input_grid.addWidget(label, 0, i * 2)
             input_grid.addWidget(text_box, 0, i * 2 + 1)
         
-        # --- 按钮布局区域 ---
         btns_layout = QHBoxLayout()
-        
-        self.calc_j1_btn = QPushButton("Calc ΔJ1") # 保留原名，虽然后续逻辑可能未完全展示
+        self.calc_j1_btn = QPushButton("Calc ΔJ1") 
         self.calc_j1_btn.setFixedWidth(100)
-        
         self.input_vector_btn = QPushButton("Calc ΔJ2, ΔJ3")
 
         btns_layout.addStretch()
         btns_layout.addWidget(self.calc_j1_btn)       
         btns_layout.addWidget(self.input_vector_btn)  
         btns_layout.addStretch()
-
         vector_layout.addLayout(input_grid)
         vector_layout.addLayout(btns_layout)
         
         # -----------------------------------------------------------------
-        # 2. Position Control (包含 J0 - J3)
+        # 2. Position Control (J0 - J3)
         # -----------------------------------------------------------------
         result_group = QGroupBox("Position Control (J0 - J3)")
         result_content_layout = QHBoxLayout()
         result_layout = QGridLayout()
         
-        # 隐藏的 Target 输入框 (用于存储计算后的绝对目标值)
         self.result_labels["J0"] = QLineEdit("0.00")
         self.result_labels["J1"] = QLineEdit("0.00")
         self.result_labels["J2"] = QLineEdit("0.00")
         self.result_labels["J3"] = QLineEdit("0.00")
         self.motion_time_input = QLineEdit("5000") 
 
-        # --- J0 Row ---
-        inc_j0_label = QLabel("Increase J0 (mm):")
-        inc_j0_label.setAlignment(Qt.AlignVCenter)
-        self.inc_j0_input = QLineEdit("0.00") 
-        self.inc_j0_input.setFixedWidth(100)
-        
-        cur_j0_label = QLabel("Current J0 (mm):")
-        cur_j0_label.setAlignment(Qt.AlignVCenter)
-        self.pos_labels["CurJ0"] = QLineEdit("--")
-        self.pos_labels["CurJ0"].setReadOnly(True)
-        self.pos_labels["CurJ0"].setFixedWidth(100)
-        self.pos_labels["CurJ0"].setStyleSheet("background-color: #D4EDF7; border: 1px inset grey;")
+        # J0 - J3 Rows
+        for idx, axis in enumerate(["J0", "J1", "J2", "J3"]):
+            unit = "(mm)" if idx < 2 else "(Deg)"
+            
+            inc_label = QLabel(f"Increase {axis} {unit}:")
+            inc_label.setAlignment(Qt.AlignVCenter)
+            inc_input = QLineEdit("0.00")
+            inc_input.setFixedWidth(100)
+            
+            cur_label = QLabel(f"Current {axis} {unit}:")
+            cur_label.setAlignment(Qt.AlignVCenter)
+            pos_output = QLineEdit("--")
+            pos_output.setReadOnly(True)
+            pos_output.setFixedWidth(100)
+            pos_output.setStyleSheet("background-color: #D4EDF7; border: 1px inset grey;")
+            
+            self.pos_labels[f"Cur{axis}"] = pos_output
+            if axis == "J0": self.inc_j0_input = inc_input
+            elif axis == "J1": self.inc_j1_input = inc_input
+            elif axis == "J2": self.inc_j2_input = inc_input
+            elif axis == "J3": self.inc_j3_input = inc_input
+            
+            result_layout.addWidget(inc_label, idx, 0)
+            result_layout.addWidget(inc_input, idx, 1)
+            result_layout.addWidget(QLabel(" "), idx, 2)
+            result_layout.addWidget(cur_label, idx, 3)
+            result_layout.addWidget(pos_output, idx, 4)
 
-        result_layout.addWidget(inc_j0_label, 0, 0) 
-        result_layout.addWidget(self.inc_j0_input, 0, 1)
-        result_layout.addWidget(QLabel(" "), 0, 2)
-        result_layout.addWidget(cur_j0_label, 0, 3)
-        result_layout.addWidget(self.pos_labels["CurJ0"], 0, 4)
-
-        # --- J1 Row ---
-        inc_j1_label = QLabel("Increase J1 (mm):")
-        inc_j1_label.setAlignment(Qt.AlignVCenter)
-        self.inc_j1_input = QLineEdit("0.00") 
-        self.inc_j1_input.setFixedWidth(100)
-        
-        cur_j1_label = QLabel("Current J1 (mm):")
-        cur_j1_label.setAlignment(Qt.AlignVCenter)
-        self.pos_labels["CurJ1"] = QLineEdit("--")
-        self.pos_labels["CurJ1"].setReadOnly(True)
-        self.pos_labels["CurJ1"].setFixedWidth(100)
-        self.pos_labels["CurJ1"].setStyleSheet("background-color: #D4EDF7; border: 1px inset grey;")
-
-        result_layout.addWidget(inc_j1_label, 1, 0) 
-        result_layout.addWidget(self.inc_j1_input, 1, 1)
-        result_layout.addWidget(QLabel(" "), 1, 2)
-        result_layout.addWidget(cur_j1_label, 1, 3)
-        result_layout.addWidget(self.pos_labels["CurJ1"], 1, 4)
-        
-        # --- J2 Row ---
-        inc_j2_label = QLabel("Increase J2 (Deg):")
-        inc_j2_label.setAlignment(Qt.AlignVCenter)
-        self.inc_j2_input = QLineEdit("0.00") 
-        self.inc_j2_input.setFixedWidth(100)
-        
-        cur_j2_label = QLabel("Current J2 (Deg):")
-        cur_j2_label.setAlignment(Qt.AlignVCenter)
-        self.pos_labels["CurJ2"] = QLineEdit("--")
-        self.pos_labels["CurJ2"].setReadOnly(True)
-        self.pos_labels["CurJ2"].setFixedWidth(100)
-        self.pos_labels["CurJ2"].setStyleSheet("background-color: #D4EDF7; border: 1px inset grey;")
-        
-        result_layout.addWidget(inc_j2_label, 2, 0) 
-        result_layout.addWidget(self.inc_j2_input, 2, 1) 
-        result_layout.addWidget(QLabel(" "), 2, 2)
-        result_layout.addWidget(cur_j2_label, 2, 3)
-        result_layout.addWidget(self.pos_labels["CurJ2"], 2, 4)
-        
-        # --- J3 Row ---
-        inc_j3_label = QLabel("Increase J3 (Deg):")
-        inc_j3_label.setAlignment(Qt.AlignVCenter)
-        self.inc_j3_input = QLineEdit("0.00") 
-        self.inc_j3_input.setFixedWidth(100)
-        
-        cur_j3_label = QLabel("Current J3 (Deg):")
-        cur_j3_label.setAlignment(Qt.AlignVCenter)
-        self.pos_labels["CurJ3"] = QLineEdit("--")
-        self.pos_labels["CurJ3"].setReadOnly(True)
-        self.pos_labels["CurJ3"].setFixedWidth(100)
-        self.pos_labels["CurJ3"].setStyleSheet("background-color: #D4EDF7; border: 1px inset grey;")
-
-        result_layout.addWidget(inc_j3_label, 3, 0) 
-        result_layout.addWidget(self.inc_j3_input, 3, 1) 
-        result_layout.addWidget(QLabel(" "), 3, 2)
-        result_layout.addWidget(cur_j3_label, 3, 3)
-        result_layout.addWidget(self.pos_labels["CurJ3"], 3, 4)
-        
-        # --- 底部按钮 ---
-        # 1. Apply Increment 按钮
         self.apply_inc_btn = QPushButton("Apply Increment (All)")
         result_layout.addWidget(self.apply_inc_btn, 4, 0, 1, 2) 
 
-        # 2. Reset 按钮
         self.reset_all_btn = QPushButton("Reset All (J0-J3)")
         self.reset_all_btn.setEnabled(False) 
         result_layout.addWidget(self.reset_all_btn, 4, 3, 1, 2)
         
         result_content_layout.addLayout(result_layout)
         result_content_layout.addStretch(1) 
-        
         result_group.setLayout(result_content_layout)
         vector_layout.addWidget(result_group)
         main_layout.addWidget(vector_group)
         
         # -----------------------------------------------------------------
-        # 3. Beckhoff PLC 通信模块 
+        # 3. Biopsy Interface (Flowchart) - 紧凑版布局
+        # -----------------------------------------------------------------
+        biopsy_group = QGroupBox("Biopsy Interface")
+        biopsy_layout = QGridLayout(biopsy_group)
+        
+        # 设置更小的间距以实现紧凑效果
+        biopsy_layout.setSpacing(5) 
+        biopsy_layout.setContentsMargins(10, 10, 10, 10)
+
+        # 定义按钮
+        self.flow_trocar_in_btn = QPushButton("Trocar Insertion")
+        self.flow_calc_btn = QPushButton("Calculate Joint 2/3")
+        self.flow_adj_dir_btn = QPushButton("Adjust Needle Dir")
+        self.flow_needle_in_btn = QPushButton("Needle Insertion")
+        self.flow_needle_out_btn = QPushButton("Needle Retraction")
+        self.flow_trocar_out_btn = QPushButton("Trocar Retraction")
+
+        # 稍微缩小按钮宽度以适应紧凑布局
+        BTN_WIDTH = 160 
+        for btn in [self.flow_trocar_in_btn, self.flow_calc_btn, self.flow_adj_dir_btn, 
+                    self.flow_needle_in_btn, self.flow_needle_out_btn, self.flow_trocar_out_btn]:
+            btn.setFixedWidth(BTN_WIDTH)
+
+        # 定义节点 Label
+        def make_node_label(text):
+            l = QLabel(text)
+            l.setAlignment(Qt.AlignCenter)
+            l.setStyleSheet("border: 2px solid #555; border-radius: 15px; padding: 5px; font-weight: bold; min-width: 80px; background-color: #f0f0f0;")
+            l.setFixedSize(100, 40)
+            return l
+
+        self.flow_start_lbl = make_node_label("Start")
+        self.flow_end_lbl = make_node_label("End")
+
+        # --- 布局逻辑 (Grid) ---
+        # 移除了 setColumnStretch 以防止自动拉伸，实现紧凑靠左
+
+        # 1. Start Column (Col 0)
+        # 显式 alignment=Qt.AlignCenter 确保组件在格子中心，从而让箭头与按钮中线对齐
+        biopsy_layout.addWidget(self.flow_start_lbl, 0, 0, alignment=Qt.AlignCenter)
+        biopsy_layout.addWidget(self._create_v_arrow_widget(), 1, 0, alignment=Qt.AlignCenter) 
+        biopsy_layout.addWidget(self.flow_trocar_in_btn, 2, 0, alignment=Qt.AlignCenter)
+        biopsy_layout.addWidget(self._create_v_arrow_widget(), 3, 0, alignment=Qt.AlignCenter) 
+        
+        # 2. Main Loop Row (Row 4)
+        biopsy_layout.addWidget(self.flow_calc_btn, 4, 0, alignment=Qt.AlignCenter)
+        biopsy_layout.addWidget(self._create_h_arrow_widget(), 4, 1) # 实线水平箭头 (固定宽度)
+        biopsy_layout.addWidget(self.flow_adj_dir_btn, 4, 2, alignment=Qt.AlignCenter)
+        biopsy_layout.addWidget(self._create_h_arrow_widget(), 4, 3) # 实线水平箭头
+        biopsy_layout.addWidget(self.flow_needle_in_btn, 4, 4, alignment=Qt.AlignCenter)
+        biopsy_layout.addWidget(self._create_h_arrow_widget(), 4, 5) # 实线水平箭头
+        biopsy_layout.addWidget(self.flow_needle_out_btn, 4, 6, alignment=Qt.AlignCenter)
+
+        # 3. Loop Return Path (Row 5)
+        # Col 0: Up Arrow (Back to Calc)
+        biopsy_layout.addWidget(self._create_up_arrow_widget(), 5, 0, alignment=Qt.AlignCenter)
+        
+        # Col 1-5: Long Left Arrow Line (跨列实线)
+        biopsy_layout.addWidget(self._create_loop_back_line(), 5, 1, 1, 5)
+        
+        # Col 6: Down Arrow (Continue to End)
+        biopsy_layout.addWidget(self._create_v_arrow_widget(), 5, 6, alignment=Qt.AlignCenter)
+
+        # 4. End Column (Col 6)
+        biopsy_layout.addWidget(self.flow_trocar_out_btn, 6, 6, alignment=Qt.AlignCenter)
+        biopsy_layout.addWidget(self._create_v_arrow_widget(), 7, 6, alignment=Qt.AlignCenter)
+        biopsy_layout.addWidget(self.flow_end_lbl, 8, 6, alignment=Qt.AlignCenter)
+
+        # 最后一列加上 Stretch 填充剩余空白，让前面的组件保持紧凑
+        biopsy_layout.setColumnStretch(7, 1)
+
+        main_layout.addWidget(biopsy_group)
+
+        # -----------------------------------------------------------------
+        # 4. Beckhoff PLC Communication
         # -----------------------------------------------------------------
         beckhoff_comm_group = QGroupBox("Beckhoff PLC Communication")
         beckhoff_comm_layout = QVBoxLayout(beckhoff_comm_group)
 
-        # 连接/状态行
         conn_layout = QHBoxLayout()
         self.connect_ads_btn = QPushButton("Connect ADS")
         self.disconnect_ads_btn = QPushButton("Disconnect ADS")
         self.disconnect_ads_btn.setEnabled(False)
-        
-        # 使能按钮
         self.enable_motor_btn = QPushButton("Enable")
         self.enable_motor_btn.setEnabled(False)
         self.enable_motor_btn.setStyleSheet("background-color: lightgray;")
@@ -391,7 +497,6 @@ class BeckhoffTab(QWidget):
         conn_layout.addWidget(self.ads_status_label)
         beckhoff_comm_layout.addLayout(conn_layout)
 
-        # 运动状态
         self.movement_status_label = QLabel("Movement Status: Standby")
         beckhoff_comm_layout.addWidget(self.movement_status_label)
 
@@ -402,10 +507,17 @@ class BeckhoffTab(QWidget):
         self.input_vector_btn.clicked.connect(self.calculate_joint_values)
         self.connect_ads_btn.clicked.connect(self.connect_ads)
         self.disconnect_ads_btn.clicked.connect(self.disconnect_ads)
-        
         self.reset_all_btn.clicked.connect(self.trigger_reset)
         self.apply_inc_btn.clicked.connect(self.apply_joint_increment)
         self.enable_motor_btn.clicked.connect(self.toggle_motor_enable)
+        
+        # Biopsy Interface 按钮连接 (示例)
+        self.flow_calc_btn.clicked.connect(self.calculate_joint_values)
+        self.flow_trocar_in_btn.clicked.connect(lambda: print("Flow: Trocar Insertion Clicked"))
+        self.flow_adj_dir_btn.clicked.connect(lambda: print("Flow: Adjust Needle Direction Clicked"))
+        self.flow_needle_in_btn.clicked.connect(lambda: print("Flow: Needle Insertion Clicked"))
+        self.flow_needle_out_btn.clicked.connect(lambda: print("Flow: Needle Retraction Clicked"))
+        self.flow_trocar_out_btn.clicked.connect(lambda: print("Flow: Trocar Retraction Clicked"))
 
     def _start_poll(self):
         if self.ads_poll_thread is None or not self.ads_poll_thread.isRunning():
@@ -439,28 +551,21 @@ class BeckhoffTab(QWidget):
         self.ads_status_label.setText(f"ADS: {msg}")
         self.connect_ads_btn.setEnabled(not ok)
         self.disconnect_ads_btn.setEnabled(ok)
-        
         self.reset_all_btn.setEnabled(ok)
         self.enable_motor_btn.setEnabled(ok)
         
         if ok:
-            # --- [新增] 连接成功后，读取当前 J0, J1 作为复位值 ---
             try:
                 cur_j0 = self.ads_client.read_lreal(POS_J0_PV)
                 cur_j1 = self.ads_client.read_lreal(POS_J1_PV)
-                
-                # 更新实例变量，使其在 trigger_reset 中生效
                 self.RESET_J0 = cur_j0
                 self.RESET_J1 = cur_j1
-                
-                # 可选：通知主窗口状态栏
                 parent_window = self.parent()
                 if hasattr(parent_window, 'status_bar'):
                      parent_window.status_bar.showMessage(f"Status: ADS Connected. Reset J0/J1 set to: {cur_j0:.2f}, {cur_j1:.2f}")
             except Exception as e:
                 print(f"Failed to read initial positions for reset: {e}")
                 self.ads_status_label.setText(f"ADS: Connected (Read Init Error: {e})")
-
             self._start_poll()
 
     def disconnect_ads(self):
@@ -469,10 +574,8 @@ class BeckhoffTab(QWidget):
         self.ads_status_label.setText("ADS: Disconnected")
         self.connect_ads_btn.setEnabled(True)
         self.disconnect_ads_btn.setEnabled(False)
-        
         self.reset_all_btn.setEnabled(False)
         self.enable_motor_btn.setEnabled(False)
-        
         for key in ["CurJ0", "CurJ1", "CurJ2", "CurJ3"]:
             self.pos_labels[key].setText("--")
 
@@ -505,11 +608,8 @@ class BeckhoffTab(QWidget):
             joint_values = self.robot.get_joint23_value(needle_vector)
             self.latest_j2 = joint_values[0]
             self.latest_j3 = joint_values[1] + joint_values[0]
-            
-            # 将计算结果填入 Increase J2/J3 文本框 (J0/J1 保持默认或手动输入)
             self.inc_j2_input.setText(f"{self.latest_j2:.4f}")
             self.inc_j3_input.setText(f"{self.latest_j3:.4f}")
-
             self.movement_status_label.setText("Movement Status: J2/J3 Calculation Completed")
             parent_window = self.parent()
             if hasattr(parent_window, 'status_bar'):
@@ -523,7 +623,6 @@ class BeckhoffTab(QWidget):
         self.movement_status_label.setText(f"Movement Status: {msg}")
 
     def trigger_move(self):
-        """触发所有关节运动 (J0-J3)。"""
         if not self.ads_client.connected:
             QMessageBox.warning(self, "Warning", "ADS is disconnected. Please connect Beckhoff PLC first.")
             return
@@ -554,25 +653,18 @@ class BeckhoffTab(QWidget):
         self.ads_command_thread.start()
 
     def trigger_reset(self):
-        """重置所有关节到默认位置。"""
         if not self.ads_client.connected:
             QMessageBox.warning(self, "Warning", "ADS is disconnected. Please connect Beckhoff PLC first.")
             return
         if self.ads_poll_thread and self.ads_poll_thread.moving:
             QMessageBox.warning(self, "Warning", "Movement monitoring task is in progress, please wait.")
             return
-
-        # 使用实例变量 (可能是连接时更新过的)，或者回退到类变量
-        r0 = self.RESET_J0
-        r1 = self.RESET_J1
-        r2 = self.RESET_J2
-        r3 = self.RESET_J3
         
+        r0 = self.RESET_J0; r1 = self.RESET_J1; r2 = self.RESET_J2; r3 = self.RESET_J3
         try:
             target_time = float(self.motion_time_input.text())
-            if target_time <= 0:
-                raise ValueError("Motion time must be > 0.")
-        except ValueError:
+            if target_time <= 0: raise ValueError
+        except:
             QMessageBox.critical(self, "Input Error", "Target motion time (ms) must be a valid number greater than zero!")
             return
 
@@ -602,10 +694,6 @@ class BeckhoffTab(QWidget):
             self.ads_command_thread.wait()
             
     def apply_joint_increment(self):
-        """
-        点击“应用该增量”按钮时调用。
-        计算所有关节的新目标值 (基于 RESET 值 + 增量)，然后【直接触发运动】。
-        """
         try:
             inc_j0 = float(self.inc_j0_input.text())
             inc_j1 = float(self.inc_j1_input.text())
@@ -623,9 +711,7 @@ class BeckhoffTab(QWidget):
             self.result_labels["J3"].setText(f"{new_target_j3:.4f}")
             
             self.movement_status_label.setText("Movement Status: All Targets calculated. Executing Move...")
-            
             self.trigger_move()
-            
         except ValueError:
             QMessageBox.critical(self, "Input Error", "Increment values must be valid numbers!")
         except Exception as e:
