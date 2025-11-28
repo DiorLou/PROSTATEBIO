@@ -118,6 +118,9 @@ class LeftPanel(QWidget):
         self.b_point_position_in_base = np.zeros(3)
         self.calculated_b_points = []
         
+        # [NEW] A Point List for Dropdown
+        self.a_points_list = [] 
+        
         # 点击左转x度的时候记录的 E 点位置
         self.tcp_e_medical_value = None
         # 录了超声平面刚刚对齐到 AOE 平面（即穿刺平面）时的机器臂状态
@@ -327,17 +330,37 @@ class LeftPanel(QWidget):
         def create_subgroup(title, prefix, vars_list, btn_text, slot):
             sub = QGroupBox(title)
             gl = QGridLayout(sub)
+            
+            # [MODIFIED] Determine row span based on prefix to center inputs vertically
+            is_a_point = (prefix == "A")
+            row_span = 2 if is_a_point else 1
+            
             labels = [f"{prefix}_x:", f"{prefix}_y:", f"{prefix}_z:"]
             for i, lt in enumerate(labels):
-                gl.addWidget(QLabel(lt), 0, i*2)
+                # [MODIFIED] Add alignment and row span
+                lbl = QLabel(lt)
+                gl.addWidget(lbl, 0, i*2, row_span, 1, Qt.AlignVCenter | Qt.AlignRight)
+                
                 le = QLineEdit("0.00")
                 le.setStyleSheet("background-color: white;")
                 vars_list[i] = le
-                gl.addWidget(le, 0, i*2+1)
+                # [MODIFIED] Add alignment and row span
+                gl.addWidget(le, 0, i*2+1, row_span, 1, Qt.AlignVCenter)
+                
             btn = QPushButton(btn_text)
             btn.setFixedWidth(BUTTON_WIDTH)
             btn.clicked.connect(slot)
             gl.addWidget(btn, 0, 6)
+            
+            # [NEW] Add Dropdown for A Point
+            if is_a_point:
+                self.a_point_dropdown = QComboBox()
+                self.a_point_dropdown.setPlaceholderText("History (Empty)")
+                self.a_point_dropdown.setFixedWidth(BUTTON_WIDTH)
+                self.a_point_dropdown.currentIndexChanged.connect(self._on_a_point_selected)
+                # Add to grid at row 1, column 6
+                gl.addWidget(self.a_point_dropdown, 1, 6)
+                
             return sub
         
         group_layout.addWidget(create_subgroup("A点", "A", self.a_vars, "Get A Point Position", self.get_a_point_position))
@@ -531,6 +554,19 @@ class LeftPanel(QWidget):
         
         # 延时等待状态刷新后进行计算
         QTimer.singleShot(300, lambda: self._finalize_point_record(name))
+
+    # [NEW] Slot for A Point Dropdown Selection
+    def _on_a_point_selected(self, index):
+        """Handle selection from A point history dropdown."""
+        if index < 0 or index >= len(self.a_points_list):
+            return
+        
+        # Retrieve point data
+        selected_point = self.a_points_list[index]
+        
+        # Update UI text fields
+        for i in range(3):
+            self.a_vars[i].setText(f"{selected_point[i]:.2f}")
         
     def _finalize_point_record(self, name):
         # 1. 检查必要数据是否存在
@@ -562,6 +598,18 @@ class LeftPanel(QWidget):
             targets = self.a_vars if name == "A" else self.o_vars
             for i in range(3): 
                 targets[i].setText(f"{tip_position_base[i]:.2f}")
+            
+            # [NEW] Add to History if A Point
+            if name == "A":
+                new_point = tip_position_base.tolist()
+                self.a_points_list.append(new_point)
+                
+                # Update Dropdown
+                new_index = len(self.a_points_list)
+                self.a_point_dropdown.addItem(f"A{new_index}")
+                
+                # Automatically select the new point
+                self.a_point_dropdown.setCurrentIndex(new_index - 1)
             
             # 7. 状态栏反馈
             self.main_window.right_panel.log_message(f"Status: {name} point position calculated (Derived from TCP_E).")
@@ -1068,13 +1116,14 @@ class LeftPanel(QWidget):
     def save_data(self):
         try:
             data = {
-                # 原有的保存项
                 'a_point': self._get_ui_values(self.a_vars),
                 'o_point': self._get_ui_values(self.o_vars),
                 'e_point': self._get_ui_values(self.e_vars),
                 'calculated_b_points': [(d[0].tolist(), d[1].tolist(), d[2], d[3]) for d in self.calculated_b_points],
                 
-                # --- 新增保存的变量 ---
+                # [NEW] Save A Points History
+                'stored_a_points': self.a_points_list,
+
                 'tcp_e_medical_value': self.tcp_e_medical_value,
                 'tool_pose_in_puncture_position': self.tool_pose_in_puncture_position,
                 'tcp_u_volume': self.tcp_u_volume,
@@ -1111,21 +1160,23 @@ class LeftPanel(QWidget):
             for d in self.calculated_b_points:
                 self.b_point_dropdown.addItem(f"B{d[3]}, {d[2]:.2f}deg")
                 
-            # --- 4. 恢复新增的变量 ---
-            # 使用 .get() 方法以防止旧的 json 文件中没有这些键而报错
+            # [NEW] Restore A Points History
+            self.a_points_list = data.get('stored_a_points', [])
+            
+            # Temporarily block signals to avoid overriding the 'a_point' text fields 
+            # (which were just set in step 1) with the first item in the dropdown.
+            self.a_point_dropdown.blockSignals(True)
+            self.a_point_dropdown.clear()
+            for i, pt in enumerate(self.a_points_list):
+                self.a_point_dropdown.addItem(f"A{i+1}")
+            self.a_point_dropdown.blockSignals(False)
+            
+            # ... (Rest of loading additional variables) ...
             self.tcp_e_medical_value = data.get('tcp_e_medical_value')
             self.tool_pose_in_puncture_position = data.get('tool_pose_in_puncture_position')
             self.tcp_u_volume = data.get('tcp_u_volume')
             self.b_point_in_tcp_p = data.get('b_point_in_tcp_p')
             self.a_point_in_tcp_p = data.get('a_point_in_tcp_p')
-
-            # 可选：在控制台打印一下，确认加载成功
-            print("Loaded additional robot states:")
-            print(f"  - TCP_E Medical: {self.tcp_e_medical_value}")
-            print(f"  - Puncture Pose: {self.tool_pose_in_puncture_position}")
-            print(f"  - TCP_U Volume: {self.tcp_u_volume}")
-            print(f"  - B_point_in_TCP_P: {self.b_point_in_tcp_p}")
-            print(f"  - A_point_in_TCP_P: {self.a_point_in_tcp_p}")
             
             QMessageBox.information(self, "Success", "Data loaded successfully.")
 
