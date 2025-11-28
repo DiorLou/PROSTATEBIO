@@ -210,7 +210,6 @@ class BeckhoffTab(QWidget):
         self.flow_trocar_in_p2_btn = None
         
         self.flow_calc_btn = None
-        self.flow_adj_dir_btn = None
         self.flow_needle_in_btn = None
         self.flow_needle_out_btn = None
         self.flow_trocar_out_btn = None
@@ -319,35 +318,14 @@ class BeckhoffTab(QWidget):
         main_layout = QVBoxLayout(self)
 
         # -----------------------------------------------------------------
-        # 1. Needle Vector Positioning
+        # [Deleted]: Needle Vector Positioning Group
+        # 但是保留 vector_inputs 以兼容后台逻辑
         # -----------------------------------------------------------------
-        vector_group = QGroupBox("Needle Vector Positioning (Inverse Kinematics)")
-        vector_layout = QVBoxLayout(vector_group)
+        for i in range(3):
+            self.vector_inputs[i] = QLineEdit("0.00")
 
-        input_grid = QGridLayout()
-        vector_labels = ["X:", "Y:", "Z:"]
-        for i, label_text in enumerate(vector_labels):
-            label = QLabel(label_text)
-            text_box = QLineEdit("0.00")
-            text_box.setPlaceholderText("Enter Unit Vector Value")
-            self.vector_inputs[i] = text_box
-            input_grid.addWidget(label, 0, i * 2)
-            input_grid.addWidget(text_box, 0, i * 2 + 1)
-        
-        btns_layout = QHBoxLayout()
-        self.calc_j1_btn = QPushButton("Calc ΔJ1") 
-        self.calc_j1_btn.setFixedWidth(100)
-        self.input_vector_btn = QPushButton("Calc ΔJ2, ΔJ3")
-
-        btns_layout.addStretch()
-        btns_layout.addWidget(self.calc_j1_btn)       
-        btns_layout.addWidget(self.input_vector_btn)  
-        btns_layout.addStretch()
-        vector_layout.addLayout(input_grid)
-        vector_layout.addLayout(btns_layout)
-        
         # -----------------------------------------------------------------
-        # 2. Position Control (J0 - J3)
+        # 1. Position Control (J0 - J3) - Moved to Top Level
         # -----------------------------------------------------------------
         result_group = QGroupBox("Position Control (J0 - J3)")
         result_content_layout = QHBoxLayout()
@@ -362,7 +340,7 @@ class BeckhoffTab(QWidget):
         for idx, axis in enumerate(["J0", "J1", "J2", "J3"]):
             unit = "(mm)" if idx < 2 else "(Deg)"
             
-            inc_label = QLabel(f"Increase {axis} {unit}:")
+            inc_label = QLabel(f"Δ {axis} {unit}:")
             inc_label.setAlignment(Qt.AlignVCenter)
             inc_input = QLineEdit("0.00")
             inc_input.setFixedWidth(100)
@@ -396,11 +374,12 @@ class BeckhoffTab(QWidget):
         result_content_layout.addLayout(result_layout)
         result_content_layout.addStretch(1) 
         result_group.setLayout(result_content_layout)
-        vector_layout.addWidget(result_group)
-        main_layout.addWidget(vector_group)
+        
+        # Add Position Control Group directly to Main Layout
+        main_layout.addWidget(result_group)
         
         # -----------------------------------------------------------------
-        # 3. Biopsy Interface (Flowchart)
+        # 2. Biopsy Interface (Flowchart)
         # -----------------------------------------------------------------
         biopsy_group = QGroupBox("Biopsy Interface")
         biopsy_layout = QGridLayout(biopsy_group)
@@ -410,15 +389,17 @@ class BeckhoffTab(QWidget):
         # Define Buttons
         self.flow_trocar_in_p1_btn = QPushButton("Trocar Insertion Phase 1")
         self.flow_trocar_in_p2_btn = QPushButton("Trocar Insertion Phase 2")
-        self.flow_calc_btn = QPushButton("Calculate Joint 2/3")
-        self.flow_adj_dir_btn = QPushButton("Adjust Needle Dir")
+        self.flow_calc_btn = QPushButton("Adjust Needle Dir") # Renamed from "Calculate Joint 2/3"
+        
+        # [Deleted]: self.flow_adj_dir_btn
+        
         self.flow_needle_in_btn = QPushButton("Needle Insertion")
         self.flow_needle_out_btn = QPushButton("Needle Retraction")
         self.flow_trocar_out_btn = QPushButton("Trocar Retraction")
 
         BTN_WIDTH = 160 
         for btn in [self.flow_trocar_in_p1_btn, self.flow_trocar_in_p2_btn, self.flow_calc_btn, 
-                    self.flow_adj_dir_btn, self.flow_needle_in_btn, self.flow_needle_out_btn, 
+                    self.flow_needle_in_btn, self.flow_needle_out_btn, 
                     self.flow_trocar_out_btn]:
             btn.setFixedWidth(BTN_WIDTH)
 
@@ -454,28 +435,27 @@ class BeckhoffTab(QWidget):
         # 2. Main Loop Row (Row 4)
         biopsy_layout.addWidget(self.flow_calc_btn, 4, 0, alignment=Qt.AlignCenter)
         biopsy_layout.addWidget(self._create_h_arrow_widget(), 4, 1) 
-        biopsy_layout.addWidget(self.flow_adj_dir_btn, 4, 2, alignment=Qt.AlignCenter)
+        # Removed original "Adjust Needle Dir" button at Col 2
+        biopsy_layout.addWidget(self.flow_needle_in_btn, 4, 2, alignment=Qt.AlignCenter) # Moved left
         biopsy_layout.addWidget(self._create_h_arrow_widget(), 4, 3) 
-        biopsy_layout.addWidget(self.flow_needle_in_btn, 4, 4, alignment=Qt.AlignCenter)
-        biopsy_layout.addWidget(self._create_h_arrow_widget(), 4, 5) 
-        biopsy_layout.addWidget(self.flow_needle_out_btn, 4, 6, alignment=Qt.AlignCenter)
+        biopsy_layout.addWidget(self.flow_needle_out_btn, 4, 4, alignment=Qt.AlignCenter) # Moved left
 
         # 3. Loop Return Path (Row 5)
         biopsy_layout.addWidget(self._create_up_arrow_widget(), 5, 0, alignment=Qt.AlignCenter)
-        biopsy_layout.addWidget(self._create_loop_back_line(), 5, 1, 1, 5)
-        biopsy_layout.addWidget(self._create_v_arrow_widget(), 5, 6, alignment=Qt.AlignCenter)
+        biopsy_layout.addWidget(self._create_loop_back_line(), 5, 1, 1, 3) # Adjusted span to 3
+        biopsy_layout.addWidget(self._create_v_arrow_widget(), 5, 4, alignment=Qt.AlignCenter) # Moved left to col 4
 
-        # 4. End Column (Col 6)
-        biopsy_layout.addWidget(self.flow_trocar_out_btn, 6, 6, alignment=Qt.AlignCenter)
-        biopsy_layout.addWidget(self._create_v_arrow_widget(), 7, 6, alignment=Qt.AlignCenter)
-        biopsy_layout.addWidget(self.flow_end_lbl, 8, 6, alignment=Qt.AlignCenter)
+        # 4. End Column (Col 4)
+        biopsy_layout.addWidget(self.flow_trocar_out_btn, 6, 4, alignment=Qt.AlignCenter) # Moved left to col 4
+        biopsy_layout.addWidget(self._create_v_arrow_widget(), 7, 4, alignment=Qt.AlignCenter)
+        biopsy_layout.addWidget(self.flow_end_lbl, 8, 4, alignment=Qt.AlignCenter)
 
-        biopsy_layout.setColumnStretch(7, 1)
+        biopsy_layout.setColumnStretch(5, 1)
 
         main_layout.addWidget(biopsy_group)
 
         # -----------------------------------------------------------------
-        # 4. Beckhoff PLC Communication
+        # 3. Beckhoff PLC Communication
         # -----------------------------------------------------------------
         beckhoff_comm_group = QGroupBox("Beckhoff PLC Communication")
         beckhoff_comm_layout = QVBoxLayout(beckhoff_comm_group)
@@ -501,7 +481,7 @@ class BeckhoffTab(QWidget):
         main_layout.addStretch()
 
     def setup_connections(self):
-        self.input_vector_btn.clicked.connect(self.calculate_joint_values)
+        # self.input_vector_btn Connection removed (Button removed)
         self.connect_ads_btn.clicked.connect(self.connect_ads)
         self.disconnect_ads_btn.clicked.connect(self.disconnect_ads)
         self.reset_all_btn.clicked.connect(self.trigger_reset)
@@ -515,7 +495,8 @@ class BeckhoffTab(QWidget):
         self.flow_trocar_in_p1_btn.clicked.connect(self.run_trocar_insertion_phase_1)
         self.flow_trocar_in_p2_btn.clicked.connect(self.run_trocar_insertion_phase_2)
         
-        self.flow_adj_dir_btn.clicked.connect(lambda: print("Flow: Adjust Needle Direction Clicked"))
+        # self.flow_adj_dir_btn connection removed
+        
         self.flow_needle_in_btn.clicked.connect(lambda: print("Flow: Needle Insertion Clicked"))
         self.flow_needle_out_btn.clicked.connect(lambda: print("Flow: Needle Retraction Clicked"))
         self.flow_trocar_out_btn.clicked.connect(lambda: print("Flow: Trocar Retraction Clicked"))
