@@ -496,9 +496,9 @@ class BeckhoffTab(QWidget):
         self.flow_trocar_in_p1_btn.clicked.connect(self.run_trocar_insertion_phase_1)
         self.flow_trocar_in_p2_btn.clicked.connect(self.run_trocar_insertion_phase_2)
         
-        # self.flow_adj_dir_btn connection removed
+        # [NEW] Connect Needle Insertion Button
+        self.flow_needle_in_btn.clicked.connect(self.run_needle_insertion)
         
-        self.flow_needle_in_btn.clicked.connect(lambda: print("Flow: Needle Insertion Clicked"))
         self.flow_needle_out_btn.clicked.connect(lambda: print("Flow: Needle Retraction Clicked"))
         self.flow_trocar_out_btn.clicked.connect(lambda: print("Flow: Trocar Retraction Clicked"))
 
@@ -589,14 +589,14 @@ class BeckhoffTab(QWidget):
                  QMessageBox.critical(self, "Input Error", "Vector magnitude is close to zero, cannot define direction.")
                  return
             joint_values = self.robot.get_joint23_value(needle_vector)
-            self.latest_j2 = joint_values[0]
-            self.latest_j3 = joint_values[1] + joint_values[0]
-            self.inc_j2_input.setText(f"{self.latest_j2:.4f}")
-            self.inc_j3_input.setText(f"{self.latest_j3:.4f}")
+            actual_j2 = joint_values[0]
+            actual_j3 = joint_values[1] + joint_values[0]
+            self.inc_j2_input.setText(f"{actual_j2:.4f}")
+            self.inc_j3_input.setText(f"{actual_j3:.4f}")
             self.movement_status_label.setText("Movement Status: J2/J3 Calculation Completed")
             parent_window = self.parent()
             if hasattr(parent_window, 'status_bar'):
-                parent_window.status_bar.showMessage(f"Status: Joint J2={self.latest_j2:.4f}, J3={self.latest_j3:.4f} calculation completed.")
+                parent_window.status_bar.showMessage(f"Status: Joint J2={actual_j2:.4f}, J3={actual_j3:.4f} calculation completed.")
         except ValueError:
             QMessageBox.critical(self, "Input Error", "Vector X, Y, Z must be valid numbers!")
         except Exception as e:
@@ -784,7 +784,7 @@ class BeckhoffTab(QWidget):
         
         self.apply_joint_increment()
     
-    # [NEW] Function to handle Adjust Needle Dir logic
+    # Function to handle Adjust Needle Dir logic
     def adjust_needle_direction(self):
         """
         Calculates the vector from RCM (adjusted by Delta J1) to Biopsy Point B in TCP_P.
@@ -834,4 +834,67 @@ class BeckhoffTab(QWidget):
         self.calculate_joint_values()
         
         # Automatically apply the calculated increments
+        self.apply_joint_increment()
+
+    # Function to handle Needle Insertion
+    def run_needle_insertion(self):
+        """
+        Calculates distance d1 = |B_point_in_TCP_P - get_tip_of_needle([delta_j1, theoretical_j2, theoretical_j3, 0])|.
+        Sets d1 to J0 increment and applies movement.
+        """
+        # 1. Get Delta J1 (from Phase 1)
+        try:
+            delta_j1_text = self.inc_j1_input.text()
+            if not delta_j1_text:
+                raise ValueError("Empty J1 input")
+            delta_j1 = float(delta_j1_text)
+        except ValueError:
+            QMessageBox.warning(self, "Input Error", "Invalid Delta J1 value. Please run 'Trocar Insertion Phase 1' first.")
+            return
+
+        # 2. Get Delta J2 and J3 (from Adjust Needle Dir step)
+        try:
+            delta_j2_text = self.inc_j2_input.text()
+            delta_j3_text = self.inc_j3_input.text()
+            # If empty, default to 0.0
+            delta_j2 = float(delta_j2_text) if delta_j2_text else 0.0
+            delta_j3 = float(delta_j3_text) if delta_j3_text else 0.0
+            
+            theoretical_j2 = delta_j2
+            theoretical_j3 = delta_j3 - delta_j2
+        except ValueError:
+            QMessageBox.warning(self, "Input Error", "Invalid Delta J2/J3 values. Please run 'Adjust Needle Dir' first.")
+            return
+
+        # 3. Get Biopsy Point
+        parent = self.parent()
+        if not parent or not hasattr(parent, 'left_panel'):
+            QMessageBox.warning(self, "Error", "Cannot access Left Panel data.")
+            return
+            
+        b_point_p = parent.left_panel.b_point_in_tcp_p
+        if b_point_p is None:
+             QMessageBox.warning(self, "Data Missing", "Biopsy Point B in TCP_P is not defined. Please calculate it in Left Panel first.")
+             return
+        
+        # 4. Calculate Needle Tip Initial Position
+        try:
+            # get_tip_of_needle returns [x, y, z] numpy array
+            tip_pos = self.robot.get_tip_of_needle([delta_j1, theoretical_j2, theoretical_j3, 0])
+        except Exception as e:
+            QMessageBox.critical(self, "Kinematics Error", f"Failed to calculate needle tip position: {e}")
+            return
+
+        # 5. Calculate Distance d1
+        try:
+            b_point_vec = np.array(b_point_p)
+            d4 = np.linalg.norm(b_point_vec - tip_pos)
+        except Exception as e:
+            QMessageBox.critical(self, "Calculation Error", f"Failed to calculate distance: {e}")
+            return
+            
+        # 6. Set J0 Increment
+        self.inc_j0_input.setText(f"{d4:.4f}")
+        
+        # 7. Apply Increment
         self.apply_joint_increment()
