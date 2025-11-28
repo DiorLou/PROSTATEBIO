@@ -206,7 +206,6 @@ class BeckhoffTab(QWidget):
         self.inc_j3_input = None
         
         # Flowchart Controls
-        # [MODIFIED]: Split Trocar Insertion into Phase 1 and Phase 2
         self.flow_trocar_in_p1_btn = None 
         self.flow_trocar_in_p2_btn = None
         
@@ -216,8 +215,9 @@ class BeckhoffTab(QWidget):
         self.flow_needle_out_btn = None
         self.flow_trocar_out_btn = None
         
-        # [NEW] State variable for Trocar Phase 1 sequence
+        # [NEW] Automation States
         self.trocar_phase_1_state = 0
+        self.phase_1_done = False # Track if Phase 1 is completed
         
         self.init_ui()
         self.setup_connections()
@@ -408,7 +408,6 @@ class BeckhoffTab(QWidget):
         biopsy_layout.setContentsMargins(10, 10, 10, 10)
 
         # Define Buttons
-        # [MODIFIED]: Two buttons for Trocar Insertion
         self.flow_trocar_in_p1_btn = QPushButton("Trocar Insertion Phase 1")
         self.flow_trocar_in_p2_btn = QPushButton("Trocar Insertion Phase 2")
         self.flow_calc_btn = QPushButton("Calculate Joint 2/3")
@@ -514,7 +513,7 @@ class BeckhoffTab(QWidget):
         
         # [MODIFIED]: Connect split buttons
         self.flow_trocar_in_p1_btn.clicked.connect(self.run_trocar_insertion_phase_1)
-        self.flow_trocar_in_p2_btn.clicked.connect(lambda: print("Flow: Trocar Insertion Phase 2 Clicked"))
+        self.flow_trocar_in_p2_btn.clicked.connect(self.run_trocar_insertion_phase_2)
         
         self.flow_adj_dir_btn.clicked.connect(lambda: print("Flow: Adjust Needle Direction Clicked"))
         self.flow_needle_in_btn.clicked.connect(lambda: print("Flow: Needle Insertion Clicked"))
@@ -626,10 +625,9 @@ class BeckhoffTab(QWidget):
         
         # [NEW] Automation Logic for Trocar Phase 1
         if self.trocar_phase_1_state == 1 and "Movement Completed" in msg:
-            self.trocar_phase_1_state = 2 # Prevent re-entry
+            self.trocar_phase_1_state = 2 # Transitioning
             
-            # Step 2: Set Vector 0,1,0 -> Calc -> Apply
-            self.inc_j1_input.setText("0.00") # Clear previous J1
+            # Setup Step 2: Set Vector 0,1,0 -> Calc -> Apply
             
             self.vector_inputs[0].setText("0")
             self.vector_inputs[1].setText("1")
@@ -637,10 +635,14 @@ class BeckhoffTab(QWidget):
             
             self.calculate_joint_values() # Populates J2/J3 inputs
             
-            # Trigger Second Move (J2/J3)
             self.apply_joint_increment()
-            
-            self.trocar_phase_1_state = 0 # Sequence done
+            self.trocar_phase_1_state = 3 # Wait for Step 2 completion
+        
+        elif self.trocar_phase_1_state == 3 and "Movement Completed" in msg:
+            self.trocar_phase_1_state = 0
+            self.phase_1_done = True
+            if self.parent() and hasattr(self.parent(), 'status_bar'):
+                self.parent().status_bar.showMessage("Status: Trocar Insertion Phase 1 Completed.")
 
     def trigger_move(self):
         if not self.ads_client.connected:
@@ -743,11 +745,11 @@ class BeckhoffTab(QWidget):
         Executes the Trocar Insertion Phase 1 sequence:
         1. Calculate delta_J1 = a_point_in_tcp_p[z] - rcm_point[z]
         2. Apply J1 increment.
-        3. Wait for move completion.
-        4. Set Vector inputs (0, 1, 0).
-        5. Calculate J2/J3.
-        6. Apply J2/J3 increment.
+        3. Wait for move completion (handled in update_movement_status).
         """
+        # Reset Phase 1 completion flag
+        self.phase_1_done = False
+        
         # 1. Access data from Left Panel
         parent = self.parent()
         if not parent or not hasattr(parent, 'left_panel'):
@@ -780,4 +782,22 @@ class BeckhoffTab(QWidget):
         
         # 4. Trigger First Move (State 1)
         self.trocar_phase_1_state = 1
+        self.apply_joint_increment()
+
+    # [NEW] Function to handle Trocar Insertion Phase 2 logic
+    def run_trocar_insertion_phase_2(self):
+        """
+        Executes Trocar Insertion Phase 2:
+        1. Check if Phase 1 is done.
+        2. Set J0 increment to d4_trocar (17.5 mm).
+        3. Apply increment.
+        """
+        if not self.phase_1_done:
+            QMessageBox.warning(self, "Sequence Error", "Please complete 'Trocar Insertion Phase 1' first.")
+            return
+        
+        d4_trocar = 17.5
+        
+        self.inc_j0_input.setText(f"{d4_trocar}")
+        
         self.apply_joint_increment()
