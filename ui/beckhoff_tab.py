@@ -489,7 +489,8 @@ class BeckhoffTab(QWidget):
         self.enable_motor_btn.clicked.connect(self.toggle_motor_enable)
         
         # Biopsy Interface Button Connections
-        self.flow_calc_btn.clicked.connect(self.calculate_joint_values)
+        # [MODIFIED] Connect to adjust_needle_direction instead of calculate_joint_values
+        self.flow_calc_btn.clicked.connect(self.adjust_needle_direction)
         
         # [MODIFIED]: Connect split buttons
         self.flow_trocar_in_p1_btn.clicked.connect(self.run_trocar_insertion_phase_1)
@@ -781,4 +782,56 @@ class BeckhoffTab(QWidget):
         
         self.inc_j0_input.setText(f"{d4_trocar}")
         
+        self.apply_joint_increment()
+    
+    # [NEW] Function to handle Adjust Needle Dir logic
+    def adjust_needle_direction(self):
+        """
+        Calculates the vector from RCM (adjusted by Delta J1) to Biopsy Point B in TCP_P.
+        Vector = B_point_in_TCP_P - get_rcm_point([delta_j1, 0, 0, 0])
+        Then populates vector inputs, calculates joints, and applies increment.
+        """
+        # 1. Access Data from Left Panel
+        parent = self.parent()
+        if not parent or not hasattr(parent, 'left_panel'):
+            QMessageBox.warning(self, "Error", "Cannot access Left Panel data.")
+            return
+            
+        b_point_p = parent.left_panel.b_point_in_tcp_p
+        if b_point_p is None:
+            QMessageBox.warning(self, "Data Missing", "Biopsy Point B in TCP_P is not defined. Please calculate it in Left Panel first.")
+            return
+
+        # 2. Get Delta J1 (from Phase 1)
+        try:
+            delta_j1_text = self.inc_j1_input.text()
+            if not delta_j1_text:
+                raise ValueError("Empty J1 input")
+            delta_j1 = float(delta_j1_text)
+        except ValueError:
+            QMessageBox.warning(self, "Input Error", "Invalid Delta J1 value. Please run 'Trocar Insertion Phase 1' first.")
+            return
+
+        # 3. Calculate RCM Point
+        try:
+            # get_rcm_point returns [x, y, z] numpy array
+            rcm_point = self.robot.get_rcm_point([delta_j1, 0, 0, 0])
+        except Exception as e:
+            QMessageBox.critical(self, "Kinematics Error", f"Failed to calculate RCM point: {e}")
+            return
+
+        # 4. Calculate Vector
+        # B point in TCP_P is likely a list, convert to numpy for math
+        vector = np.array(b_point_p) - rcm_point
+        
+        # 5. Populate UI Inputs
+        self.vector_inputs[0].setText(f"{vector[0]:.4f}")
+        self.vector_inputs[1].setText(f"{vector[1]:.4f}")
+        self.vector_inputs[2].setText(f"{vector[2]:.4f}")
+
+        # 6. Execute Flow
+        # Use calculate_joint_values to update inc_j2/j3 based on the new vector
+        self.calculate_joint_values()
+        
+        # Automatically apply the calculated increments
         self.apply_joint_increment()
