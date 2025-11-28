@@ -505,7 +505,8 @@ class BeckhoffTab(QWidget):
         # [NEW] Connect Needle Retraction Button
         self.flow_needle_out_btn.clicked.connect(self.run_needle_retraction)
         
-        self.flow_trocar_out_btn.clicked.connect(lambda: print("Flow: Trocar Retraction Clicked"))
+        # [NEW] Connect Trocar Retraction Button
+        self.flow_trocar_out_btn.clicked.connect(self.run_trocar_retraction)
 
     def _start_poll(self):
         if self.ads_poll_thread is None or not self.ads_poll_thread.isRunning():
@@ -909,6 +910,17 @@ class BeckhoffTab(QWidget):
         """
         # 1. Set J0 Increment to D4_TROCAR
         self.inc_j0_input.setText(f"{self.D4_TROCAR}")
+        
+        # 2. Apply Increment
+        self.apply_joint_increment()
+
+    # Function to handle Trocar Retraction
+    def run_trocar_retraction(self):
+        """
+        Sets J0 increment to 0 and applies movement (Returning to RESET_J0).
+        """
+        # 1. Set J0 Increment to 0
+        self.inc_j0_input.setText("0")
         
         # 2. Apply Increment
         self.apply_joint_increment()
