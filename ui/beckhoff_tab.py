@@ -185,6 +185,9 @@ class BeckhoffTab(QWidget):
     RESET_J1 = 0.000
     RESET_J2 = 67.569
     RESET_J3 = 20.347
+    
+    # Constant for Trocar distance used in Phase 2 and Retraction
+    D4_TROCAR = 17.5 
 
     def __init__(self, robot_kinematics, parent=None):
         super().__init__(parent)
@@ -499,7 +502,9 @@ class BeckhoffTab(QWidget):
         # [NEW] Connect Needle Insertion Button
         self.flow_needle_in_btn.clicked.connect(self.run_needle_insertion)
         
-        self.flow_needle_out_btn.clicked.connect(lambda: print("Flow: Needle Retraction Clicked"))
+        # [NEW] Connect Needle Retraction Button
+        self.flow_needle_out_btn.clicked.connect(self.run_needle_retraction)
+        
         self.flow_trocar_out_btn.clicked.connect(lambda: print("Flow: Trocar Retraction Clicked"))
 
     def _start_poll(self):
@@ -775,9 +780,7 @@ class BeckhoffTab(QWidget):
             QMessageBox.warning(self, "Sequence Error", "Please complete 'Trocar Insertion Phase 1' first.")
             return
         
-        d4_trocar = 17.5
-        
-        self.inc_j0_input.setText(f"{d4_trocar}")
+        self.inc_j0_input.setText(f"{self.D4_TROCAR}")
         
         self.apply_joint_increment()
     
@@ -836,7 +839,7 @@ class BeckhoffTab(QWidget):
     # [NEW] Function to handle Needle Insertion
     def run_needle_insertion(self):
         """
-        Calculates distance d1 = |B_point_in_TCP_P - get_tip_of_needle([0, delta_j1, 0, 0])|.
+        Calculates distance d1 = |B_point_in_TCP_P - get_tip_of_needle([delta_j1, 0, 0, 0])|.
         Sets d1 to J0 increment and applies movement.
         """
         # 1. Get Delta J1 (from Phase 1)
@@ -863,6 +866,7 @@ class BeckhoffTab(QWidget):
         # 3. Calculate Needle Tip Initial Position
         try:
             # get_tip_of_needle returns [x, y, z] numpy array
+            # [CORRECTED]: Use [delta_j1, 0, 0, 0] as requested
             tip_pos = self.robot.get_tip_of_needle([delta_j1, 0, 0, 0])
         except Exception as e:
             QMessageBox.critical(self, "Kinematics Error", f"Failed to calculate needle tip position: {e}")
@@ -880,4 +884,15 @@ class BeckhoffTab(QWidget):
         self.inc_j0_input.setText(f"{d1:.4f}")
         
         # 6. Apply Increment
+        self.apply_joint_increment()
+
+    # [NEW] Function to handle Needle Retraction
+    def run_needle_retraction(self):
+        """
+        Sets J0 increment to d4_trocar value (17.5 mm) and applies movement.
+        """
+        # 1. Set J0 Increment to D4_TROCAR
+        self.inc_j0_input.setText(f"{self.D4_TROCAR}")
+        
+        # 2. Apply Increment
         self.apply_joint_increment()
