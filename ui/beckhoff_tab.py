@@ -216,6 +216,9 @@ class BeckhoffTab(QWidget):
         self.flow_needle_out_btn = None
         self.flow_trocar_out_btn = None
         
+        # [NEW] State variable for Trocar Phase 1 sequence
+        self.trocar_phase_1_state = 0
+        
         self.init_ui()
         self.setup_connections()
 
@@ -510,7 +513,7 @@ class BeckhoffTab(QWidget):
         self.flow_calc_btn.clicked.connect(self.calculate_joint_values)
         
         # [MODIFIED]: Connect split buttons
-        self.flow_trocar_in_p1_btn.clicked.connect(lambda: print("Flow: Trocar Insertion Phase 1 Clicked"))
+        self.flow_trocar_in_p1_btn.clicked.connect(self.run_trocar_insertion_phase_1)
         self.flow_trocar_in_p2_btn.clicked.connect(lambda: print("Flow: Trocar Insertion Phase 2 Clicked"))
         
         self.flow_adj_dir_btn.clicked.connect(lambda: print("Flow: Adjust Needle Direction Clicked"))
@@ -620,6 +623,24 @@ class BeckhoffTab(QWidget):
 
     def update_movement_status(self, msg):
         self.movement_status_label.setText(f"Movement Status: {msg}")
+        
+        # [NEW] Automation Logic for Trocar Phase 1
+        if self.trocar_phase_1_state == 1 and "Movement Completed" in msg:
+            self.trocar_phase_1_state = 2 # Prevent re-entry
+            
+            # Step 2: Set Vector 0,1,0 -> Calc -> Apply
+            self.inc_j1_input.setText("0.00") # Clear previous J1
+            
+            self.vector_inputs[0].setText("0")
+            self.vector_inputs[1].setText("1")
+            self.vector_inputs[2].setText("0")
+            
+            self.calculate_joint_values() # Populates J2/J3 inputs
+            
+            # Trigger Second Move (J2/J3)
+            self.apply_joint_increment()
+            
+            self.trocar_phase_1_state = 0 # Sequence done
 
     def trigger_move(self):
         if not self.ads_client.connected:
@@ -715,3 +736,48 @@ class BeckhoffTab(QWidget):
             QMessageBox.critical(self, "Input Error", "Increment values must be valid numbers!")
         except Exception as e:
             QMessageBox.critical(self, "Calculation Error", f"An error occurred while applying increment: {e}")
+
+    # [NEW] Function to handle Trocar Insertion Phase 1 logic
+    def run_trocar_insertion_phase_1(self):
+        """
+        Executes the Trocar Insertion Phase 1 sequence:
+        1. Calculate delta_J1 = a_point_in_tcp_p[z] - rcm_point[z]
+        2. Apply J1 increment.
+        3. Wait for move completion.
+        4. Set Vector inputs (0, 1, 0).
+        5. Calculate J2/J3.
+        6. Apply J2/J3 increment.
+        """
+        # 1. Access data from Left Panel
+        parent = self.parent()
+        if not parent or not hasattr(parent, 'left_panel'):
+            QMessageBox.warning(self, "Error", "Cannot access Left Panel data.")
+            return
+            
+        # Ensure a_point_in_tcp_p exists
+        if not parent.left_panel.a_point_in_tcp_p:
+             QMessageBox.warning(self, "Data Missing", "A point in TCP_P is not defined. Please calculate it in Left Panel first.")
+             return
+             
+        # 2. Calculate delta J1
+        try:
+            # a_point_in_tcp_p is [x, y, z] list
+            a_z = parent.left_panel.a_point_in_tcp_p[2]
+            
+            # get_rcm_point returns [x, y, z] numpy array
+            rcm_z = self.robot.get_rcm_point([0,0,0,0])[2]
+            
+            delta_j1 = a_z - rcm_z
+        except Exception as e:
+            QMessageBox.critical(self, "Calculation Error", f"Failed to calculate J1 delta: {e}")
+            return
+            
+        # 3. Setup J1 Increment
+        self.inc_j0_input.setText("0.00")
+        self.inc_j1_input.setText(f"{delta_j1:.4f}")
+        self.inc_j2_input.setText("0.00")
+        self.inc_j3_input.setText("0.00")
+        
+        # 4. Trigger First Move (State 1)
+        self.trocar_phase_1_state = 1
+        self.apply_joint_increment()
