@@ -496,9 +496,9 @@ class BeckhoffTab(QWidget):
         self.flow_trocar_in_p1_btn.clicked.connect(self.run_trocar_insertion_phase_1)
         self.flow_trocar_in_p2_btn.clicked.connect(self.run_trocar_insertion_phase_2)
         
-        # self.flow_adj_dir_btn connection removed
+        # [NEW] Connect Needle Insertion Button
+        self.flow_needle_in_btn.clicked.connect(self.run_needle_insertion)
         
-        self.flow_needle_in_btn.clicked.connect(lambda: print("Flow: Needle Insertion Clicked"))
         self.flow_needle_out_btn.clicked.connect(lambda: print("Flow: Needle Retraction Clicked"))
         self.flow_trocar_out_btn.clicked.connect(lambda: print("Flow: Trocar Retraction Clicked"))
 
@@ -831,4 +831,53 @@ class BeckhoffTab(QWidget):
         self.calculate_joint_values()
         
         # Automatically apply the calculated increments
+        self.apply_joint_increment()
+
+    # [NEW] Function to handle Needle Insertion
+    def run_needle_insertion(self):
+        """
+        Calculates distance d1 = |B_point_in_TCP_P - get_tip_of_needle([0, delta_j1, 0, 0])|.
+        Sets d1 to J0 increment and applies movement.
+        """
+        # 1. Get Delta J1 (from Phase 1)
+        try:
+            delta_j1_text = self.inc_j1_input.text()
+            if not delta_j1_text:
+                raise ValueError("Empty J1 input")
+            delta_j1 = float(delta_j1_text)
+        except ValueError:
+            QMessageBox.warning(self, "Input Error", "Invalid Delta J1 value. Please run 'Trocar Insertion Phase 1' first.")
+            return
+
+        # 2. Get Biopsy Point
+        parent = self.parent()
+        if not parent or not hasattr(parent, 'left_panel'):
+            QMessageBox.warning(self, "Error", "Cannot access Left Panel data.")
+            return
+            
+        b_point_p = parent.left_panel.b_point_in_tcp_p
+        if b_point_p is None:
+             QMessageBox.warning(self, "Data Missing", "Biopsy Point B in TCP_P is not defined. Please calculate it in Left Panel first.")
+             return
+        
+        # 3. Calculate Needle Tip Initial Position
+        try:
+            # get_tip_of_needle returns [x, y, z] numpy array
+            tip_pos = self.robot.get_tip_of_needle([delta_j1, 0, 0, 0])
+        except Exception as e:
+            QMessageBox.critical(self, "Kinematics Error", f"Failed to calculate needle tip position: {e}")
+            return
+
+        # 4. Calculate Distance d1
+        try:
+            b_point_vec = np.array(b_point_p)
+            d1 = np.linalg.norm(b_point_vec - tip_pos)
+        except Exception as e:
+            QMessageBox.critical(self, "Calculation Error", f"Failed to calculate distance: {e}")
+            return
+            
+        # 5. Set J0 Increment
+        self.inc_j0_input.setText(f"{d1:.4f}")
+        
+        # 6. Apply Increment
         self.apply_joint_increment()
