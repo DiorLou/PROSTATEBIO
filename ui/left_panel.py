@@ -539,6 +539,18 @@ class LeftPanel(QWidget):
     def continuous_tcp_move(self):
         if self._moving_tcp_index != -1: self.tcp_adjust(self._moving_tcp_index, self._moving_direction)
 
+    # --- [NEW] Helper method to unify TCP switching ---
+    def _switch_tcp(self, tcp_name):
+        """
+        统一的 TCP 切换内部辅助函数。
+        尝试调用 RightPanel 的 switch_tcp 以保持状态同步。
+        """
+        if self.main_window and hasattr(self.main_window, 'right_panel'):
+            self.main_window.right_panel.switch_tcp(tcp_name)
+        else:
+            # Fallback (通常不会执行到这里)
+            self.tcp_manager.send_command(f"SetTCPByName,0,{tcp_name};")
+
     # --- Point Recording ---
     def get_a_point_position(self): self._start_point_record("A")
     def get_o_point_position(self): self._start_point_record("O")
@@ -549,8 +561,8 @@ class LeftPanel(QWidget):
              # [修改] 提示切换到 TCP_E
              self.main_window.status_bar.showMessage(f"Status: Getting {name} Point (Switching TCP_E)...")
         
-        # [修改] 发送切换到 TCP_E 的指令
-        self.tcp_manager.send_command("SetTCPByName,0,TCP_E;")
+        # [修改] 使用统一接口切换到 TCP_E
+        self._switch_tcp("TCP_E")
         
         # 延时等待状态刷新后进行计算
         QTimer.singleShot(300, lambda: self._finalize_point_record(name))
@@ -633,10 +645,18 @@ class LeftPanel(QWidget):
         if self.fine_tune_probe_btn: self.fine_tune_probe_btn.setStyleSheet("") 
         self.is_fine_tuning_allowed = False
         if not self.tcp_manager.is_connected: return
-        self.tcp_manager.send_command("SetTCPByName,0,TCP_E;")
-        QTimer.singleShot(200, self._continue_align_ultrasound_plane_to_aoe)
+        
+        # [修改] 统一接口切换到 TCP_E
+        self._switch_tcp("TCP_E")
+        
+        # 2. 延时后执行参数更新和对齐逻辑
+        QTimer.singleShot(300, self._continue_align_ultrasound_plane_to_aoe)
 
     def _continue_align_ultrasound_plane_to_aoe(self):
+        # [NEW] 在这里调用更新函数，此时可以保证 TCP 是 TCP_E
+        self._update_tcp_o_parameters_internally()
+        
+        # 获取最新的 E 点位置显示到 UI
         self.get_e_point_position()
         QTimer.singleShot(200, self._finalize_align_ultrasound_plane_to_aoe)
 
@@ -679,8 +699,62 @@ class LeftPanel(QWidget):
             self.tool_pose_in_puncture_position = list(self.latest_tool_pose)
             if self.main_window and self.main_window.right_panel:
                 self.main_window.right_panel.log_message(f"System: Puncture Point Tool Pose Recorded: {self.tool_pose_in_puncture_position}")
+            
             if self.main_window and self.main_window.status_bar:
                 self.main_window.status_bar.showMessage("Status: Aligned to puncture point & Pose recorded.")
+
+    def _update_tcp_o_parameters_internally(self):
+        """
+        Performs the O-point projection calculation and updates TCP_O definition
+        based on the current E-point (after alignment).
+        Does NOT switch the active TCP to TCP_O.
+        
+        [IMPORTANT] This function assumes the robot is currently in TCP_E mode,
+        so that 'self.latest_tool_pose' represents the actual E-point position.
+        """
+        try:
+            # 1. Get current pose (Post-alignment E point)
+            if not self.latest_tool_pose: return
+            cur_pose = np.array(self.latest_tool_pose)
+            e_pt = cur_pose[:3]
+            
+            # Update E vars in UI to reflect current position
+            for i in range(3): self.e_vars[i].setText(f"{cur_pose[i]:.2f}")
+            
+            # 2. Get current O point guess
+            try:
+                o_pt = np.array([float(v.text()) for v in self.o_vars])
+            except ValueError:
+                return # Invalid O point, skip update
+
+            # 3. Calculate projection distance (Dist from E to O along Z axis)
+            rpy_rad = np.deg2rad(cur_pose[3:])
+            rot = pyrot.matrix_from_euler(rpy_rad, 0, 1, 2, extrinsic=True)
+            z_vec = rot[:, 2]
+            
+            dist = np.dot(o_pt - e_pt, z_vec)
+            
+            # 4. Update O point UI (Projected O)
+            p_o_new = e_pt + dist * z_vec
+            for i in range(3): self.o_vars[i].setText(f"{p_o_new[i]:.2f}")
+            
+            # 5. Update RightPanel Inputs and Configure TCP_O
+            if self.main_window and hasattr(self.main_window, 'right_panel'):
+                rp = self.main_window.right_panel
+                
+                # Update Text Fields for TCP Definition
+                for le in rp.tcp_input_entries: le.setText("0.00")
+                rp.tcp_input_entries[2].setText(f"{dist:.2f}")   # Z
+                rp.tcp_input_entries[5].setText("157.50")        # Rz (Fixed offset)
+                
+                # [MODIFIED] Use the parameterized method to send ConfigTCP for "TCP_O"
+                # without modifying RightPanel's internal state (current_tcp_name)
+                rp.send_set_tcp_command(tcp_name="TCP_O")
+                
+                rp.log_message(f"System: Internal TCP_O Update -> Z:{dist:.2f}, Rz:157.50 (Active TCP unchanged)")
+                
+        except Exception as e:
+            print(f"Error in internal TCP_O update: {e}")
 
     def on_fine_tune_probe_clicked(self):
         # 情况 1: 当前已经是允许微调状态 (绿色) -> 执行关闭逻辑
@@ -694,7 +768,8 @@ class LeftPanel(QWidget):
             
             # 3. 切换回 TCP_E
             if self.tcp_manager.is_connected:
-                self.tcp_manager.send_command("SetTCPByName,0,TCP_E;")
+                # [修改] 使用统一接口切换到 TCP_E
+                self._switch_tcp("TCP_E")
                 if self.main_window and hasattr(self.main_window, 'right_panel'):
                     self.main_window.right_panel.log_message("System: Fine tune disabled. Switched back to TCP_E.")
             
@@ -729,7 +804,8 @@ class LeftPanel(QWidget):
             self.main_window.right_panel.log_message("System: Starting Get Suitable TCP Sequence (Logic in LeftPanel)...")
             
         # 1. 切换到 TCP_E
-        self.tcp_manager.send_command("SetTCPByName,0,TCP_E;")
+        # [修改] 使用统一接口切换到 TCP_E
+        self._switch_tcp("TCP_E")
         QTimer.singleShot(200, self._step_1_get_e)
 
     def _step_1_get_e(self):
@@ -738,56 +814,19 @@ class LeftPanel(QWidget):
         QTimer.singleShot(200, self._step_2_calc)
 
     def _step_2_calc(self):
-        # 3. 计算逻辑
-        try:
-            # 获取 O 点和 E 点数值 (自身变量)
-            o_pt = np.array([float(v.text()) for v in self.o_vars])
-            e_pt = np.array([float(v.text()) for v in self.e_vars])
-            
-            # 获取当前工具姿态 (自身变量)
-            cur_pose = self.latest_tool_pose
-            if not cur_pose: return
-
-            # 计算 Z 轴方向上的投影距离
-            rpy_rad = np.deg2rad(cur_pose[3:])
-            rot = pyrot.matrix_from_euler(rpy_rad, 0, 1, 2, extrinsic=True)
-            z_vec = rot[:, 2]
-            dist = np.dot(o_pt - e_pt, z_vec)
-            
-            # --- 跨面板操作：更新 RightPanel 的 TCP 输入框 ---
-            if self.main_window and hasattr(self.main_window, 'right_panel'):
-                rp = self.main_window.right_panel
-                # 重置输入框
-                for le in rp.tcp_input_entries: le.setText("0.00")
-                # 设置 Z 值 (Calculated distance)
-                rp.tcp_input_entries[2].setText(f"{dist:.2f}")
-                # 设置 Rz 值 (Fixed offset)
-                rp.tcp_input_entries[5].setText("157.50")
-            
-            # 更新自身的 O 点显示 (新的 O 点是 E 点沿 Z 轴偏移后的位置)
-            p_o_new = cur_pose[:3] + dist * z_vec
-            for i in range(3): self.o_vars[i].setText(f"{p_o_new[i]:.2f}")
-            
-            # 发送切换到 TCP_O (此时 TCP_O 还是旧值，或者是全0，准备在下一步更新)
-            # 注意：原始逻辑这里是为了确保后续 SetCurTCP 有效，或者先切到一个临时状态
-            self.tcp_manager.send_command("SetTCPByName,0,TCP_O;")
-            QTimer.singleShot(200, self._step_3_set_cur)
-            
-        except Exception as e: 
-            if self.main_window and hasattr(self.main_window, 'right_panel'):
-                self.main_window.right_panel.log_message(f"Error in calc: {e}")
-
-    def _step_3_set_cur(self):
-        # 4. 触发 RightPanel 的 "Set Cur TCP" 逻辑 (发送 ConfigTCP 指令)
-        if self.main_window and hasattr(self.main_window, 'right_panel'):
-            self.main_window.right_panel.send_set_tcp_command()
+        # 3. 计算逻辑 - 复用内部函数
+        # 此时由于前一步是 start_get_suitable_tcp_sequence 已经切换了 TCP_E，所以这里是安全的
+        self._update_tcp_o_parameters_internally()
+        
+        # 直接跳转到结束步骤，跳过原有的 _step_3_set_cur，因为内部函数已处理配置
         QTimer.singleShot(200, self._finalize_sequence)
         
     def _finalize_sequence(self):
         if self.is_fine_tuning_process:
             # [关键修改] 额外强制切换到 TCP_O
             # 这是为了覆盖可能因 SetCurTCP 指令导致的 TCP 切换副作用
-            self.tcp_manager.send_command("SetTCPByName,0,TCP_O;")
+            # [修改] 使用统一接口切换到 TCP_O
+            self._switch_tcp("TCP_O")
             
             # 允许微调 (启用 "+","-" 按钮逻辑)
             self.is_fine_tuning_allowed = True
@@ -802,13 +841,15 @@ class LeftPanel(QWidget):
             
         else:
             # 如果不是 fine tune 流程（虽然目前只有 fine tune 用这个），默认切回 TCP_E
-            self.tcp_manager.send_command("SetTCPByName,0,TCP_E;")
+            # [修改] 使用统一接口切换到 TCP_E
+            self._switch_tcp("TCP_E")
             QMessageBox.information(self, "Success", "Sequence completed.")
 
     # --- B Point Logic ---
     def rotate_ultrasound_plane_to_b(self):
         if not self.tcp_manager.is_connected: return
-        self.tcp_manager.send_command("SetTCPByName,0,TCP_E;")
+        # [修改] 使用统一接口切换到 TCP_E
+        self._switch_tcp("TCP_E")
         QTimer.singleShot(200, self._start_b_point_rotation_sequence)
 
     def _start_b_point_rotation_sequence(self):

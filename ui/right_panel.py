@@ -103,11 +103,13 @@ class RightPanel(QWidget):
         self.btn_tcp_tip = QPushButton("Switch to TCP_tip")
         for b in [self.btn_tcp_o, self.btn_tcp_p, self.btn_tcp_u, self.btn_tcp_e, self.btn_tcp_tip]:
             h1.addWidget(b)
+            # 按钮点击时，Qt 会发送 checked 状态(False)，这会被 switch_tcp 的参数接收
             b.clicked.connect(self.switch_tcp)
             
         h2 = QHBoxLayout()
         self.btn_set_cur = QPushButton("Set Cur TCP")
-        self.btn_set_cur.clicked.connect(self.send_set_tcp_command)
+        # 注意：这里连接的是默认参数的调用，即使用界面当前选中的 TCP
+        self.btn_set_cur.clicked.connect(lambda: self.send_set_tcp_command())
         h2.addWidget(self.btn_set_cur)
         
         v_layout.addLayout(h1)
@@ -117,7 +119,6 @@ class RightPanel(QWidget):
     def create_cur_tcp_group(self, layout):
         group = QGroupBox("Current TCP Settings")
         
-        # 修复：使用 QVBoxLayout 作为主容器，这样可以垂直放入 Grid(数值) 和 HBox(按钮)
         v_layout = QVBoxLayout(group)
         
         grid = QGridLayout()
@@ -130,7 +131,6 @@ class RightPanel(QWidget):
             self.cur_tcp_vars[i] = le
             grid.addWidget(le, i//3, (i%3)*2+1)
         
-        # 将数值网格添加到垂直布局
         v_layout.addLayout(grid)
         
         h = QHBoxLayout()
@@ -143,7 +143,6 @@ class RightPanel(QWidget):
         b_read_tip = QPushButton("Read TCP_tip")
         b_read_tip.clicked.connect(lambda: self.tcp_manager.send_command("ReadTCPByName,0,TCP_tip;"))
         
-        # 【新增】找回 Read TCP_U 按钮
         b_read_u = QPushButton("Read TCP_U")
         b_read_u.clicked.connect(lambda: self.tcp_manager.send_command("ReadTCPByName,0,TCP_U;"))
         
@@ -152,7 +151,6 @@ class RightPanel(QWidget):
         h.addWidget(b_read_tip)
         h.addWidget(b_read_u)
         
-        # 将按钮栏添加到垂直布局
         v_layout.addLayout(h)
         
         layout.addWidget(group)
@@ -235,50 +233,68 @@ class RightPanel(QWidget):
         cmd = "GrpOpenFreeDriver,0;" if state == Qt.Checked else "GrpCloseFreeDriver,0;"
         self.tcp_manager.send_command(cmd)
 
-    def switch_tcp(self):
-        btn = self.sender()
-        name = btn.text().replace("Switch to ", "")
-        self.current_tcp_name = name
-        self.log_message(f"SetTCPByName,0,{name};")
-        self.tcp_manager.send_command(f"SetTCPByName,0,{name};")
+    def switch_tcp(self, tcp_name=None):
+        """
+        统一的 TCP 切换函数。
+        支持两种调用方式：
+        1. 按钮点击信号触发：此时 tcp_name 通常为 False (bool) 或 None。
+        2. 代码直接调用：例如 self.switch_tcp("TCP_E")，此时 tcp_name 为字符串。
+        """
+        target_name = None
 
-    def send_set_tcp_command(self):
+        # 情况1：如果是字符串，直接使用（代码调用）
+        if isinstance(tcp_name, str):
+            target_name = tcp_name
+        
+        # 情况2：如果是按钮触发（tcp_name不是字符串），从按钮文本解析
+        else:
+            btn = self.sender()
+            if btn:
+                target_name = btn.text().replace("Switch to ", "")
+        
+        # 执行切换指令
+        if target_name:
+            self.current_tcp_name = target_name
+            cmd = f"SetTCPByName,0,{target_name};"
+            self.log_message(cmd)
+            self.tcp_manager.send_command(cmd)
+
+    # [改进] 允许传入 tcp_name 参数，并在发送指令 200ms 后切换到 TCP_E
+    def send_set_tcp_command(self, tcp_name=None):
+        # 决定使用哪个名字：如果传入了就用传入的，否则用当前界面状态
+        target_name = tcp_name if tcp_name else self.current_tcp_name
+        
         try:
             params = [float(x.text()) for x in self.tcp_input_entries]
-            cmd = f"ConfigTCP,0,{self.current_tcp_name},{params[0]:.2f},{params[1]:.2f},{params[2]:.2f},{params[3]:.2f},{params[4]:.2f},{params[5]:.2f};"
+            # 使用 target_name 构造指令
+            cmd = f"ConfigTCP,0,{target_name},{params[0]:.2f},{params[1]:.2f},{params[2]:.2f},{params[3]:.2f},{params[4]:.2f},{params[5]:.2f};"
             self.tcp_manager.send_command(cmd)
             self.log_message(cmd)
+            
+            # [新增] 发送配置指令后，延迟 200ms 自动切换回 TCP_E
+            QTimer.singleShot(200, lambda: self.switch_tcp("TCP_E"))
+            
         except:
             QMessageBox.critical(self, "Error", "Invalid TCP params")
 
-    # =========================================================================
-    # [修改] 连接 TCP 函数：增加连接成功后的初始化指令
-    # =========================================================================
     def connect_tcp(self):
         ip = self.ip_entry.text()
         try:
             port = int(self.port_entry.text())
             res = self.tcp_manager.connect(ip, port)
             
-            # 检查连接结果
             if "成功" in res or "Connected" in res:
-                # 1. 默认操作：请求 TCP_U 定义
                 self.tcp_manager.send_command("ReadTCPByName,0,TCP_U;")
                 self.temp_expected_response = "TCP_U_DEF"
                 
-                # 2. [新增] 自动切换到 TCP_E
-                self.tcp_manager.send_command("SetTCPByName,0,TCP_E;")
-                self.current_tcp_name = "TCP_E"
+                # [修改] 使用统一的 switch_tcp 函数进行自动切换
+                self.switch_tcp("TCP_E")
                 self.log_message("System: Auto-switched to TCP_E on connect.")
 
-                # 3. [新增] 自动设置 Override 为 0.2
                 self.tcp_manager.send_command("SetOverride,0,0.20;")
                 self.log_message("System: Auto-set Override to 0.20 on connect.")
 
-                # 4. [新增] 同步更新 LeftPanel 的滑块 UI
                 if self.main_window and hasattr(self.main_window, 'left_panel'):
-                    # 更新滑块位置到 20 (对应 0.20)
-                    # 注意：setValue 会触发 valueChanged 信号，从而自动更新 Label 文字
                     self.main_window.left_panel.override_slider.setValue(20)
             else:
                 QMessageBox.critical(self, "Connection Error", res)
@@ -304,7 +320,6 @@ class RightPanel(QWidget):
         if not connected: self.stop_btn.setEnabled(False)
 
     def handle_message(self, msg):
-        # 高频消息过滤
         high_freq_msgs = ("ReadActPos", "ReadOverride", "ReadEmergencyInfo", "ReadRobotState")
         
         if not msg.startswith(high_freq_msgs): 
@@ -365,8 +380,6 @@ class RightPanel(QWidget):
                     self.main_window.left_panel.tcp_u_definition_pose = tcp_u
                     self.log_message(f"System: TCP_U Definition stored: {tcp_u}")
                 
-                # --- [新增] 自动链式请求 TCP_tip ---
-                # 在成功获取 TCP_U 后，自动请求 TCP_tip
                 self.tcp_manager.send_command("ReadTCPByName,0,TCP_tip;")
                 self.temp_expected_response = "TCP_TIP_DEF"
                 self.log_message("System: Auto-requesting TCP_tip definition...")
@@ -374,7 +387,6 @@ class RightPanel(QWidget):
             except: pass
             
     def _handle_tcp_tip_def(self, msg):
-        """处理 TCP_tip 定义并自动请求 TCP_P 定义。"""
         self.temp_expected_response = None
         parts = msg.strip(';').strip(',').split(',')
         if len(parts) == 8 and parts[1] == 'OK':
@@ -384,7 +396,6 @@ class RightPanel(QWidget):
                     self.main_window.left_panel.tcp_tip_definition_pose = tcp_tip
                     self.log_message(f"System: TCP_tip Definition stored: {tcp_tip}")
                 
-                # --- [新增] 自动链式请求 TCP_P ---
                 self.tcp_manager.send_command("ReadTCPByName,0,TCP_P;")
                 self.temp_expected_response = "TCP_P_DEF"
                 self.log_message("System: Auto-requesting TCP_P definition...")
@@ -393,12 +404,10 @@ class RightPanel(QWidget):
                 self.log_message(f"Error parsing TCP_tip def: {e}")
                 
     def _handle_tcp_p_def(self, msg):
-        """[新增] 处理 TCP_P 定义的返回消息并存储到 LeftPanel。"""
         self.temp_expected_response = None
         parts = msg.strip(';').strip(',').split(',')
         if len(parts) == 8 and parts[1] == 'OK':
             try:
-                # 解析 TCP_P 定义
                 tcp_p = [float(p) for p in parts[2:]]
                 if self.main_window and hasattr(self.main_window, 'left_panel'):
                     self.main_window.left_panel.tcp_p_definition_pose = tcp_p
