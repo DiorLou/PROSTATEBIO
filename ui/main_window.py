@@ -7,6 +7,7 @@ from ui.beckhoff_tab import BeckhoffTab
 from ui.ultrasound_tab import UltrasoundTab
 from ui.left_panel import LeftPanel
 from ui.right_panel import RightPanel
+from ui.navigation_tab import NavigationTab
 
 class RobotControlWindow(QMainWindow):
     VARIABLE_NAMES = ['x0', 'x1', 'x2', 'x3']
@@ -55,6 +56,10 @@ class RobotControlWindow(QMainWindow):
         self.beckhoff_tab = BeckhoffTab(self.robot_kinematics, self)
         self.tabs.addTab(self.beckhoff_tab, "Beckhoff Communication")
         
+        # --- Tab 4: Navigation Communication ---
+        self.navigation_tab = NavigationTab(self)
+        self.tabs.addTab(self.navigation_tab, "Navigation Communication")
+        
         self.status_bar.showMessage("Status: Ready")
 
     # --- 兼容性接口 (供 UltrasoundTab 使用) ---
@@ -85,4 +90,5 @@ class RobotControlWindow(QMainWindow):
         self.tcp_manager.disconnect()
         self.ultrasound_tab.cleanup()
         self.beckhoff_tab.cleanup()
+        self.navigation_tab.cleanup()
         super().closeEvent(event)
