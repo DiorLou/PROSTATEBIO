@@ -919,18 +919,38 @@ class LeftPanel(QWidget):
         self.current_b_point_step += 1
         if self.current_b_point_step < len(self.b_point_rotation_steps):
             delta = self.b_point_rotation_steps[self.current_b_point_step]
+            
+            # 1. 计算当前步进的 TCP_E 位置 (P_final)
             P_final = get_final_tcp_e_position_after_delta_rotation(self.initial_tcp_pose_for_b_rot[:3], delta, self.b_point_o_point)
             
+            # 2. 计算当前步进的 TCP_E 姿态 (R_final)
             init_rpy_rad = np.deg2rad(self.initial_tcp_pose_for_b_rot[3:])
             R_init = pyrot.matrix_from_euler(init_rpy_rad, 0, 1, 2, extrinsic=True)
             R_final = np.dot(delta[:3,:3], R_init)
             final_rpy_deg = np.rad2deg(pyrot.euler_from_matrix(R_final, 0, 1, 2, extrinsic=True))
             
+            # 计算并发送 Volume 系下的 TCP_U 姿态
+            # =========================================================================
+            
+            # 构建当前步进的 T_Base_E 矩阵
+            T_Base_E = np.identity(4)
+            T_Base_E[:3, :3] = R_final
+            T_Base_E[:3, 3] = P_final
+            
+            # 调用辅助函数计算并发送
+            self._calculate_and_send_tcpu_in_volume(T_Base_E)
+            
+            # =========================================================================
+
+            # 发送机器人运动指令 (保持原有逻辑)
             pos_rpy_str = ",".join([f"{v:.2f}" for v in np.concatenate((P_final, final_rpy_deg))])
             dJ_zero = ",".join(["0.00"] * 6)
             cmd = f"WayPoint,0,{pos_rpy_str},{dJ_zero},TCP,Base,50,250,0,1,0,0,0,0,ID1;"
+            
+            # 延时发送指令，给导航数据发送留一点时间（虽然socket是异步的，但这更稳妥）
             QTimer.singleShot(400, lambda: self.tcp_manager.send_command(cmd))
-            print(cmd)
+            
+            # print(cmd) # 调试用
             
             step_angle = np.rad2deg(pyrot.axis_angle_from_matrix(delta[:3, :3])[3])
             if self.main_window and self.main_window.right_panel:
@@ -1176,6 +1196,53 @@ class LeftPanel(QWidget):
         x_comp = np.dot(proj_t, proj_u)
         y_comp = np.dot(proj_t, y_plane)
         return np.rad2deg(np.arctan2(y_comp, x_comp))
+    
+    def _calculate_and_send_tcpu_in_volume(self, T_Base_E):
+        """
+        根据当前的机器臂位姿 T_Base_E，计算 TCP_U 在 Volume 坐标系下的位姿，并发送给导航。
+        计算链: T_Volume_TCP_U = inv(T_Base_Volume) * T_Base_E * T_E_TCP_U
+        """
+        # 1. 检查必要数据是否存在
+        if self.tcp_u_definition_pose is None:
+            # print("Warning: TCP_U definition is missing. Cannot calculate navigation data.")
+            return
+        if self.tcp_u_volume is None:
+            # print("Warning: TCP_U_Volume is missing. Cannot calculate navigation data.")
+            return
+
+        try:
+            # 2. 获取 T_E_TCP_U (TCP_U 在 E 系下的定义)
+            T_E_U = self._pose_to_matrix(self.tcp_u_definition_pose)
+
+            # 3. 计算 T_Base_TCP_U = T_Base_E * T_E_TCP_U
+            T_Base_U = np.dot(T_Base_E, T_E_U)
+
+            # 4. 获取 T_Base_Volume (Volume 在 Base 系下的定义)
+            T_Base_Vol = self._pose_to_matrix(self.tcp_u_volume)
+
+            # 5. 计算 T_Volume_Base = inv(T_Base_Volume)
+            T_Vol_Base = np.linalg.inv(T_Base_Vol)
+
+            # 6. 计算 T_Volume_TCP_U = T_Volume_Base * T_Base_TCP_U
+            T_Vol_U = np.dot(T_Vol_Base, T_Base_U)
+
+            # 7. 提取位姿 (x, y, z, rx, ry, rz)
+            pos = T_Vol_U[:3, 3]
+            # 将旋转矩阵转回欧拉角 (度)
+            rpy = np.rad2deg(pyrot.euler_from_matrix(T_Vol_U[:3, :3], 0, 1, 2, extrinsic=True))
+
+            # 8. 构造发送消息
+            # 格式示例: "UpdateStepTCPUPoseInVol,x,y,z,rx,ry,rz;"
+            msg = f"UpdateStepTCPUPoseInVol,{pos[0]:.3f},{pos[1]:.3f},{pos[2]:.3f},{rpy[0]:.3f},{rpy[1]:.3f},{rpy[2]:.3f};"
+
+            # 9. 发送到 Navigation Communication Tab
+            if self.main_window and hasattr(self.main_window, 'navigation_tab'):
+                self.main_window.navigation_tab.nav_manager.send_command(msg)
+                # 可选：在导航界面的日志框中显示
+                self.main_window.navigation_tab.log_message(f"Sent Step Nav Data: {msg}")
+
+        except Exception as e:
+            print(f"Error calculating T_Volume_TCP_U: {e}")
 
     def _handle_b_points_list_selection(self, selected_list):
         self.calculated_b_points = selected_list
