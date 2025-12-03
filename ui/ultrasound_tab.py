@@ -539,23 +539,31 @@ class UltrasoundTab(QWidget):
             QMessageBox.critical(self, "TCP Error", f"Current TCP must be 'TCP_E' ({robot_control_window.current_tcp_name} is active) before recording the pose for medical use. Please switch to TCP_E.")
             return
             
-        # 记录当前的 latest_tool_pose 到新的全局变量 self.tcp_e_medical_value 中
-        # 使用 list() 确保是拷贝而不是引用
+        # 1. 记录 TCP_E_Medical 并触发 TCP_U_Volume 计算 (现有逻辑)
         robot_control_window.tcp_e_medical_value = list(robot_control_window.latest_tool_pose)
-        
-        # 记录完成后，发送状态信息
         pose_str = ", ".join([f"{p:.2f}" for p in robot_control_window.tcp_e_medical_value])
         robot_control_window.status_bar.showMessage(f"Status: TCP_E_Medical_value recorded: [{pose_str}]")
         
-        # 立即触发 tcp_u_volume 的计算
+        # 立即计算 TCP_U_Volume
         robot_control_window.compute_and_store_tcp_u_volume()
             
-        # MoveRelJ, nRbtID, nAxisId, nDirection, dDistance;
-        # nRbtID=0, nAxisId=5 (关节六), nDirection=0 (反向), dDistance=x
+        # 2. 计算 a_point_in_volume 并发送数据
+        # 从 LeftPanel 获取刚刚计算好的 tcp_u_volume
+        tcp_u_vol = robot_control_window.left_panel.tcp_u_volume
+        # 调用 LeftPanel 的新方法计算 a_point_in_volume
+        a_in_vol = robot_control_window.left_panel.calculate_a_point_in_u_volume()
+        
+        if tcp_u_vol is not None and a_in_vol is not None:
+            self._send_volume_data_to_navigation(a_in_vol, tcp_u_vol)
+        else:
+            # 仅做警告，不中断旋转流程（视需求而定）
+            QMessageBox.warning(self, "Data Warning", "Failed to calculate A point in Volume or TCP_U_Volume. Navigation data not sent.")
+
+        # 3. 发送旋转指令 (现有逻辑)
         command = f"MoveRelJ,0,5,{BACKWARD},{x};"
         if self.tcp_manager and self.tcp_manager.is_connected:
             self.tcp_manager.send_command(command)
-            QMessageBox.information(self, "Command Sent", f"Sent rotate left {x} degrees command.")
+            QMessageBox.information(self, "Command Sent", f"Sent rotate left {x} degrees command.\nNavigation data sent.")
         else:
             QMessageBox.warning(self, "Connection Error", "Not connected to robot or TCP manager.")
 
@@ -666,3 +674,23 @@ class UltrasoundTab(QWidget):
         # --- 引入非阻塞延时 (300ms)，等待最新的机器人姿态更新 ---
         delay_ms = 500
         QTimer.singleShot(delay_ms, self._continue_rotation_after_delay)
+        
+    def _send_volume_data_to_navigation(self, a_pt, u_vol):
+        """
+        [新增] 格式化并发送 A点(Volume系) 和 TCP_U_Volume(Base系) 到导航服务器。
+        发送格式示例: "UpdateVolumeData,Ax,Ay,Az,Ux,Uy,Uz,Urx,Ury,Urz;"
+        """
+        if self.main_window and hasattr(self.main_window, 'navigation_tab'):
+            # 构造消息字符串 (保留3位小数)
+            msg = f"UpdateVolumeData,{a_pt[0]:.3f},{a_pt[1]:.3f},{a_pt[2]:.3f}," \
+                  f"{u_vol[0]:.3f},{u_vol[1]:.3f},{u_vol[2]:.3f}," \
+                  f"{u_vol[3]:.3f},{u_vol[4]:.3f},{u_vol[5]:.3f};"
+            
+            # 1. 通过 NavigationTab 的 Manager 发送
+            self.main_window.navigation_tab.nav_manager.send_command(msg)
+            
+            # 2. [修正] 在 Navigation Communication tab 页中记录日志
+            # 直接调用 NavigationTab 的 log_message 方法显示在界面的文本框中
+            self.main_window.navigation_tab.log_message(f"Sent Nav Data: {msg}")
+        else:
+            print("Error: Navigation Tab not accessible.")
