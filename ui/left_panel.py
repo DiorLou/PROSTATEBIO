@@ -137,6 +137,8 @@ class LeftPanel(QWidget):
         self.b_point_in_tcp_p = None
         # 存储计算后的 A 点在 TCP_P 坐标系下的位置
         self.a_point_in_tcp_p = None
+        # 存储计算后的 A 点在 Volume 坐标系下的位置
+        self.a_point_in_volume = None
 
         # 旋转序列变量
         self.b_point_rotation_steps = []
@@ -1049,6 +1051,47 @@ class LeftPanel(QWidget):
             if self.main_window and self.main_window.right_panel:
                 self.main_window.right_panel.log_message(f"System: tcp_u_volume: {self.tcp_u_volume}")
         except Exception as e: print(e)
+        
+    def calculate_a_point_in_u_volume(self):
+        """
+        [新增] 计算 A 点在 U_Volume 坐标系下的位置。
+        前提：tcp_u_volume 已被计算 (在点击左转x度时会触发计算)。
+        
+        Returns:
+            list: [x, y, z] 坐标列表，如果计算失败则返回 None。
+        """
+        if self.tcp_u_volume is None:
+            print("Error: tcp_u_volume is not computed.")
+            return None
+            
+        # 1. 获取界面上的 A 点 (Base 系)
+        try:
+            a_vals = [float(v.text()) for v in self.a_vars]
+            # 转换为齐次坐标 [x, y, z, 1.0]
+            a_point_base = np.array(a_vals + [1.0])
+        except ValueError:
+            print("Error: Invalid A point inputs in UI.")
+            return None
+
+        try:
+            # 2. 获取 Volume 在 Base 下的变换矩阵 T_Base_Volume
+            T_Base_Volume = self._pose_to_matrix(self.tcp_u_volume)
+            
+            # 3. 计算 Base 在 Volume 下的变换矩阵 (求逆)
+            T_Volume_Base = np.linalg.inv(T_Base_Volume)
+            
+            # 4. 坐标变换: P_A_Volume = T_Volume_Base * P_A_Base
+            a_point_vol_homo = np.dot(T_Volume_Base, a_point_base)
+            
+            # 5. 将计算结果存储到 self.a_point_in_volume
+            self.a_point_in_volume = a_point_vol_homo[:3].tolist()
+            
+            print(f"Calculated A point in Volume: {self.a_point_in_volume}")
+            return self.a_point_in_volume
+            
+        except Exception as e:
+            print(f"Error calculating A in Volume: {e}")
+            return None
 
     def _pose_to_matrix(self, pose):
         x, y, z, rx, ry, rz = pose
@@ -1169,7 +1212,8 @@ class LeftPanel(QWidget):
                 'tool_pose_in_puncture_position': self.tool_pose_in_puncture_position,
                 'tcp_u_volume': self.tcp_u_volume,
                 'b_point_in_tcp_p': self.b_point_in_tcp_p,
-                'a_point_in_tcp_p': self.a_point_in_tcp_p
+                'a_point_in_tcp_p': self.a_point_in_tcp_p,
+                'a_point_in_volume': self.a_point_in_volume
             }
             
             with open(DATA_FILE_NAME, 'w') as f: 
@@ -1218,6 +1262,7 @@ class LeftPanel(QWidget):
             self.tcp_u_volume = data.get('tcp_u_volume')
             self.b_point_in_tcp_p = data.get('b_point_in_tcp_p')
             self.a_point_in_tcp_p = data.get('a_point_in_tcp_p')
+            self.a_point_in_volume = data.get('a_point_in_volume')
             
             QMessageBox.information(self, "Success", "Data loaded successfully.")
 
