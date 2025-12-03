@@ -629,6 +629,65 @@ class BeckhoffTab(QWidget):
         elif self.trocar_phase_1_state == 3 and "Movement Completed" in msg:
             self.trocar_phase_1_state = 0
             self.phase_1_done = True
+            
+            # [NEW] Calculate and Send RCM point in Volume Coordinate System
+            try:
+                parent = self.parent()
+                if parent and hasattr(parent, 'left_panel'):
+                    left_p = parent.left_panel
+                    
+                    # 1. Get Delta J1 (as used in the movement)
+                    delta_j1_str = self.inc_j1_input.text()
+                    delta_j1 = float(delta_j1_str) if delta_j1_str else 0.0
+
+                    # 2. Calculate RCM point in TCP_P Coordinate System (Correction applied)
+                    # Using the joint configuration [delta_j1, 0, 0, 0]
+                    rcm_in_p = self.robot.get_rcm_point([delta_j1, 0, 0, 0])
+
+                    # 3. Transform P_TCP_P -> P_Volume
+                    # Need: TCP_P_Def (E->P), Tool_Pose (Base->E), TCP_U_Vol (Base->Vol)
+                    if (left_p.tcp_p_definition_pose is not None and 
+                        left_p.latest_tool_pose is not None and 
+                        left_p.tcp_u_volume is not None):
+                        
+                        # --- Prepare Matrices ---
+                        # T_E_P: Transformation from TCP_E to TCP_P
+                        T_E_P = left_p._pose_to_matrix(left_p.tcp_p_definition_pose)
+                        
+                        # T_Base_E: Transformation from Base to TCP_E (Current Robot Pose)
+                        T_Base_E = left_p._pose_to_matrix(left_p.latest_tool_pose)
+                        
+                        # T_Base_Vol: Transformation from Base to Volume
+                        T_Base_Vol = left_p._pose_to_matrix(left_p.tcp_u_volume)
+                        
+                        # --- Calculate Transform Chain ---
+                        # 1. Calculate T_Base_P = T_Base_E * T_E_P
+                        T_Base_P = np.dot(T_Base_E, T_E_P)
+                        
+                        # 2. Calculate P_Base = T_Base_P * P_TCP_P
+                        rcm_p_homo = np.append(rcm_in_p, 1.0) # [x, y, z, 1]
+                        rcm_base_homo = np.dot(T_Base_P, rcm_p_homo)
+                        
+                        # 3. Calculate T_Vol_Base = inv(T_Base_Vol)
+                        T_Vol_Base = np.linalg.inv(T_Base_Vol)
+                        
+                        # 4. Calculate P_Vol = T_Vol_Base * P_Base
+                        rcm_vol_homo = np.dot(T_Vol_Base, rcm_base_homo)
+                        rcm_vol = rcm_vol_homo[:3]
+
+                        # 4. Send to Navigation
+                        msg_out = f"UpdateRCMInVolume,{rcm_vol[0]:.3f},{rcm_vol[1]:.3f},{rcm_vol[2]:.3f};"
+                        
+                        if hasattr(parent, 'navigation_tab'):
+                            parent.navigation_tab.nav_manager.send_command(msg_out)
+                            parent.navigation_tab.log_message(f"Sent RCM Data: {msg_out}")
+                        else:
+                            print("Error: Navigation Tab not accessible.")
+                    else:
+                        print("Warning: Missing coordinate definitions (TCP_P, Tool Pose, or TCP_U_Volume) in LeftPanel.")
+            except Exception as e:
+                print(f"Error calculating/sending RCM in Volume: {e}")
+
             if self.parent() and hasattr(self.parent(), 'status_bar'):
                 self.parent().status_bar.showMessage("Status: Trocar Insertion Phase 1 Completed.")
 
