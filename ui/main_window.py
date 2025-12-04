@@ -60,6 +60,9 @@ class RobotControlWindow(QMainWindow):
         self.navigation_tab = NavigationTab(self)
         self.tabs.addTab(self.navigation_tab, "Navigation Communication")
         
+        # [新增连接] 将 Beckhoff Tab 的位置更新信号连接到 Navigation Tab 的处理函数
+        self.beckhoff_tab.beckhoff_position_update.connect(self.navigation_tab.update_needle_pose_in_volume)
+        
         self.status_bar.showMessage("Status: Ready")
 
     # --- 兼容性接口 (供 UltrasoundTab 使用) ---
