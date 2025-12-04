@@ -4,10 +4,13 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt
 from core.navigation_tcp_manager import NavigationTCPManager
+import numpy as np
+import pytransform3d.rotations as pyrot
 
 class NavigationTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.main_window = parent # Explicitly store reference to Main Window
         self.nav_manager = NavigationTCPManager()
         self.init_ui()
         self.setup_connections()
@@ -132,3 +135,81 @@ class NavigationTab(QWidget):
     def cleanup(self):
         """窗口关闭时调用，确保断开连接"""
         self.nav_manager.disconnect()
+        
+    def update_needle_pose_in_volume(self, curr_j0, curr_j1, curr_j2, curr_j3):
+        """
+        槽函数：接收 Beckhoff Tab 发来的当前位置更新。
+        计算针尖在 Volume 坐标系下的位姿并发送。
+        """
+        if not self.nav_manager.is_connected:
+            return
+            
+        # 1. 获取主窗口引用
+        mw = self.main_window
+        if not mw: return
+        
+        # 2. 检查 LeftPanel 数据是否就绪
+        lp = mw.left_panel
+        if lp.tcp_p_definition_pose is None or lp.tcp_u_volume is None or not lp.latest_tool_pose:
+            # 数据未准备好，跳过
+            return
+            
+        # 3. 获取 Reset 值 (Beckhoff Tab)
+        bt = mw.beckhoff_tab
+        if bt is None: return
+        
+        # 4. 计算关节差值 (Joint Values)
+        # 根据用户定义的输入顺序: [Current J1 - RESET_J1, Current J2 - RESET_J2, Current J3 - RESET_J3, Current J0 - RESET_J0]
+        try:
+            val_x0 = curr_j1 - bt.RESET_J1
+            val_x1 = curr_j2 - bt.RESET_J2
+            val_x2 = curr_j3 - bt.RESET_J3
+            val_x3 = curr_j0 - bt.RESET_J0
+            
+            joint_values = [val_x0, val_x1, val_x2 - val_x1, val_x3]
+        except Exception:
+            return # 数据异常
+
+        # 5. 计算针尖在 TCP_P 下的位姿 (T_TCP_P_Needle)
+        # robot._forward 返回的是 SymPy 矩阵，需要转换
+        try:
+            res_sympy = mw.robot_kinematics._forward(joint_values)
+            T_P_Needle = np.array(res_sympy).astype(np.float64)
+        except Exception as e:
+            print(f"Kinematics calc error: {e}")
+            return
+
+        # 6. 执行坐标系变换链
+        # 目标: T_Vol_Needle = T_Vol_Base * T_Base_P * T_P_Needle
+        try:
+            # 辅助函数：Pose (x,y,z,rx,ry,rz) 转 4x4 矩阵
+            def to_matrix(pose):
+                x, y, z, rx, ry, rz = pose
+                T = np.identity(4)
+                T[:3, :3] = pyrot.matrix_from_euler(np.deg2rad([rx, ry, rz]), 0, 1, 2, extrinsic=True)
+                T[:3, 3] = [x, y, z]
+                return T
+            
+            # T_Base_P = T_Base_E * T_E_P
+            T_Base_E = to_matrix(lp.latest_tool_pose)
+            T_E_P = to_matrix(lp.tcp_p_definition_pose)
+            T_Base_P = np.dot(T_Base_E, T_E_P)
+            
+            # T_Vol_Base = inv(T_Base_Vol)
+            T_Base_Vol = to_matrix(lp.tcp_u_volume)
+            T_Vol_Base = np.linalg.inv(T_Base_Vol)
+            
+            # 最终变换
+            T_Vol_Needle = np.dot(T_Vol_Base, np.dot(T_Base_P, T_P_Needle))
+            
+            # 7. 提取位姿并发送
+            pos = T_Vol_Needle[:3, 3]
+            rot_mat = T_Vol_Needle[:3, :3]
+            # 转换为 Euler 角 (rx, ry, rz)
+            rpy = np.rad2deg(pyrot.euler_from_matrix(rot_mat, 0, 1, 2, extrinsic=True))
+            
+            msg = f"UpdateNeedlePoseInVol,{pos[0]:.3f},{pos[1]:.3f},{pos[2]:.3f},{rpy[0]:.3f},{rpy[1]:.3f},{rpy[2]:.3f};"
+            self.nav_manager.send_command(msg)
+            
+        except Exception as e:
+            print(f"Transform chain error: {e}")

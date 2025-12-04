@@ -181,6 +181,9 @@ class ADSThread(QThread):
 # BeckhoffTab Class
 # ====================================================================
 class BeckhoffTab(QWidget):
+    # [NEW] 定义一个信号，用于广播当前的 J0-J3 值
+    beckhoff_position_update = pyqtSignal(float, float, float, float)
+
     RESET_J0 = 0.000
     RESET_J1 = 0.000
     RESET_J2 = 67.569
@@ -526,6 +529,9 @@ class BeckhoffTab(QWidget):
         self.pos_labels["CurJ1"].setText(f"{j1:.3f}")
         self.pos_labels["CurJ2"].setText(f"{j2:.3f}")
         self.pos_labels["CurJ3"].setText(f"{j3:.3f}")
+        
+        # [NEW] Emit signal with current positions
+        self.beckhoff_position_update.emit(j0, j1, j2, j3)
         
     def _update_enable_button(self, is_enabled: bool):
         if is_enabled:
