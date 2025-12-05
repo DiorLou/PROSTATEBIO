@@ -581,6 +581,16 @@ class LeftPanel(QWidget):
         # Update UI text fields
         for i in range(3):
             self.a_vars[i].setText(f"{selected_point[i]:.2f}")
+
+        # [新增] 检查 TCP_U_Volume 是否存在，如果存在则自动计算并更新 A_in_Volume
+        if self.tcp_u_volume is not None:
+             # calculate_a_point_in_u_volume 使用界面上的输入框(a_vars)和 tcp_u_volume 进行计算
+             new_a_in_vol = self.calculate_a_point_in_u_volume()
+             if self.main_window and hasattr(self.main_window, 'right_panel'):
+                 self.main_window.right_panel.log_message(f"System: A point selected. Updated A_in_Volume: {new_a_in_vol}")
+        else:
+             if self.main_window and hasattr(self.main_window, 'right_panel'):
+                 self.main_window.right_panel.log_message("System: A point selected. TCP_U_Volume not set, skipping A_in_Volume update.")
         
     def _finalize_point_record(self, name):
         # 1. 检查必要数据是否存在
