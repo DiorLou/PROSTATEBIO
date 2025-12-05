@@ -833,7 +833,7 @@ class LeftPanel(QWidget):
         self._update_tcp_o_parameters_internally()
         
         # 直接跳转到结束步骤，跳过原有的 _step_3_set_cur，因为内部函数已处理配置
-        QTimer.singleShot(200, self._finalize_sequence)
+        QTimer.singleShot(400, self._finalize_sequence)
         
     def _finalize_sequence(self):
         if self.is_fine_tuning_process:

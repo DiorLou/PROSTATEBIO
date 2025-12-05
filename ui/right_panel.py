@@ -281,8 +281,8 @@ class RightPanel(QWidget):
             self.tcp_manager.send_command(cmd)
             self.log_message(cmd)
             
-            # [新增] 发送配置指令后，延迟 200ms 自动切换回 TCP_E
-            QTimer.singleShot(200, lambda: self.switch_tcp("TCP_E"))
+            # [新增] 发送配置指令后，延迟 100ms 自动切换回 TCP_E
+            QTimer.singleShot(100, lambda: self.switch_tcp("TCP_E"))
             
         except:
             QMessageBox.critical(self, "Error", "Invalid TCP params")
