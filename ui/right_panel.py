@@ -207,7 +207,7 @@ class RightPanel(QWidget):
 
     def setup_connections(self):
         self.tcp_manager.connection_status_changed.connect(self.update_ui_on_connection)
-        self.tcp_manager.message_received.connect(self.handle_message)
+        self.tcp_manager.message_received.connect(self.handle_incoming_message)
 
     def toggle_power(self):
         if "Power On" in self.power_btn.text():
@@ -329,7 +329,7 @@ class RightPanel(QWidget):
         self.status_label.setText("TCP Status: Connected" if connected else "TCP Status: Disconnected")
         if not connected: self.stop_btn.setEnabled(False)
 
-    def handle_message(self, msg):
+    def handle_incoming_message(self, msg):
         high_freq_msgs = ("ReadActPos", "ReadOverride", "ReadEmergencyInfo", "ReadRobotState")
         
         if not msg.startswith(high_freq_msgs): 

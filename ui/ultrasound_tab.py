@@ -201,6 +201,30 @@ class UltrasoundTab(QWidget):
         # 机器人旋转按钮的连接 (使用新的方法)
         self.left_x_btn.clicked.connect(self.rotate_left_x)
         self.right_2x_btn.clicked.connect(self.rotate_and_capture_2x)
+        
+        # 监听 TCP 消息，用于处理旋转反馈
+        self.tcp_manager.message_received.connect(self.handle_incoming_message)
+        
+    def handle_incoming_message(self, message):
+        """处理来自机器人的消息，用于驱动连续旋转逻辑。"""
+        # 检查是否正在执行旋转扫描任务
+        if not self.is_rotating:
+            return
+
+        # 筛选 MoveRelJ 指令的反馈
+        if "MoveRelJ" in message:
+            # 尝试获取主窗口右侧面板的日志函数，以便在界面显示日志
+            log_func = print
+            if self.main_window and hasattr(self.main_window, 'right_panel'):
+                log_func = self.main_window.right_panel.log_message
+            
+            # 分情况处理并记录日志
+            if "OK" in message:
+                log_func(f"System: MoveRelJ OK received. Continuing... [{message.strip()}]")
+                self.continue_rotation()
+            else:
+                # 如果没有 OK，可能是错误消息或异常状态，记录警告
+                log_func(f"Warning: MoveRelJ received without OK! [{message.strip()}]")
 
     def update_crop_value(self, value):
         """更新裁剪滑块的标签文本，并确保上下左右边界的逻辑正确性。"""
