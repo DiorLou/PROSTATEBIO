@@ -630,7 +630,9 @@ class LeftPanel(QWidget):
                 
                 # Update Dropdown
                 new_index = len(self.a_points_list)
-                self.a_point_dropdown.addItem(f"A{new_index}")
+                # [修改] 增加坐标信息显示
+                coord_str = f"({new_point[0]:.2f}, {new_point[1]:.2f}, {new_point[2]:.2f})"
+                self.a_point_dropdown.addItem(f"A{new_index}: {coord_str}")
                 
                 # Automatically select the new point
                 self.a_point_dropdown.setCurrentIndex(new_index - 1)
@@ -1330,7 +1332,9 @@ class LeftPanel(QWidget):
             self.a_point_dropdown.blockSignals(True)
             self.a_point_dropdown.clear()
             for i, pt in enumerate(self.a_points_list):
-                self.a_point_dropdown.addItem(f"A{i+1}")
+                # [修改] 增加坐标信息显示
+                coord_str = f"({pt[0]:.2f}, {pt[1]:.2f}, {pt[2]:.2f})"
+                self.a_point_dropdown.addItem(f"A{i+1}: {coord_str}")
             self.a_point_dropdown.blockSignals(False)
             
             # ... (Rest of loading additional variables) ...
