@@ -559,12 +559,12 @@ class LeftPanel(QWidget):
     
     def _start_point_record(self, name):
         if not self.tcp_manager.is_connected: return
-        if self.main_window and self.main_window.status_bar:
-             # [修改] 提示切换到 TCP_E
-             self.main_window.status_bar.showMessage(f"Status: Getting {name} Point (Switching TCP_E)...")
+        # if self.main_window and self.main_window.status_bar:
+        #      # [修改] 提示切换到 TCP_E
+        #      self.main_window.status_bar.showMessage(f"Status: Getting {name} Point (Switching TCP_E)...")
         
-        # [修改] 使用统一接口切换到 TCP_E
-        self._switch_tcp("TCP_E")
+        # # [修改] 使用统一接口切换到 TCP_E
+        # self._switch_tcp("TCP_E")
         
         # 延时等待状态刷新后进行计算
         QTimer.singleShot(300, lambda: self._finalize_point_record(name))

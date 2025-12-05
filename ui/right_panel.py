@@ -230,8 +230,18 @@ class RightPanel(QWidget):
             self.enable_btn.setEnabled(False)
 
     def toggle_teach_mode(self, state):
-        cmd = "GrpOpenFreeDriver,0;" if state == Qt.Checked else "GrpCloseFreeDriver,0;"
-        self.tcp_manager.send_command(cmd)
+        if state == Qt.Checked:
+            # [修改] 开启示教模式时：
+            # 1. 首先切换到 TCP_E
+            self.switch_tcp("TCP_E")
+            self.log_message("System: Auto-switched to TCP_E for Teach Mode. Waiting 300ms to open driver...")
+            
+            # 2. 延迟 300ms 后再发送开启自由驱动的指令
+            # 这样确保 TCP 切换指令先被处理，且中间有间隔
+            QTimer.singleShot(300, lambda: self.tcp_manager.send_command("GrpOpenFreeDriver,0;"))
+        else:
+            # 关闭示教模式时，直接发送关闭指令
+            self.tcp_manager.send_command("GrpCloseFreeDriver,0;")
 
     def switch_tcp(self, tcp_name=None):
         """
