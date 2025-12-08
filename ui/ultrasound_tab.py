@@ -494,20 +494,21 @@ class UltrasoundTab(QWidget):
         self.single_save_btn.setEnabled(True) # [修改] 启用/禁用单次保存按钮
 
     def _get_rotation_x_value(self):
-        """从输入框获取旋转范围 x 的值，并进行校验。（已更新：必须是正整数）"""
+        """
+        [修改版] 从输入框获取旋转范围 x 的值。
+        现在支持负数（输入负数表示反向旋转），但不支持 0。
+        """
         try:
             x_text = self.rotation_range_input.text()
-            # 尝试转换为整数
             x = int(x_text) 
             
-            # 检查是否为正整数 (大于 0)
-            if x <= 0:
-                QMessageBox.warning(self, "Input Error", "Rotation range x must be a positive integer (greater than 0).")
+            # [修改] 只要不等于 0 即可，允许负数
+            if x == 0:
+                QMessageBox.warning(self, "Input Error", "Rotation range cannot be 0.")
                 return None
             return x
         except ValueError:
-            # 如果转换 int 失败，说明不是整数 (可能是小数或非数字字符)
-            QMessageBox.critical(self, "Input Error", "Rotation range x must be a valid positive integer!")
+            QMessageBox.critical(self, "Input Error", "Rotation range x must be a valid integer!")
             return None
 
     def _save_frame_at_step(self, step_degree):
@@ -547,23 +548,37 @@ class UltrasoundTab(QWidget):
         return False
 
     def rotate_left_x(self):
-        """发送指令，使超声探头左转 x 度。"""
+        """
+        [修改版] 发送指令，使超声探头左转 x 度。
+        如果 x 为负数（例如 -50），则执行右转 50 度。
+        """
         x = self._get_rotation_x_value()
         if x is None:
             return
             
-        # 执行 TCP_E 检查和姿态记录
+        # --- [新增] 方向与角度处理逻辑 ---
+        # 默认方向为 BACKWARD (左转)
+        move_direction = BACKWARD
+        move_angle = x
+
+        # 如果输入是负数 (例如 -50)
+        if x < 0:
+            move_direction = FORWARD  # 自动切换为 FORWARD (右转)
+            move_angle = abs(x)       # 取绝对值 (50)
+            print(f"Debug: Input is negative ({x}), switching to RIGHT turn {move_angle} deg.")
+        # --------------------------------
+
+        # 执行 TCP_E 检查和姿态记录 (保持原有逻辑不变)
         robot_control_window = self.main_window
         if not robot_control_window or not hasattr(robot_control_window, 'latest_tool_pose'):
-            QMessageBox.warning(self, "Connection Error", "Cannot access robot pose data. Please ensure the robot is connected and data is streaming.")
+            QMessageBox.warning(self, "Connection Error", "Cannot access robot pose data...")
             return
 
-        # 检查当前激活的 TCP 名称
         if robot_control_window.current_tcp_name != "TCP_E":
-            QMessageBox.critical(self, "TCP Error", f"Current TCP must be 'TCP_E' ({robot_control_window.current_tcp_name} is active) before recording the pose for medical use. Please switch to TCP_E.")
+            QMessageBox.critical(self, "TCP Error", f"Current TCP must be 'TCP_E'...")
             return
             
-        # 1. 记录 TCP_E_Medical 并触发 TCP_U_Volume 计算 (现有逻辑)
+        # 1. 记录 TCP_E_Medical 并触发 TCP_U_Volume 计算
         robot_control_window.tcp_e_medical_value = list(robot_control_window.latest_tool_pose)
         pose_str = ", ".join([f"{p:.2f}" for p in robot_control_window.tcp_e_medical_value])
         robot_control_window.status_bar.showMessage(f"Status: TCP_E_Medical_value recorded: [{pose_str}]")
@@ -580,14 +595,17 @@ class UltrasoundTab(QWidget):
         if tcp_u_vol is not None and a_in_vol is not None:
             self._send_volume_data_to_navigation(a_in_vol, tcp_u_vol)
         else:
-            # 仅做警告，不中断旋转流程（视需求而定）
-            QMessageBox.warning(self, "Data Warning", "Failed to calculate A point in Volume or TCP_U_Volume. Navigation data not sent.")
+            QMessageBox.warning(self, "Data Warning", "Failed to calculate A point or TCP_U_Volume...")
 
-        # 3. 发送旋转指令 (现有逻辑)
-        command = f"MoveRelJ,0,5,{BACKWARD},{x};"
+        # 3. 发送旋转指令 (使用上面计算好的 move_direction 和 move_angle)
+        command = f"MoveRelJ,0,5,{move_direction},{move_angle};"
+        
         if self.tcp_manager and self.tcp_manager.is_connected:
             self.tcp_manager.send_command(command)
-            QMessageBox.information(self, "Command Sent", f"Sent rotate left {x} degrees command.\nNavigation data sent.")
+            
+            # 提示信息也做相应更新
+            dir_str = "LEFT" if move_direction == BACKWARD else "RIGHT (Negative Input)"
+            QMessageBox.information(self, "Command Sent", f"Sent rotate {dir_str} {move_angle} degrees command.\nNavigation data sent.")
         else:
             QMessageBox.warning(self, "Connection Error", "Not connected to robot or TCP manager.")
 
