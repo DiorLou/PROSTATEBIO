@@ -194,6 +194,7 @@ class BeckhoffTab(QWidget):
 
     def __init__(self, robot_kinematics, parent=None):
         super().__init__(parent)
+        self.main_window = parent  # [新增] 显式保存主窗口引用
         self.robot = robot_kinematics
         
         self.ads_client = ADS(AMS_NET_ID, PLC_PORT, PLC_IP)
@@ -638,7 +639,9 @@ class BeckhoffTab(QWidget):
             
             # [NEW] Calculate and Send RCM point in Volume Coordinate System
             try:
-                parent = self.parent()
+                # [关键修改] 使用 self.main_window 替代 self.parent()
+                parent = self.main_window
+                
                 if parent and hasattr(parent, 'left_panel'):
                     left_p = parent.left_panel
                     
@@ -804,7 +807,9 @@ class BeckhoffTab(QWidget):
         self.phase_1_done = False
         
         # 1. Access data from Left Panel
-        parent = self.parent()
+        # [关键修改] 使用 self.main_window 替代 self.parent()
+        parent = self.main_window 
+        
         if not parent or not hasattr(parent, 'left_panel'):
             QMessageBox.warning(self, "Error", "Cannot access Left Panel data.")
             return
