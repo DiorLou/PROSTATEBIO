@@ -8,16 +8,48 @@ import matplotlib.pyplot as plt
 
 
 # -------------------------- 核心配置 --------------------------
-IMAGE_FOLDER = r"C:\Users\wangz\PycharmProjects\PythonProject2\ultrasound_images_20251015_150024_inv"
+IMAGE_FOLDER = ""
 PIXEL_SPACING = 10 / 47  # 像素间距 (mm/像素)
-ORIGIN_OFFSET = 10  # 物理原点偏移
-ROTATION_START = -50  # 旋转起始角度
-ROTATION_END = 50  # 旋转结束角度
-NUM_IMAGES = 90  # 原始图像数量
+ORIGIN_OFFSET = 10       # 物理原点偏移
+ROTATION_START = None    # 将在运行时更新为 -x
+ROTATION_END = None      # 将在运行时更新为 x
+NUM_IMAGES = None        # 将在运行时更新为 2x + 1
 INTERPOLATION_STEPS = 3  # 插值步数
 VTK_FILENAME = "Prostate_US_3D_XYZ_to_LPS.vtk"
 AXIAL_PREVIEW_FILENAME = "US_3D_LPS_Axial_Preview.png"
 
+# -------------------------- 新增：外部调用接口 --------------------------
+def run_pipeline(image_folder, rotation_x):
+    """
+    供主程序调用的入口函数
+    :param image_folder: 图片保存的文件夹路径
+    :param rotation_x: 旋转角度 x (即界面输入的 rotation range)
+    """
+    global IMAGE_FOLDER, ROTATION_START, ROTATION_END, NUM_IMAGES
+    
+    # 1. 更新配置参数
+    IMAGE_FOLDER = image_folder
+    ROTATION_START = -float(rotation_x)
+    ROTATION_END = float(rotation_x)
+    NUM_IMAGES = int(2 * rotation_x + 1)
+    
+    print(f"\n[RecUS] 启动处理流程...")
+    print(f"  - 图像路径: {IMAGE_FOLDER}")
+    print(f"  - 旋转范围: {ROTATION_START}° ~ {ROTATION_END}°")
+    print(f"  - 预期图像数: {NUM_IMAGES}")
+    
+    # 为了防止多线程下 matplotlib 报错，强制使用非交互式后端
+    try:
+        plt.switch_backend('Agg')
+    except:
+        pass
+
+    # 2. 执行主流程
+    try:
+        main()
+        print("[RecUS] 处理流程执行完毕。")
+    except Exception as e:
+        print(f"[RecUS] 执行出错: {e}")
 
 # -------------------------- 1. 图像读取与排序 --------------------------
 def read_ultrasound_images(folder):
