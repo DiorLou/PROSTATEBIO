@@ -7,6 +7,13 @@ from datetime import datetime
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QMessageBox, QSlider, QFileDialog, QLineEdit
 from PyQt5.QtCore import Qt, QTimer 
 from PyQt5.QtGui import QImage, QPixmap # 已修正：QImage 和 QPixmap 应该从 QtGui 导入
+import threading  # [新增] 引入线程模块
+# [新增] 尝试导入 RecUS
+try:
+    from ultrasound_image_process import RecUS
+except ImportError:
+    RecUS = None
+    print("Warning: Could not import RecUS module. 3D reconstruction will be disabled.")
 
 # Constants for motion direction (来自 main_window.py)
 FORWARD = 1
