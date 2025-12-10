@@ -150,7 +150,7 @@ class NavigationTab(QWidget):
         
         # 2. 检查 LeftPanel 数据是否就绪
         lp = mw.left_panel
-        if lp.tcp_p_definition_pose is None or lp.tcp_u_volume is None or not lp.latest_tool_pose:
+        if lp.tcp_p_definition_pose is None or lp.volume_in_base is None or not lp.latest_tool_pose:
             # 数据未准备好，跳过
             return
             
@@ -196,7 +196,7 @@ class NavigationTab(QWidget):
             T_Base_P = np.dot(T_Base_E, T_E_P)
             
             # T_Vol_Base = inv(T_Base_Vol)
-            T_Base_Vol = to_matrix(lp.tcp_u_volume)
+            T_Base_Vol = to_matrix(lp.volume_in_base)
             T_Vol_Base = np.linalg.inv(T_Base_Vol)
             
             # 最终变换
@@ -208,6 +208,10 @@ class NavigationTab(QWidget):
             # 转换为 Euler 角 (rx, ry, rz)
             rpy = np.rad2deg(pyrot.euler_from_matrix(rot_mat, 0, 1, 2, extrinsic=True))
             
+            """
+            格式化并发送 针尖位姿(Volume系) 到导航服务器。
+            发送格式示例: "UpdateNeedlePoseInVol,Nx,Ny,Nz,Nrx,Nry,Nrz;"
+            """
             msg = f"UpdateNeedlePoseInVol,{pos[0]:.3f},{pos[1]:.3f},{pos[2]:.3f},{rpy[0]:.3f},{rpy[1]:.3f},{rpy[2]:.3f};"
             self.nav_manager.send_command(msg)
             
