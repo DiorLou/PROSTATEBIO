@@ -550,25 +550,21 @@ class UltrasoundTab(QWidget):
     def rotate_left_x(self):
         """
         [修改版] 发送指令，使超声探头左转 x 度。
-        如果 x 为负数（例如 -50），则执行右转 50 度。
+        并计算所有 A 点在 Volume 下的坐标，保存到 TXT。
         """
         x = self._get_rotation_x_value()
         if x is None:
             return
             
-        # --- [新增] 方向与角度处理逻辑 ---
-        # 默认方向为 BACKWARD (左转)
+        # 方向与角度处理逻辑
         move_direction = BACKWARD
         move_angle = x
-
-        # 如果输入是负数 (例如 -50)
         if x < 0:
-            move_direction = FORWARD  # 自动切换为 FORWARD (右转)
-            move_angle = abs(x)       # 取绝对值 (50)
+            move_direction = FORWARD
+            move_angle = abs(x)
             print(f"Debug: Input is negative ({x}), switching to RIGHT turn {move_angle} deg.")
-        # --------------------------------
 
-        # 执行 TCP_E 检查和姿态记录 (保持原有逻辑不变)
+        # TCP_E 检查
         robot_control_window = self.main_window
         if not robot_control_window or not hasattr(robot_control_window, 'latest_tool_pose'):
             QMessageBox.warning(self, "Connection Error", "Cannot access robot pose data...")
@@ -578,34 +574,42 @@ class UltrasoundTab(QWidget):
             QMessageBox.critical(self, "TCP Error", f"Current TCP must be 'TCP_E'...")
             return
             
-        # 1. 记录 TCP_E_Medical 并触发 TCP_U_Volume 计算
-        robot_control_window.tcp_e_medical_value = list(robot_control_window.latest_tool_pose)
-        pose_str = ", ".join([f"{p:.2f}" for p in robot_control_window.tcp_e_medical_value])
-        robot_control_window.status_bar.showMessage(f"Status: TCP_E_Medical_value recorded: [{pose_str}]")
+        # 1. 记录 tcp_e_in_ultrasound_zero_deg 并触发 volume_in_base 计算
+        robot_control_window.tcp_e_in_ultrasound_zero_deg = list(robot_control_window.latest_tool_pose)
+        pose_str = ", ".join([f"{p:.2f}" for p in robot_control_window.tcp_e_in_ultrasound_zero_deg])
+        robot_control_window.status_bar.showMessage(f"Status: tcp_e_in_ultrasound_zero_deg recorded: [{pose_str}]")
         
-        # 立即计算 TCP_U_Volume
-        robot_control_window.compute_and_store_tcp_u_volume()
+        # 立即计算 volume_in_base
+        robot_control_window.compute_and_store_volume_in_base()
             
-        # 2. 计算 a_point_in_volume 并发送数据
-        # 从 LeftPanel 获取刚刚计算好的 tcp_u_volume
-        tcp_u_vol = robot_control_window.left_panel.tcp_u_volume
-        # 调用 LeftPanel 的新方法计算 a_point_in_volume
-        a_in_vol = robot_control_window.left_panel.calculate_a_point_in_u_volume()
+        # 2. [修改] 获取所有 A 点(Volume系) 并保存到 TXT
+        all_a_in_vol = robot_control_window.left_panel.calculate_all_a_points_in_volume()
         
-        if tcp_u_vol is not None and a_in_vol is not None:
-            self._send_volume_data_to_navigation(a_in_vol, tcp_u_vol)
+        if all_a_in_vol:
+            try:
+                file_path = "A_points_in_volume.txt"
+                with open(file_path, "w") as f:
+                    for pt in all_a_in_vol:
+                        # 格式: x, y, z (无括号，无编号，换行)
+                        line = f"{pt[0]:.3f}, {pt[1]:.3f}, {pt[2]:.3f}\n"
+                        f.write(line)
+                print(f"Successfully saved {len(all_a_in_vol)} points to {file_path}")
+                robot_control_window.status_bar.showMessage(f"Status: Saved {len(all_a_in_vol)} A points to TXT.")
+            except Exception as e:
+                print(f"Error saving A points to TXT: {e}")
+                QMessageBox.warning(self, "File Error", f"Failed to save A_points_in_volume.txt: {e}")
         else:
-            QMessageBox.warning(self, "Data Warning", "Failed to calculate A point or TCP_U_Volume...")
+            print("Warning: No A points calculated (History empty or Calc failed).")
+            # 即使没有 A 点，流程上也可能允许继续旋转，这里仅打印警告
 
-        # 3. 发送旋转指令 (使用上面计算好的 move_direction 和 move_angle)
+        # 3. 发送旋转指令
         command = f"MoveRelJ,0,5,{move_direction},{move_angle};"
         
         if self.tcp_manager and self.tcp_manager.is_connected:
             self.tcp_manager.send_command(command)
             
-            # 提示信息也做相应更新
             dir_str = "LEFT" if move_direction == BACKWARD else "RIGHT (Negative Input)"
-            QMessageBox.information(self, "Command Sent", f"Sent rotate {dir_str} {move_angle} degrees command.\nNavigation data sent.")
+            QMessageBox.information(self, "Command Sent", f"Sent rotate {dir_str} {move_angle} degrees command.\nA points saved to TXT.")
         else:
             QMessageBox.warning(self, "Connection Error", "Not connected to robot or TCP manager.")
 
@@ -717,22 +721,3 @@ class UltrasoundTab(QWidget):
         delay_ms = 500
         QTimer.singleShot(delay_ms, self._continue_rotation_after_delay)
         
-    def _send_volume_data_to_navigation(self, a_pt, u_vol):
-        """
-        [新增] 格式化并发送 A点(Volume系) 和 TCP_U_Volume(Base系) 到导航服务器。
-        发送格式示例: "UpdateVolumeData,Ax,Ay,Az,Ux,Uy,Uz,Urx,Ury,Urz;"
-        """
-        if self.main_window and hasattr(self.main_window, 'navigation_tab'):
-            # 构造消息字符串 (保留3位小数)
-            msg = f"UpdateVolumeData,{a_pt[0]:.3f},{a_pt[1]:.3f},{a_pt[2]:.3f}," \
-                  f"{u_vol[0]:.3f},{u_vol[1]:.3f},{u_vol[2]:.3f}," \
-                  f"{u_vol[3]:.3f},{u_vol[4]:.3f},{u_vol[5]:.3f};"
-            
-            # 1. 通过 NavigationTab 的 Manager 发送
-            self.main_window.navigation_tab.nav_manager.send_command(msg)
-            
-            # 2. [修正] 在 Navigation Communication tab 页中记录日志
-            # 直接调用 NavigationTab 的 log_message 方法显示在界面的文本框中
-            self.main_window.navigation_tab.log_message(f"Sent Nav Data: {msg}")
-        else:
-            print("Error: Navigation Tab not accessible.")
