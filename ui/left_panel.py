@@ -122,7 +122,7 @@ class LeftPanel(QWidget):
         self.a_points_list = [] 
         
         # 点击左转x度的时候记录的 E 点位置
-        self.tcp_e_medical_value = None
+        self.tcp_e_in_ultrasound_zero_deg = None
         # 录了超声平面刚刚对齐到 AOE 平面（即穿刺平面）时的机器臂状态
         self.tool_pose_in_puncture_position = None
         # 存储 TCP_U 的定义
@@ -132,7 +132,7 @@ class LeftPanel(QWidget):
         # 存储 TCP_P 的定义
         self.tcp_p_definition_pose = None
         # 点击左转x度的时候记录的 U 点位置
-        self.tcp_u_volume = None
+        self.volume_in_base = None
         # 存储计算后的 B 点在 TCP_P 坐标系下的位置
         self.b_point_in_tcp_p = None
         # 存储计算后的 A 点在 TCP_P 坐标系下的位置
@@ -582,15 +582,15 @@ class LeftPanel(QWidget):
         for i in range(3):
             self.a_vars[i].setText(f"{selected_point[i]:.2f}")
 
-        # [新增] 检查 TCP_U_Volume 是否存在，如果存在则自动计算并更新 A_in_Volume
-        if self.tcp_u_volume is not None:
-             # calculate_a_point_in_u_volume 使用界面上的输入框(a_vars)和 tcp_u_volume 进行计算
+        # [新增] 检查 volume_in_base 是否存在，如果存在则自动计算并更新 A_in_Volume
+        if self.volume_in_base is not None:
+             # calculate_a_point_in_u_volume 使用界面上的输入框(a_vars)和 volume_in_base 进行计算
              new_a_in_vol = self.calculate_a_point_in_u_volume()
              if self.main_window and hasattr(self.main_window, 'right_panel'):
                  self.main_window.right_panel.log_message(f"System: A point selected. Updated A_in_Volume: {new_a_in_vol}")
         else:
              if self.main_window and hasattr(self.main_window, 'right_panel'):
-                 self.main_window.right_panel.log_message("System: A point selected. TCP_U_Volume not set, skipping A_in_Volume update.")
+                 self.main_window.right_panel.log_message("System: A point selected. volume_in_base not set, skipping A_in_Volume update.")
         
     def _finalize_point_record(self, name):
         # 1. 检查必要数据是否存在
@@ -950,7 +950,7 @@ class LeftPanel(QWidget):
             T_Base_E[:3, 3] = P_final
             
             # 调用辅助函数计算并发送
-            self._calculate_and_send_tcpu_in_volume(T_Base_E)
+            self._calculate_and_send_tcp_u_in_volume(T_Base_E)
             
             # =========================================================================
 
@@ -1071,29 +1071,29 @@ class LeftPanel(QWidget):
         except Exception as e:
             print(f"Calculation Error (A_in_P): {e}")
 
-    def compute_and_store_tcp_u_volume(self):
-        if self.tcp_e_medical_value is None or self.tcp_u_definition_pose is None: return
+    def compute_and_store_volume_in_base(self):
+        if self.tcp_e_in_ultrasound_zero_deg is None or self.tcp_u_definition_pose is None: return
         try:
-            T_Base_E = self._pose_to_matrix(self.tcp_e_medical_value)
+            T_Base_E = self._pose_to_matrix(self.tcp_e_in_ultrasound_zero_deg)
             T_E_U = self._pose_to_matrix(self.tcp_u_definition_pose)
             T_Base_U = np.dot(T_Base_E, T_E_U)
             trans = T_Base_U[:3, 3]
             rpy_deg = np.rad2deg(pyrot.euler_from_matrix(T_Base_U[:3, :3], 0, 1, 2, extrinsic=True))
-            self.tcp_u_volume = np.concatenate((trans, rpy_deg)).tolist()
+            self.volume_in_base = np.concatenate((trans, rpy_deg)).tolist()
             if self.main_window and self.main_window.right_panel:
-                self.main_window.right_panel.log_message(f"System: tcp_u_volume: {self.tcp_u_volume}")
+                self.main_window.right_panel.log_message(f"System: volume_in_base: {self.volume_in_base}")
         except Exception as e: print(e)
         
     def calculate_a_point_in_u_volume(self):
         """
         [新增] 计算 A 点在 U_Volume 坐标系下的位置。
-        前提：tcp_u_volume 已被计算 (在点击左转x度时会触发计算)。
+        前提：volume_in_base 已被计算 (在点击左转x度时会触发计算)。
         
         Returns:
             list: [x, y, z] 坐标列表，如果计算失败则返回 None。
         """
-        if self.tcp_u_volume is None:
-            print("Error: tcp_u_volume is not computed.")
+        if self.volume_in_base is None:
+            print("Error: volume_in_base is not computed.")
             return None
             
         # 1. 获取界面上的 A 点 (Base 系)
@@ -1107,7 +1107,7 @@ class LeftPanel(QWidget):
 
         try:
             # 2. 获取 Volume 在 Base 下的变换矩阵 T_Base_Volume
-            T_Base_Volume = self._pose_to_matrix(self.tcp_u_volume)
+            T_Base_Volume = self._pose_to_matrix(self.volume_in_base)
             
             # 3. 计算 Base 在 Volume 下的变换矩阵 (求逆)
             T_Volume_Base = np.linalg.inv(T_Base_Volume)
@@ -1124,6 +1124,43 @@ class LeftPanel(QWidget):
         except Exception as e:
             print(f"Error calculating A in Volume: {e}")
             return None
+        
+    def calculate_all_a_points_in_volume(self):
+        """
+        [新增] 计算历史记录中所有的 A 点在 U_Volume 坐标系下的位置。
+        Returns:
+            list: [[x, y, z], [x, y, z], ...] 坐标列表
+        """
+        if self.volume_in_base is None:
+            print("Error: volume_in_base is not computed.")
+            return []
+            
+        if not self.a_points_list:
+            print("Warning: No A points in history list.")
+            return []
+
+        converted_points = []
+        try:
+            # 1. 获取 Volume 在 Base 下的变换矩阵 T_Base_Volume
+            T_Base_Volume = self._pose_to_matrix(self.volume_in_base)
+            
+            # 2. 计算 Base 在 Volume 下的变换矩阵 (求逆)
+            T_Volume_Base = np.linalg.inv(T_Base_Volume)
+            
+            # 3. 遍历列表进行转换
+            for pt_base in self.a_points_list:
+                # 转换为齐次坐标 [x, y, z, 1.0]
+                pt_homo = np.array(pt_base + [1.0])
+                # 坐标变换: P_Volume = T_Volume_Base * P_Base
+                pt_vol_homo = np.dot(T_Volume_Base, pt_homo)
+                # 存入结果
+                converted_points.append(pt_vol_homo[:3].tolist())
+            
+            return converted_points
+            
+        except Exception as e:
+            print(f"Error calculating all A points in Volume: {e}")
+            return []
 
     def _pose_to_matrix(self, pose):
         x, y, z, rx, ry, rz = pose
@@ -1136,8 +1173,8 @@ class LeftPanel(QWidget):
         if self.tcp_u_definition_pose is None:
             QMessageBox.warning(self, "Warning", "TCP_U definition missing.")
             return
-        if self.tcp_e_medical_value is None or self.tool_pose_in_puncture_position is None:
-            QMessageBox.warning(self, "Missing Data", "Record tcp_e_medical_value and tool_pose_in_puncture_position first.")
+        if self.tcp_e_in_ultrasound_zero_deg is None or self.tool_pose_in_puncture_position is None:
+            QMessageBox.warning(self, "Missing Data", "Record tcp_e_in_ultrasound_zero_deg and tool_pose_in_puncture_position first.")
             return
         
         # ... (Simplified file dialog logic similar to original) ...
@@ -1168,9 +1205,9 @@ class LeftPanel(QWidget):
         dialog.exec_()
 
     def _calculate_b_point_data(self, p_b_in_u_pose, index):
-        if self.tcp_e_medical_value is None or self.tool_pose_in_puncture_position is None: raise ValueError("Missing poses")
+        if self.tcp_e_in_ultrasound_zero_deg is None or self.tool_pose_in_puncture_position is None: raise ValueError("Missing poses")
         T_U_to_B = self._pose_to_matrix(p_b_in_u_pose)
-        T_Base_to_E = self._pose_to_matrix(self.tcp_e_medical_value)
+        T_Base_to_E = self._pose_to_matrix(self.tcp_e_in_ultrasound_zero_deg)
         T_E_to_U = self._pose_to_matrix(self.tcp_u_definition_pose)
         T_Base_to_B = T_Base_to_E @ T_E_to_U @ T_U_to_B
         
@@ -1209,7 +1246,7 @@ class LeftPanel(QWidget):
         y_comp = np.dot(proj_t, y_plane)
         return np.rad2deg(np.arctan2(y_comp, x_comp))
     
-    def _calculate_and_send_tcpu_in_volume(self, T_Base_E):
+    def _calculate_and_send_tcp_u_in_volume(self, T_Base_E):
         """
         根据当前的机器臂位姿 T_Base_E，计算 TCP_U 在 Volume 坐标系下的位姿，并发送给导航。
         计算链: T_Volume_TCP_U = inv(T_Base_Volume) * T_Base_E * T_E_TCP_U
@@ -1218,8 +1255,8 @@ class LeftPanel(QWidget):
         if self.tcp_u_definition_pose is None:
             # print("Warning: TCP_U definition is missing. Cannot calculate navigation data.")
             return
-        if self.tcp_u_volume is None:
-            # print("Warning: TCP_U_Volume is missing. Cannot calculate navigation data.")
+        if self.volume_in_base is None:
+            # print("Warning: volume_in_base is missing. Cannot calculate navigation data.")
             return
 
         try:
@@ -1230,7 +1267,7 @@ class LeftPanel(QWidget):
             T_Base_U = np.dot(T_Base_E, T_E_U)
 
             # 4. 获取 T_Base_Volume (Volume 在 Base 系下的定义)
-            T_Base_Vol = self._pose_to_matrix(self.tcp_u_volume)
+            T_Base_Vol = self._pose_to_matrix(self.volume_in_base)
 
             # 5. 计算 T_Volume_Base = inv(T_Base_Volume)
             T_Vol_Base = np.linalg.inv(T_Base_Vol)
@@ -1244,7 +1281,10 @@ class LeftPanel(QWidget):
             rpy = np.rad2deg(pyrot.euler_from_matrix(T_Vol_U[:3, :3], 0, 1, 2, extrinsic=True))
 
             # 8. 构造发送消息
-            # 格式示例: "UpdateStepTCPUPoseInVol,x,y,z,rx,ry,rz;"
+            """ 
+            格式化并发送 TCP_U位姿(Volume系) 到导航服务器。
+            发送格式示例: "UpdateStepTCPUPoseInVol,Tx,Ty,Tz,Trx,Try,Trz;"
+            """
             msg = f"UpdateStepTCPUPoseInVol,{pos[0]:.3f},{pos[1]:.3f},{pos[2]:.3f},{rpy[0]:.3f},{rpy[1]:.3f},{rpy[2]:.3f};"
 
             # 9. 发送到 Navigation Communication Tab
@@ -1287,9 +1327,9 @@ class LeftPanel(QWidget):
                 # [NEW] Save A Points History
                 'stored_a_points': self.a_points_list,
 
-                'tcp_e_medical_value': self.tcp_e_medical_value,
+                'tcp_e_in_ultrasound_zero_deg': self.tcp_e_in_ultrasound_zero_deg,
                 'tool_pose_in_puncture_position': self.tool_pose_in_puncture_position,
-                'tcp_u_volume': self.tcp_u_volume,
+                'volume_in_base': self.volume_in_base,
                 'b_point_in_tcp_p': self.b_point_in_tcp_p,
                 'a_point_in_tcp_p': self.a_point_in_tcp_p,
                 'a_point_in_volume': self.a_point_in_volume
@@ -1338,9 +1378,9 @@ class LeftPanel(QWidget):
             self.a_point_dropdown.blockSignals(False)
             
             # ... (Rest of loading additional variables) ...
-            self.tcp_e_medical_value = data.get('tcp_e_medical_value')
+            self.tcp_e_in_ultrasound_zero_deg = data.get('tcp_e_in_ultrasound_zero_deg')
             self.tool_pose_in_puncture_position = data.get('tool_pose_in_puncture_position')
-            self.tcp_u_volume = data.get('tcp_u_volume')
+            self.volume_in_base = data.get('volume_in_base')
             self.b_point_in_tcp_p = data.get('b_point_in_tcp_p')
             self.a_point_in_tcp_p = data.get('a_point_in_tcp_p')
             self.a_point_in_volume = data.get('a_point_in_volume')

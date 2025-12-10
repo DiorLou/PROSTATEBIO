@@ -75,19 +75,19 @@ class RobotControlWindow(QMainWindow):
         return self.right_panel.current_tcp_name
 
     @property
-    def tcp_e_medical_value(self):
-        return self.left_panel.tcp_e_medical_value
+    def tcp_e_in_ultrasound_zero_deg(self):
+        return self.left_panel.tcp_e_in_ultrasound_zero_deg
     
     @property
     def a_point_in_tcp_p(self):
         return self.left_panel.a_point_in_tcp_p
 
-    @tcp_e_medical_value.setter
-    def tcp_e_medical_value(self, value):
-        self.left_panel.tcp_e_medical_value = value
+    @tcp_e_in_ultrasound_zero_deg.setter
+    def tcp_e_in_ultrasound_zero_deg(self, value):
+        self.left_panel.tcp_e_in_ultrasound_zero_deg = value
 
-    def compute_and_store_tcp_u_volume(self):
-        self.left_panel.compute_and_store_tcp_u_volume()
+    def compute_and_store_volume_in_base(self):
+        self.left_panel.compute_and_store_volume_in_base()
 
     def closeEvent(self, event):
         self.tcp_manager.disconnect()

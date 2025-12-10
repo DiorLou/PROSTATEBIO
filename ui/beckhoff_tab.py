@@ -657,7 +657,7 @@ class BeckhoffTab(QWidget):
                     # Need: TCP_P_Def (E->P), Tool_Pose (Base->E), TCP_U_Vol (Base->Vol)
                     if (left_p.tcp_p_definition_pose is not None and 
                         left_p.latest_tool_pose is not None and 
-                        left_p.tcp_u_volume is not None):
+                        left_p.volume_in_base is not None):
                         
                         # --- Prepare Matrices ---
                         # T_E_P: Transformation from TCP_E to TCP_P
@@ -667,7 +667,7 @@ class BeckhoffTab(QWidget):
                         T_Base_E = left_p._pose_to_matrix(left_p.latest_tool_pose)
                         
                         # T_Base_Vol: Transformation from Base to Volume
-                        T_Base_Vol = left_p._pose_to_matrix(left_p.tcp_u_volume)
+                        T_Base_Vol = left_p._pose_to_matrix(left_p.volume_in_base)
                         
                         # --- Calculate Transform Chain ---
                         # 1. Calculate T_Base_P = T_Base_E * T_E_P
@@ -685,6 +685,8 @@ class BeckhoffTab(QWidget):
                         rcm_vol = rcm_vol_homo[:3]
 
                         # 4. Send to Navigation
+                        # 格式化并发送 RCM点(Volume系) 到导航服务器。
+                        # 发送格式示例: "UpdateRCMInVolume,Rx,Ry,Rz;"
                         msg_out = f"UpdateRCMInVolume,{rcm_vol[0]:.3f},{rcm_vol[1]:.3f},{rcm_vol[2]:.3f};"
                         
                         if hasattr(parent, 'navigation_tab'):
@@ -693,7 +695,7 @@ class BeckhoffTab(QWidget):
                         else:
                             print("Error: Navigation Tab not accessible.")
                     else:
-                        print("Warning: Missing coordinate definitions (TCP_P, Tool Pose, or TCP_U_Volume) in LeftPanel.")
+                        print("Warning: Missing coordinate definitions (TCP_P, Tool Pose, or volume_in_base) in LeftPanel.")
             except Exception as e:
                 print(f"Error calculating/sending RCM in Volume: {e}")
 
