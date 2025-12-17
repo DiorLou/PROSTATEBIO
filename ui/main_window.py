@@ -3,7 +3,8 @@ import numpy as np
 from PyQt5.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QTabWidget, QStatusBar
 from core.tcp_manager import TCPManager
 from kinematics.prostate_biopsy_robot_kinematics import RobotKinematics
-from ui.beckhoff_tab import BeckhoffTab
+# [修改] 导入 Manager 和 Tab 类
+from ui.beckhoff_tab import BeckhoffTab, BeckhoffManager
 from ui.ultrasound_tab import UltrasoundTab
 from ui.left_panel import LeftPanel
 from ui.right_panel import RightPanel
@@ -27,6 +28,9 @@ class RobotControlWindow(QMainWindow):
             self.A_PARAMS, self.ALPHA_PARAMS, self.D_PARAMS, self.THETA_PARAMS, 
             self.VARIABLE_NAMES, angle_AOC=np.pi/12
         )
+        
+        # [NEW] 初始化单一的 Beckhoff Manager (通信逻辑核心)
+        self.beckhoff_manager = BeckhoffManager(self)
 
         # 2. UI 组件
         self.tabs = QTabWidget()
@@ -48,19 +52,26 @@ class RobotControlWindow(QMainWindow):
         self.tabs.addTab(robot_tab, "Robot Control")
 
         # --- Tab 2: Ultrasound ---
-        # UltrasoundTab 需要访问 self.latest_tool_pose 等，通过 @property 提供兼容接口
         self.ultrasound_tab = UltrasoundTab(self.tcp_manager, self)
         self.tabs.addTab(self.ultrasound_tab, "Ultrasound Imaging")
         
-        # --- Tab 3: Beckhoff ---
-        self.beckhoff_tab = BeckhoffTab(self.robot_kinematics, self)
+        # --- Tab 3: Beckhoff (Instance 1) ---
+        # 传递共享的 manager
+        self.beckhoff_tab = BeckhoffTab(self.beckhoff_manager, self.robot_kinematics, self)
         self.tabs.addTab(self.beckhoff_tab, "Beckhoff Communication")
         
         # --- Tab 4: Navigation Communication ---
         self.navigation_tab = NavigationTab(self)
         self.tabs.addTab(self.navigation_tab, "Navigation Communication")
         
-        # [新增连接] 将 Beckhoff Tab 的位置更新信号连接到 Navigation Tab 的处理函数
+        # --- [NEW] Tab 5: Flexible needle steering (Instance 2) ---
+        # 同样传递共享的 manager，实现状态同步
+        self.flexible_needle_tab = BeckhoffTab(self.beckhoff_manager, self.robot_kinematics, self)
+        self.tabs.addTab(self.flexible_needle_tab, "Flexible needle steering")
+        
+        # [连接信号] 将 Beckhoff Tab 的位置更新信号连接到 Navigation Tab
+        # 只需要连接其中一个 Tab 的信号即可，因为它们的数据源是一样的
+        # 或者为了保险起见，我们可以监听 Manager 的信号，这里保持原样连接 beckhoff_tab 即可
         self.beckhoff_tab.beckhoff_position_update.connect(self.navigation_tab.update_needle_pose_in_volume)
         
         self.status_bar.showMessage("Status: Ready")
@@ -91,7 +102,8 @@ class RobotControlWindow(QMainWindow):
 
     def closeEvent(self, event):
         self.tcp_manager.disconnect()
+        # 清理 Beckhoff Manager
+        self.beckhoff_manager.cleanup()
         self.ultrasound_tab.cleanup()
-        self.beckhoff_tab.cleanup()
         self.navigation_tab.cleanup()
         super().closeEvent(event)

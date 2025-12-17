@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QMessageBox, QGroupBox, 
     QFrame, QSizePolicy
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject
 import pyads 
 import threading
 import time
@@ -178,29 +178,120 @@ class ADSThread(QThread):
             self.movement_status_update.emit(f"ADS Write or Start Failed: {e}")
 
 # ====================================================================
-# BeckhoffTab Class
+# [NEW] Beckhoff Manager (Shared Logic)
+# ====================================================================
+class BeckhoffManager(QObject):
+    """
+    负责管理 ADS 连接、状态和线程的单一数据源。
+    所有 BeckhoffTab 实例共享同一个 BeckhoffManager。
+    """
+    # 信号定义
+    connection_state_changed = pyqtSignal(bool, str) # connected, message
+    position_update = pyqtSignal(float, float, float, float)
+    movement_status_update = pyqtSignal(str)
+    enable_status_update = pyqtSignal(bool)
+    # 定义目标更新信号: 发送 J0, J1, J2, J3, Time
+    target_update = pyqtSignal(float, float, float, float, float)
+    
+    RESET_J0 = 0.000
+    RESET_J1 = 0.000
+    RESET_J2 = 67.569
+    RESET_J3 = 20.347
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.ads_client = ADS(AMS_NET_ID, PLC_PORT, PLC_IP)
+        self.ads_poll_thread = None
+        self.ads_command_thread = None
+        self.is_connected = False
+
+    def connect_ads(self):
+        ok, msg = self.ads_client.open()
+        self.is_connected = ok
+        self.connection_state_changed.emit(ok, msg)
+        
+        if ok:
+            try:
+                cur_j0 = self.ads_client.read_lreal(POS_J0_PV)
+                cur_j1 = self.ads_client.read_lreal(POS_J1_PV)
+                self.RESET_J0 = cur_j0
+                self.RESET_J1 = cur_j1
+            except Exception as e:
+                print(f"Failed to read initial positions: {e}")
+            self._start_poll()
+
+    def disconnect_ads(self):
+        self._stop_poll()
+        self.ads_client.close()
+        self.is_connected = False
+        self.connection_state_changed.emit(False, "Disconnected")
+
+    def _start_poll(self):
+        if self.ads_poll_thread is None or not self.ads_poll_thread.isRunning():
+            self.ads_poll_thread = ADSPollThread(self.ads_client)
+            self.ads_poll_thread.position_update.connect(self.position_update.emit)
+            self.ads_poll_thread.movement_status_update.connect(self.movement_status_update.emit)
+            self.ads_poll_thread.enable_status_update.connect(self.enable_status_update.emit)
+            self.ads_poll_thread.start()
+
+    def _stop_poll(self):
+        if self.ads_poll_thread and self.ads_poll_thread.isRunning():
+            self.ads_poll_thread.stop()
+            self.ads_poll_thread = None
+
+    def toggle_motor_enable(self):
+        if not self.is_connected:
+            return
+        try:
+            current_state = self.ads_client.read_bool(ENABLE_STATUS)
+            new_state = not current_state
+            self.ads_client.write_bool(ENABLE_STATUS, new_state)
+            action = "Disable" if not new_state else "Enable"
+            self.movement_status_update.emit(f"Sent {action} command ({new_state})")
+        except Exception as e:
+            self.movement_status_update.emit(f"Failed to toggle enable: {e}")
+
+    def move_robot(self, t0, t1, t2, t3, time_ms):
+        if not self.is_connected:
+            return
+        if self.ads_poll_thread and self.ads_poll_thread.moving:
+            self.movement_status_update.emit("Warning: Movement in progress.")
+            return
+        
+        # 在发送指令前，先广播这个目标给所有 Tap 页
+        self.target_update.emit(t0, t1, t2, t3, time_ms)
+
+        self.ads_command_thread = ADSThread(self.ads_client, t0, t1, t2, t3, time_ms)
+        self.ads_command_thread.movement_status_update.connect(self.movement_status_update.emit)
+        self.ads_command_thread.finished.connect(lambda: self._start_poll_monitoring(t0, t1, t2, t3))
+        self.ads_command_thread.start()
+
+    def _start_poll_monitoring(self, t0, t1, t2, t3):
+        if self.ads_poll_thread:
+            self.ads_poll_thread.start_monitoring_move(t0, t1, t2, t3)
+            self.movement_status_update.emit("Movement started...")
+
+    def cleanup(self):
+        self.disconnect_ads()
+        if self.ads_command_thread and self.ads_command_thread.isRunning():
+            self.ads_command_thread.wait()
+
+# ====================================================================
+# BeckhoffTab Class (UI View)
 # ====================================================================
 class BeckhoffTab(QWidget):
     # [NEW] 定义一个信号，用于广播当前的 J0-J3 值
     beckhoff_position_update = pyqtSignal(float, float, float, float)
 
-    RESET_J0 = 0.000
-    RESET_J1 = 0.000
-    RESET_J2 = 67.569
-    RESET_J3 = 20.347
-    
     # Constant for Trocar distance used in Phase 2 and Retraction
     D4_TROCAR = 17.5 
 
-    def __init__(self, robot_kinematics, parent=None):
+    def __init__(self, manager: BeckhoffManager, robot_kinematics, parent=None):
         super().__init__(parent)
-        self.main_window = parent  # [新增] 显式保存主窗口引用
+        self.main_window = parent  # 显式保存主窗口引用
+        self.manager = manager     # [IMPORTANT] 引用共享的 Manager
         self.robot = robot_kinematics
         
-        self.ads_client = ADS(AMS_NET_ID, PLC_PORT, PLC_IP)
-        self.ads_command_thread = None
-        self.ads_poll_thread = None
-
         self.vector_inputs = [None] * 3  
         self.result_labels = {}
         self.ads_status_label = QLabel("ADS: Disconnected") 
@@ -221,16 +312,18 @@ class BeckhoffTab(QWidget):
         self.flow_needle_out_btn = None
         self.flow_trocar_out_btn = None
         
-        # [NEW] Automation States
+        # Automation States
         self.trocar_phase_1_state = 0
-        self.phase_1_done = False # Track if Phase 1 is completed
+        self.phase_1_done = False 
         
         self.init_ui()
         self.setup_connections()
+        
+        # [Sync] 初始化时同步当前 Manager 的状态
+        self.on_connection_changed(self.manager.is_connected, "Synced")
 
     # --- Helper Functions for Arrows ---
     def _create_h_arrow_widget(self):
-        """Creates a horizontal solid arrow (────►)"""
         w = QWidget()
         w.setFixedWidth(50) 
         layout = QHBoxLayout(w)
@@ -253,7 +346,6 @@ class BeckhoffTab(QWidget):
         return w
 
     def _create_v_arrow_widget(self):
-        """Creates a vertical solid arrow (↓)"""
         w = QWidget()
         layout = QVBoxLayout(w)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -277,7 +369,6 @@ class BeckhoffTab(QWidget):
         return w
 
     def _create_loop_back_line(self):
-        """Creates a loop back line (◄────────)"""
         w = QWidget()
         layout = QHBoxLayout(w)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -298,7 +389,6 @@ class BeckhoffTab(QWidget):
         return w
         
     def _create_up_arrow_widget(self):
-        """Creates an up arrow (▲)"""
         w = QWidget()
         layout = QVBoxLayout(w)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -325,14 +415,13 @@ class BeckhoffTab(QWidget):
         main_layout = QVBoxLayout(self)
 
         # -----------------------------------------------------------------
-        # [Deleted]: Needle Vector Positioning Group
-        # 但是保留 vector_inputs 以兼容后台逻辑
+        # Need Vector Inputs (Hidden logic compatible)
         # -----------------------------------------------------------------
         for i in range(3):
             self.vector_inputs[i] = QLineEdit("0.00")
 
         # -----------------------------------------------------------------
-        # 1. Position Control (J0 - J3) - Moved to Top Level
+        # 1. Position Control (J0 - J3)
         # -----------------------------------------------------------------
         result_group = QGroupBox("Position Control (J0 - J3)")
         result_content_layout = QHBoxLayout()
@@ -382,7 +471,6 @@ class BeckhoffTab(QWidget):
         result_content_layout.addStretch(1) 
         result_group.setLayout(result_content_layout)
         
-        # Add Position Control Group directly to Main Layout
         main_layout.addWidget(result_group)
         
         # -----------------------------------------------------------------
@@ -396,10 +484,7 @@ class BeckhoffTab(QWidget):
         # Define Buttons
         self.flow_trocar_in_p1_btn = QPushButton("Trocar Insertion Phase 1")
         self.flow_trocar_in_p2_btn = QPushButton("Trocar Insertion Phase 2")
-        self.flow_calc_btn = QPushButton("Adjust Needle Dir") # Renamed from "Calculate Joint 2/3"
-        
-        # [Deleted]: self.flow_adj_dir_btn
-        
+        self.flow_calc_btn = QPushButton("Adjust Needle Dir") 
         self.flow_needle_in_btn = QPushButton("Needle Insertion")
         self.flow_needle_out_btn = QPushButton("Needle Retraction")
         self.flow_trocar_out_btn = QPushButton("Trocar Retraction")
@@ -421,12 +506,9 @@ class BeckhoffTab(QWidget):
         self.flow_end_lbl = make_node_label("End")
 
         # --- Grid Layout Logic ---
-
-        # 1. Start Column (Col 0)
         biopsy_layout.addWidget(self.flow_start_lbl, 0, 0, alignment=Qt.AlignCenter)
         biopsy_layout.addWidget(self._create_v_arrow_widget(), 1, 0, alignment=Qt.AlignCenter) 
         
-        # [MODIFIED]: Place a Vertical Layout container for the split buttons
         trocar_container = QWidget()
         trocar_layout = QVBoxLayout(trocar_container)
         trocar_layout.setContentsMargins(0, 0, 0, 0)
@@ -434,31 +516,24 @@ class BeckhoffTab(QWidget):
         trocar_layout.addWidget(self.flow_trocar_in_p1_btn, alignment=Qt.AlignCenter)
         trocar_layout.addWidget(self._create_v_arrow_widget(), alignment=Qt.AlignCenter)
         trocar_layout.addWidget(self.flow_trocar_in_p2_btn, alignment=Qt.AlignCenter)
-        
         biopsy_layout.addWidget(trocar_container, 2, 0, alignment=Qt.AlignCenter)
-
         biopsy_layout.addWidget(self._create_v_arrow_widget(), 3, 0, alignment=Qt.AlignCenter) 
         
-        # 2. Main Loop Row (Row 4)
         biopsy_layout.addWidget(self.flow_calc_btn, 4, 0, alignment=Qt.AlignCenter)
         biopsy_layout.addWidget(self._create_h_arrow_widget(), 4, 1) 
-        # Removed original "Adjust Needle Dir" button at Col 2
-        biopsy_layout.addWidget(self.flow_needle_in_btn, 4, 2, alignment=Qt.AlignCenter) # Moved left
+        biopsy_layout.addWidget(self.flow_needle_in_btn, 4, 2, alignment=Qt.AlignCenter) 
         biopsy_layout.addWidget(self._create_h_arrow_widget(), 4, 3) 
-        biopsy_layout.addWidget(self.flow_needle_out_btn, 4, 4, alignment=Qt.AlignCenter) # Moved left
+        biopsy_layout.addWidget(self.flow_needle_out_btn, 4, 4, alignment=Qt.AlignCenter) 
 
-        # 3. Loop Return Path (Row 5)
         biopsy_layout.addWidget(self._create_up_arrow_widget(), 5, 0, alignment=Qt.AlignCenter)
-        biopsy_layout.addWidget(self._create_loop_back_line(), 5, 1, 1, 3) # Adjusted span to 3
-        biopsy_layout.addWidget(self._create_v_arrow_widget(), 5, 4, alignment=Qt.AlignCenter) # Moved left to col 4
+        biopsy_layout.addWidget(self._create_loop_back_line(), 5, 1, 1, 3) 
+        biopsy_layout.addWidget(self._create_v_arrow_widget(), 5, 4, alignment=Qt.AlignCenter) 
 
-        # 4. End Column (Col 4)
-        biopsy_layout.addWidget(self.flow_trocar_out_btn, 6, 4, alignment=Qt.AlignCenter) # Moved left to col 4
+        biopsy_layout.addWidget(self.flow_trocar_out_btn, 6, 4, alignment=Qt.AlignCenter) 
         biopsy_layout.addWidget(self._create_v_arrow_widget(), 7, 4, alignment=Qt.AlignCenter)
         biopsy_layout.addWidget(self.flow_end_lbl, 8, 4, alignment=Qt.AlignCenter)
 
         biopsy_layout.setColumnStretch(5, 1)
-
         main_layout.addWidget(biopsy_group)
 
         # -----------------------------------------------------------------
@@ -488,53 +563,59 @@ class BeckhoffTab(QWidget):
         main_layout.addStretch()
 
     def setup_connections(self):
-        # self.input_vector_btn Connection removed (Button removed)
-        self.connect_ads_btn.clicked.connect(self.connect_ads)
-        self.disconnect_ads_btn.clicked.connect(self.disconnect_ads)
+        # Local UI events triggering Manager actions
+        self.connect_ads_btn.clicked.connect(self.manager.connect_ads)
+        self.disconnect_ads_btn.clicked.connect(self.manager.disconnect_ads)
+        self.enable_motor_btn.clicked.connect(self.manager.toggle_motor_enable)
         self.reset_all_btn.clicked.connect(self.trigger_reset)
+        
         self.apply_inc_btn.clicked.connect(self.apply_joint_increment)
-        self.enable_motor_btn.clicked.connect(self.toggle_motor_enable)
-        
-        # Biopsy Interface Button Connections
-        # [MODIFIED] Connect to adjust_needle_direction instead of calculate_joint_values
         self.flow_calc_btn.clicked.connect(self.adjust_needle_direction)
-        
-        # [MODIFIED]: Connect split buttons
         self.flow_trocar_in_p1_btn.clicked.connect(self.run_trocar_insertion_phase_1)
         self.flow_trocar_in_p2_btn.clicked.connect(self.run_trocar_insertion_phase_2)
-        
-        # [NEW] Connect Needle Insertion Button
         self.flow_needle_in_btn.clicked.connect(self.run_needle_insertion)
-        
-        # [NEW] Connect Needle Retraction Button
         self.flow_needle_out_btn.clicked.connect(self.run_needle_retraction)
-        
-        # [NEW] Connect Trocar Retraction Button
         self.flow_trocar_out_btn.clicked.connect(self.run_trocar_retraction)
 
-    def _start_poll(self):
-        if self.ads_poll_thread is None or not self.ads_poll_thread.isRunning():
-            self.ads_poll_thread = ADSPollThread(self.ads_client)
-            self.ads_poll_thread.position_update.connect(self._update_current_positions)
-            self.ads_poll_thread.movement_status_update.connect(self.update_movement_status)
-            self.ads_poll_thread.enable_status_update.connect(self._update_enable_button)
-            self.ads_poll_thread.start()
+        # Manager Signals -> UI Updates
+        self.manager.connection_state_changed.connect(self.on_connection_changed)
+        self.manager.position_update.connect(self.on_position_update)
+        self.manager.enable_status_update.connect(self.on_enable_status_update)
+        self.manager.movement_status_update.connect(self.on_movement_status_update)
+        self.manager.target_update.connect(self.on_target_update)
+        
+        # 将 Manager 的位置信号也转发给 Navigation Tab 需要的信号
+        self.manager.position_update.connect(self.beckhoff_position_update.emit)
+        
+    # 处理函数：当任何一个 Tap 触发移动时，更新本页面的输入框
+    def on_target_update(self, t0, t1, t2, t3, time_ms):
+        # 更新目标位置输入框
+        self.result_labels["J0"].setText(f"{t0:.4f}")
+        self.result_labels["J1"].setText(f"{t1:.4f}")
+        self.result_labels["J2"].setText(f"{t2:.4f}")
+        self.result_labels["J3"].setText(f"{t3:.4f}")
+        # 更新时间输入框
+        if self.motion_time_input:
+            self.motion_time_input.setText(str(int(time_ms)))
 
-    def _stop_poll(self):
-        if self.ads_poll_thread and self.ads_poll_thread.isRunning():
-            self.ads_poll_thread.stop()
-            self.ads_poll_thread = None
+    def on_connection_changed(self, connected, msg):
+        self.ads_status_label.setText(f"ADS: {msg}")
+        self.connect_ads_btn.setEnabled(not connected)
+        self.disconnect_ads_btn.setEnabled(connected)
+        self.reset_all_btn.setEnabled(connected)
+        self.enable_motor_btn.setEnabled(connected)
+        
+        if not connected:
+             for key in ["CurJ0", "CurJ1", "CurJ2", "CurJ3"]:
+                self.pos_labels[key].setText("--")
 
-    def _update_current_positions(self, j0, j1, j2, j3):
+    def on_position_update(self, j0, j1, j2, j3):
         self.pos_labels["CurJ0"].setText(f"{j0:.3f}")
         self.pos_labels["CurJ1"].setText(f"{j1:.3f}")
         self.pos_labels["CurJ2"].setText(f"{j2:.3f}")
         self.pos_labels["CurJ3"].setText(f"{j3:.3f}")
-        
-        # [NEW] Emit signal with current positions
-        self.beckhoff_position_update.emit(j0, j1, j2, j3)
-        
-    def _update_enable_button(self, is_enabled: bool):
+
+    def on_enable_status_update(self, is_enabled):
         if is_enabled:
             self.enable_motor_btn.setText("Enabled")
             self.enable_motor_btn.setStyleSheet("background-color: lightgreen;")
@@ -542,51 +623,63 @@ class BeckhoffTab(QWidget):
             self.enable_motor_btn.setText("Enable")
             self.enable_motor_btn.setStyleSheet("background-color: lightgray;")
 
-    def connect_ads(self):
-        ok, msg = self.ads_client.open()
-        self.ads_status_label.setText(f"ADS: {msg}")
-        self.connect_ads_btn.setEnabled(not ok)
-        self.disconnect_ads_btn.setEnabled(ok)
-        self.reset_all_btn.setEnabled(ok)
-        self.enable_motor_btn.setEnabled(ok)
+    def on_movement_status_update(self, msg):
+        self.movement_status_label.setText(f"Movement Status: {msg}")
         
-        if ok:
-            try:
-                cur_j0 = self.ads_client.read_lreal(POS_J0_PV)
-                cur_j1 = self.ads_client.read_lreal(POS_J1_PV)
-                self.RESET_J0 = cur_j0
-                self.RESET_J1 = cur_j1
-                parent_window = self.parent()
-                if hasattr(parent_window, 'status_bar'):
-                     parent_window.status_bar.showMessage(f"Status: ADS Connected. Reset J0/J1 set to: {cur_j0:.2f}, {cur_j1:.2f}")
-            except Exception as e:
-                print(f"Failed to read initial positions for reset: {e}")
-                self.ads_status_label.setText(f"ADS: Connected (Read Init Error: {e})")
-            self._start_poll()
+        # [Automation Logic] Shared across tabs because they check self.trocar_phase_1_state
+        # Note: This state is local to the Tab. If you switch tabs during automation, 
+        # the new tab won't know the phase. This is acceptable or requires state moving to Manager.
+        # For now, we assume automation is monitored on the active tab.
+        
+        if self.trocar_phase_1_state == 1 and "Movement Completed" in msg:
+            self.trocar_phase_1_state = 2 
+            self.vector_inputs[0].setText("0")
+            self.vector_inputs[1].setText("1")
+            self.vector_inputs[2].setText("0")
+            self.calculate_joint_values() 
+            self.apply_joint_increment()
+            self.trocar_phase_1_state = 3 
+        
+        elif self.trocar_phase_1_state == 3 and "Movement Completed" in msg:
+            self.trocar_phase_1_state = 0
+            self.phase_1_done = True
+            self._handle_phase_1_completion()
 
-    def disconnect_ads(self):
-        self._stop_poll()
-        self.ads_client.close()
-        self.ads_status_label.setText("ADS: Disconnected")
-        self.connect_ads_btn.setEnabled(True)
-        self.disconnect_ads_btn.setEnabled(False)
-        self.reset_all_btn.setEnabled(False)
-        self.enable_motor_btn.setEnabled(False)
-        for key in ["CurJ0", "CurJ1", "CurJ2", "CurJ3"]:
-            self.pos_labels[key].setText("--")
-
-    def toggle_motor_enable(self):
-        if not self.ads_client.connected:
-            QMessageBox.warning(self, "Warning", "ADS is disconnected. Please connect Beckhoff PLC first.")
-            return
+    def _handle_phase_1_completion(self):
         try:
-            current_state = self.ads_client.read_bool(ENABLE_STATUS)
-            new_state = not current_state
-            self.ads_client.write_bool(ENABLE_STATUS, new_state)
-            action = "Disable" if not new_state else "Enable"
-            self.movement_status_label.setText(f"Movement Status: Sent {action} command ({new_state})")
+            parent = self.main_window
+            if parent and hasattr(parent, 'left_panel'):
+                left_p = parent.left_panel
+                delta_j1_str = self.inc_j1_input.text()
+                delta_j1 = float(delta_j1_str) if delta_j1_str else 0.0
+                rcm_in_p = self.robot.get_rcm_point([delta_j1, 0, 0, 0])
+
+                if (left_p.tcp_p_definition_pose is not None and 
+                    left_p.latest_tool_pose is not None and 
+                    left_p.volume_in_base is not None):
+                    
+                    T_E_P = left_p._pose_to_matrix(left_p.tcp_p_definition_pose)
+                    T_Base_E = left_p._pose_to_matrix(left_p.latest_tool_pose)
+                    T_Base_Vol = left_p._pose_to_matrix(left_p.volume_in_base)
+                    
+                    T_Base_P = np.dot(T_Base_E, T_E_P)
+                    rcm_p_homo = np.append(rcm_in_p, 1.0)
+                    rcm_base_homo = np.dot(T_Base_P, rcm_p_homo)
+                    T_Vol_Base = np.linalg.inv(T_Base_Vol)
+                    rcm_vol_homo = np.dot(T_Vol_Base, rcm_base_homo)
+                    rcm_vol = rcm_vol_homo[:3]
+
+                    msg_out = f"UpdateRCMInVolume,{rcm_vol[0]:.3f},{rcm_vol[1]:.3f},{rcm_vol[2]:.3f};"
+                    if hasattr(parent, 'navigation_tab'):
+                        parent.navigation_tab.nav_manager.send_command(msg_out)
+                        parent.navigation_tab.log_message(f"Sent RCM Data: {msg_out}")
+                else:
+                    print("Warning: Missing coordinate definitions in LeftPanel.")
         except Exception as e:
-            QMessageBox.critical(self, "ADS Write Error", f"Failed to send Enable/Disable command: {e}")
+            print(f"Error calculating/sending RCM in Volume: {e}")
+
+        if self.main_window and hasattr(self.main_window, 'status_bar'):
+            self.main_window.status_bar.showMessage("Status: Trocar Insertion Phase 1 Completed.")
 
     def calculate_joint_values(self):
         try:
@@ -596,183 +689,54 @@ class BeckhoffTab(QWidget):
             needle_vector = np.array([x, y, z])
             norm = np.linalg.norm(needle_vector)
             if not np.isclose(norm, 1.0) and norm > 1e-6:
-                 QMessageBox.warning(self, "Warning", f"Input vector magnitude is {norm:.4f}, automatically normalized.")
                  needle_vector = needle_vector / norm
             elif norm < 1e-6:
-                 QMessageBox.critical(self, "Input Error", "Vector magnitude is close to zero, cannot define direction.")
+                 QMessageBox.critical(self, "Input Error", "Vector magnitude is close to zero.")
                  return
             joint_values = self.robot.get_joint23_value(needle_vector)
             actual_j2 = joint_values[0]
             actual_j3 = joint_values[1] + joint_values[0]
             self.inc_j2_input.setText(f"{actual_j2:.4f}")
             self.inc_j3_input.setText(f"{actual_j3:.4f}")
-            self.movement_status_label.setText("Movement Status: J2/J3 Calculation Completed")
-            parent_window = self.parent()
-            if hasattr(parent_window, 'status_bar'):
-                parent_window.status_bar.showMessage(f"Status: Joint J2={actual_j2:.4f}, J3={actual_j3:.4f} calculation completed.")
         except ValueError:
             QMessageBox.critical(self, "Input Error", "Vector X, Y, Z must be valid numbers!")
         except Exception as e:
             QMessageBox.critical(self, "Calculation Error", f"Inverse kinematics solution failed: {e}")
 
-    def update_movement_status(self, msg):
-        self.movement_status_label.setText(f"Movement Status: {msg}")
-        
-        # [NEW] Automation Logic for Trocar Phase 1
-        if self.trocar_phase_1_state == 1 and "Movement Completed" in msg:
-            self.trocar_phase_1_state = 2 # Transitioning
-            
-            # Setup Step 2: Set Vector 0,1,0 -> Calc -> Apply
-            
-            self.vector_inputs[0].setText("0")
-            self.vector_inputs[1].setText("1")
-            self.vector_inputs[2].setText("0")
-            
-            self.calculate_joint_values() # Populates J2/J3 inputs
-            
-            self.apply_joint_increment()
-            self.trocar_phase_1_state = 3 # Wait for Step 2 completion
-        
-        elif self.trocar_phase_1_state == 3 and "Movement Completed" in msg:
-            self.trocar_phase_1_state = 0
-            self.phase_1_done = True
-            
-            # [NEW] Calculate and Send RCM point in Volume Coordinate System
-            try:
-                # [关键修改] 使用 self.main_window 替代 self.parent()
-                parent = self.main_window
-                
-                if parent and hasattr(parent, 'left_panel'):
-                    left_p = parent.left_panel
-                    
-                    # 1. Get Delta J1 (as used in the movement)
-                    delta_j1_str = self.inc_j1_input.text()
-                    delta_j1 = float(delta_j1_str) if delta_j1_str else 0.0
-
-                    # 2. Calculate RCM point in TCP_P Coordinate System (Correction applied)
-                    # Using the joint configuration [delta_j1, 0, 0, 0]
-                    rcm_in_p = self.robot.get_rcm_point([delta_j1, 0, 0, 0])
-
-                    # 3. Transform P_TCP_P -> P_Volume
-                    # Need: TCP_P_Def (E->P), Tool_Pose (Base->E), TCP_U_Vol (Base->Vol)
-                    if (left_p.tcp_p_definition_pose is not None and 
-                        left_p.latest_tool_pose is not None and 
-                        left_p.volume_in_base is not None):
-                        
-                        # --- Prepare Matrices ---
-                        # T_E_P: Transformation from TCP_E to TCP_P
-                        T_E_P = left_p._pose_to_matrix(left_p.tcp_p_definition_pose)
-                        
-                        # T_Base_E: Transformation from Base to TCP_E (Current Robot Pose)
-                        T_Base_E = left_p._pose_to_matrix(left_p.latest_tool_pose)
-                        
-                        # T_Base_Vol: Transformation from Base to Volume
-                        T_Base_Vol = left_p._pose_to_matrix(left_p.volume_in_base)
-                        
-                        # --- Calculate Transform Chain ---
-                        # 1. Calculate T_Base_P = T_Base_E * T_E_P
-                        T_Base_P = np.dot(T_Base_E, T_E_P)
-                        
-                        # 2. Calculate P_Base = T_Base_P * P_TCP_P
-                        rcm_p_homo = np.append(rcm_in_p, 1.0) # [x, y, z, 1]
-                        rcm_base_homo = np.dot(T_Base_P, rcm_p_homo)
-                        
-                        # 3. Calculate T_Vol_Base = inv(T_Base_Vol)
-                        T_Vol_Base = np.linalg.inv(T_Base_Vol)
-                        
-                        # 4. Calculate P_Vol = T_Vol_Base * P_Base
-                        rcm_vol_homo = np.dot(T_Vol_Base, rcm_base_homo)
-                        rcm_vol = rcm_vol_homo[:3]
-
-                        # 4. Send to Navigation
-                        # 格式化并发送 RCM点(Volume系) 到导航服务器。
-                        # 发送格式示例: "UpdateRCMInVolume,Rx,Ry,Rz;"
-                        msg_out = f"UpdateRCMInVolume,{rcm_vol[0]:.3f},{rcm_vol[1]:.3f},{rcm_vol[2]:.3f};"
-                        
-                        if hasattr(parent, 'navigation_tab'):
-                            parent.navigation_tab.nav_manager.send_command(msg_out)
-                            parent.navigation_tab.log_message(f"Sent RCM Data: {msg_out}")
-                        else:
-                            print("Error: Navigation Tab not accessible.")
-                    else:
-                        print("Warning: Missing coordinate definitions (TCP_P, Tool Pose, or volume_in_base) in LeftPanel.")
-            except Exception as e:
-                print(f"Error calculating/sending RCM in Volume: {e}")
-
-            if self.parent() and hasattr(self.parent(), 'status_bar'):
-                self.parent().status_bar.showMessage("Status: Trocar Insertion Phase 1 Completed.")
-
     def trigger_move(self):
-        if not self.ads_client.connected:
-            QMessageBox.warning(self, "Warning", "ADS is disconnected. Please connect Beckhoff PLC first.")
-            return
-        if self.ads_poll_thread and self.ads_poll_thread.moving:
-            QMessageBox.warning(self, "Warning", "Movement monitoring task is in progress, please wait.")
-            return
-
         try:
             t0 = float(self.result_labels["J0"].text())
             t1 = float(self.result_labels["J1"].text())
             t2 = float(self.result_labels["J2"].text())
             t3 = float(self.result_labels["J3"].text())
-        except ValueError:
-            QMessageBox.critical(self, "Input Error", "Target values must be valid numbers.")
-            return
-            
-        try:
             target_time = float(self.motion_time_input.text())
-            if target_time <= 0:
-                raise ValueError("Motion time must be > 0.")
+            if target_time <= 0: raise ValueError
         except ValueError:
-            QMessageBox.critical(self, "Input Error", "Target motion time (ms) must be a valid number greater than zero!")
+            QMessageBox.critical(self, "Input Error", "Target values and time must be valid.")
             return
         
-        self.ads_command_thread = ADSThread(self.ads_client, t0, t1, t2, t3, target_time)
-        self.ads_command_thread.movement_status_update.connect(self.update_movement_status)
-        self.ads_command_thread.finished.connect(lambda: self._start_poll_monitoring(t0, t1, t2, t3))
-        self.ads_command_thread.start()
+        self.manager.move_robot(t0, t1, t2, t3, target_time)
 
     def trigger_reset(self):
-        if not self.ads_client.connected:
-            QMessageBox.warning(self, "Warning", "ADS is disconnected. Please connect Beckhoff PLC first.")
-            return
-        if self.ads_poll_thread and self.ads_poll_thread.moving:
-            QMessageBox.warning(self, "Warning", "Movement monitoring task is in progress, please wait.")
-            return
-        
-        r0 = self.RESET_J0; r1 = self.RESET_J1; r2 = self.RESET_J2; r3 = self.RESET_J3
         try:
             target_time = float(self.motion_time_input.text())
             if target_time <= 0: raise ValueError
         except:
-            QMessageBox.critical(self, "Input Error", "Target motion time (ms) must be a valid number greater than zero!")
+            QMessageBox.critical(self, "Input Error", "Time must be > 0")
             return
+
+        r0 = self.manager.RESET_J0
+        r1 = self.manager.RESET_J1
+        r2 = self.manager.RESET_J2
+        r3 = self.manager.RESET_J3
 
         self.result_labels["J0"].setText(f"{r0:.4f}")
         self.result_labels["J1"].setText(f"{r1:.4f}")
         self.result_labels["J2"].setText(f"{r2:.4f}")
         self.result_labels["J3"].setText(f"{r3:.4f}")
 
-        self.ads_command_thread = ADSThread(self.ads_client, r0, r1, r2, r3, target_time)
-        self.ads_command_thread.movement_status_update.connect(self.update_movement_status)
-        self.ads_command_thread.finished.connect(lambda: self._start_poll_monitoring(r0, r1, r2, r3))
-        self.ads_command_thread.start()
-        
-        parent_window = self.parent()
-        if hasattr(parent_window, 'status_bar'):
-             parent_window.status_bar.showMessage(f"Status: Reset command sent: J0={r0:.2f}, J1={r1:.2f}, J2={r2:.2f}, J3={r3:.2f}.")
+        self.manager.move_robot(r0, r1, r2, r3, target_time)
 
-    def _start_poll_monitoring(self, t0, t1, t2, t3):
-        if self.ads_poll_thread:
-            self.ads_poll_thread.start_monitoring_move(t0, t1, t2, t3)
-            self.update_movement_status("Movement started, starting monitoring completion...")
-
-    def cleanup(self):
-        self._stop_poll()
-        self.disconnect_ads()
-        if self.ads_command_thread and self.ads_command_thread.isRunning():
-            self.ads_command_thread.wait()
-            
     def apply_joint_increment(self):
         try:
             inc_j0 = float(self.inc_j0_input.text())
@@ -780,219 +744,98 @@ class BeckhoffTab(QWidget):
             inc_j2 = float(self.inc_j2_input.text())
             inc_j3 = float(self.inc_j3_input.text())
 
-            new_target_j0 = self.RESET_J0 + inc_j0
-            new_target_j1 = self.RESET_J1 + inc_j1
-            new_target_j2 = self.RESET_J2 + inc_j2
-            new_target_j3 = self.RESET_J3 + inc_j3
+            new_target_j0 = self.manager.RESET_J0 + inc_j0
+            new_target_j1 = self.manager.RESET_J1 + inc_j1
+            new_target_j2 = self.manager.RESET_J2 + inc_j2
+            new_target_j3 = self.manager.RESET_J3 + inc_j3
 
             self.result_labels["J0"].setText(f"{new_target_j0:.4f}")
             self.result_labels["J1"].setText(f"{new_target_j1:.4f}")
             self.result_labels["J2"].setText(f"{new_target_j2:.4f}")
             self.result_labels["J3"].setText(f"{new_target_j3:.4f}")
             
-            self.movement_status_label.setText("Movement Status: All Targets calculated. Executing Move...")
             self.trigger_move()
         except ValueError:
             QMessageBox.critical(self, "Input Error", "Increment values must be valid numbers!")
-        except Exception as e:
-            QMessageBox.critical(self, "Calculation Error", f"An error occurred while applying increment: {e}")
 
-    # [NEW] Function to handle Trocar Insertion Phase 1 logic
     def run_trocar_insertion_phase_1(self):
-        """
-        Executes the Trocar Insertion Phase 1 sequence:
-        1. Calculate delta_J1 = a_point_in_tcp_p[z] - rcm_point[z]
-        2. Apply J1 increment.
-        3. Wait for move completion (handled in update_movement_status).
-        """
-        # Reset Phase 1 completion flag
         self.phase_1_done = False
-        
-        # 1. Access data from Left Panel
-        # [关键修改] 使用 self.main_window 替代 self.parent()
         parent = self.main_window 
-        
         if not parent or not hasattr(parent, 'left_panel'):
             QMessageBox.warning(self, "Error", "Cannot access Left Panel data.")
             return
-            
-        # Ensure a_point_in_tcp_p exists
         if not parent.left_panel.a_point_in_tcp_p:
-             QMessageBox.warning(self, "Data Missing", "A point in TCP_P is not defined. Please calculate it in Left Panel first.")
+             QMessageBox.warning(self, "Data Missing", "A point in TCP_P is not defined.")
              return
-             
-        # 2. Calculate delta J1
         try:
-            # a_point_in_tcp_p is [x, y, z] list
             a_z = parent.left_panel.a_point_in_tcp_p[2]
-            
-            # get_rcm_point returns [x, y, z] numpy array
             rcm_z = self.robot.get_rcm_point([0,0,0,0])[2]
-            
             delta_j1 = a_z - rcm_z
         except Exception as e:
             QMessageBox.critical(self, "Calculation Error", f"Failed to calculate J1 delta: {e}")
             return
-            
-        # 3. Setup J1 Increment
         self.inc_j0_input.setText("0.00")
         self.inc_j1_input.setText(f"{delta_j1:.4f}")
         self.inc_j2_input.setText("0.00")
         self.inc_j3_input.setText("0.00")
-        
-        # 4. Trigger First Move (State 1)
         self.trocar_phase_1_state = 1
         self.apply_joint_increment()
 
-    # [NEW] Function to handle Trocar Insertion Phase 2 logic
     def run_trocar_insertion_phase_2(self):
-        """
-        Executes Trocar Insertion Phase 2:
-        1. Check if Phase 1 is done.
-        2. Set J0 increment to d4_trocar (17.5 mm).
-        3. Apply increment.
-        """
         if not self.phase_1_done:
             QMessageBox.warning(self, "Sequence Error", "Please complete 'Trocar Insertion Phase 1' first.")
             return
-        
         self.inc_j0_input.setText(f"{self.D4_TROCAR}")
-        
         self.apply_joint_increment()
     
-    # Function to handle Adjust Needle Dir logic
     def adjust_needle_direction(self):
-        """
-        Calculates the vector from RCM (adjusted by Delta J1) to Biopsy Point B in TCP_P.
-        Vector = B_point_in_TCP_P - get_rcm_point([delta_j1, 0, 0, 0])
-        Then populates vector inputs, calculates joints, and applies increment.
-        """
-        # 1. Access Data from Left Panel
-        parent = self.parent()
-        if not parent or not hasattr(parent, 'left_panel'):
-            QMessageBox.warning(self, "Error", "Cannot access Left Panel data.")
-            return
-            
+        parent = self.main_window
+        if not parent or not hasattr(parent, 'left_panel'): return
         b_point_p = parent.left_panel.b_point_in_tcp_p
         if b_point_p is None:
-            QMessageBox.warning(self, "Data Missing", "Biopsy Point B in TCP_P is not defined. Please calculate it in Left Panel first.")
+            QMessageBox.warning(self, "Data Missing", "Biopsy Point B in TCP_P is not defined.")
             return
-
-        # 2. Get Delta J1 (from Phase 1)
         try:
-            delta_j1_text = self.inc_j1_input.text()
-            if not delta_j1_text:
-                raise ValueError("Empty J1 input")
-            delta_j1 = float(delta_j1_text)
-        except ValueError:
-            QMessageBox.warning(self, "Input Error", "Invalid Delta J1 value. Please run 'Trocar Insertion Phase 1' first.")
-            return
-
-        # 3. Calculate RCM Point
-        try:
-            # get_rcm_point returns [x, y, z] numpy array
+            delta_j1 = float(self.inc_j1_input.text())
             rcm_point = self.robot.get_rcm_point([delta_j1, 0, 0, 0])
+            vector = np.array(b_point_p) - rcm_point
+            self.vector_inputs[0].setText(f"{vector[0]:.4f}")
+            self.vector_inputs[1].setText(f"{vector[1]:.4f}")
+            self.vector_inputs[2].setText(f"{vector[2]:.4f}")
+            self.calculate_joint_values()
+            self.apply_joint_increment()
         except Exception as e:
-            QMessageBox.critical(self, "Kinematics Error", f"Failed to calculate RCM point: {e}")
-            return
+            QMessageBox.critical(self, "Error", f"Failed: {e}")
 
-        # 4. Calculate Vector
-        # B point in TCP_P is likely a list, convert to numpy for math
-        vector = np.array(b_point_p) - rcm_point
-        
-        # 5. Populate UI Inputs
-        self.vector_inputs[0].setText(f"{vector[0]:.4f}")
-        self.vector_inputs[1].setText(f"{vector[1]:.4f}")
-        self.vector_inputs[2].setText(f"{vector[2]:.4f}")
-
-        # 6. Execute Flow
-        # Use calculate_joint_values to update inc_j2/j3 based on the new vector
-        self.calculate_joint_values()
-        
-        # Automatically apply the calculated increments
-        self.apply_joint_increment()
-
-    # Function to handle Needle Insertion
     def run_needle_insertion(self):
-        """
-        Calculates distance d1 = |B_point_in_TCP_P - get_tip_of_needle([delta_j1, theoretical_j2, theoretical_j3, 0])|.
-        Sets d1 to J0 increment and applies movement.
-        """
-        # 1. Get Delta J1 (from Phase 1)
         try:
-            delta_j1_text = self.inc_j1_input.text()
-            if not delta_j1_text:
-                raise ValueError("Empty J1 input")
-            delta_j1 = float(delta_j1_text)
-        except ValueError:
-            QMessageBox.warning(self, "Input Error", "Invalid Delta J1 value. Please run 'Trocar Insertion Phase 1' first.")
-            return
-
-        # 2. Get Delta J2 and J3 (from Adjust Needle Dir step)
-        try:
-            delta_j2_text = self.inc_j2_input.text()
-            delta_j3_text = self.inc_j3_input.text()
-            # If empty, default to 0.0
-            delta_j2 = float(delta_j2_text) if delta_j2_text else 0.0
-            delta_j3 = float(delta_j3_text) if delta_j3_text else 0.0
-            
+            delta_j1 = float(self.inc_j1_input.text())
+            delta_j2 = float(self.inc_j2_input.text()) if self.inc_j2_input.text() else 0.0
+            delta_j3 = float(self.inc_j3_input.text()) if self.inc_j3_input.text() else 0.0
             theoretical_j2 = delta_j2
             theoretical_j3 = delta_j3 - delta_j2
-        except ValueError:
-            QMessageBox.warning(self, "Input Error", "Invalid Delta J2/J3 values. Please run 'Adjust Needle Dir' first.")
-            return
-
-        # 3. Get Biopsy Point
-        parent = self.parent()
-        if not parent or not hasattr(parent, 'left_panel'):
-            QMessageBox.warning(self, "Error", "Cannot access Left Panel data.")
-            return
             
-        b_point_p = parent.left_panel.b_point_in_tcp_p
-        if b_point_p is None:
-             QMessageBox.warning(self, "Data Missing", "Biopsy Point B in TCP_P is not defined. Please calculate it in Left Panel first.")
-             return
-        
-        # 4. Calculate Needle Tip Initial Position
-        try:
-            # get_tip_of_needle returns [x, y, z] numpy array
-            tip_pos = self.robot.get_tip_of_needle([delta_j1, theoretical_j2, theoretical_j3, 0])
-        except Exception as e:
-            QMessageBox.critical(self, "Kinematics Error", f"Failed to calculate needle tip position: {e}")
-            return
+            parent = self.main_window
+            b_point_p = parent.left_panel.b_point_in_tcp_p
+            if b_point_p is None: return
 
-        # 5. Calculate Distance d1
-        try:
+            tip_pos = self.robot.get_tip_of_needle([delta_j1, theoretical_j2, theoretical_j3, 0])
             b_point_vec = np.array(b_point_p)
             d4 = np.linalg.norm(b_point_vec - tip_pos)
+            self.inc_j0_input.setText(f"{d4:.4f}")
+            self.apply_joint_increment()
         except Exception as e:
-            QMessageBox.critical(self, "Calculation Error", f"Failed to calculate distance: {e}")
-            return
-            
-        # 6. Set J0 Increment
-        self.inc_j0_input.setText(f"{d4:.4f}")
-        
-        # 7. Apply Increment
-        self.apply_joint_increment()
+            QMessageBox.critical(self, "Error", f"Failed: {e}")
 
-    # Function to handle Needle Retraction
     def run_needle_retraction(self):
-        """
-        Sets J0 increment to d4_trocar value (17.5 mm) and applies movement.
-        """
-        # 1. Set J0 Increment to D4_TROCAR
         self.inc_j0_input.setText(f"{self.D4_TROCAR}")
-        
-        # 2. Apply Increment
         self.apply_joint_increment()
 
-    # Function to handle Trocar Retraction
     def run_trocar_retraction(self):
-        """
-        Sets J0 increment to 0 and applies movement (Returning to RESET_J0).
-        """
-        # 1. Set J0 Increment to 0
         self.inc_j0_input.setText("0")
-        
-        # 2. Apply Increment
         self.apply_joint_increment()
+
+    def cleanup(self):
+        # The Tab cleanup doesn't close connection, 
+        # connection is managed by BeckhoffManager which should be cleaned up by MainWindow
+        pass
