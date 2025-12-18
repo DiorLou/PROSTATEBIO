@@ -1,11 +1,112 @@
 import numpy as np
+import cv2
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, 
     QLabel, QLineEdit, QPushButton, QMessageBox, QGroupBox, 
     QFrame, QSizePolicy
 )
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen, QColor, QFont
+from PyQt5.QtCore import Qt, pyqtSignal, QPoint
 from ui.beckhoff_tab import BeckhoffManager, BeckhoffTab
+
+# =============================================================================
+# [新增] 自定义图像标记控件 (NeedleImageViewer)
+# =============================================================================
+class NeedleImageViewer(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.pixmap = None
+        self.points = []  # [Start, End]
+        self.setMinimumSize(350, 250) 
+        self.setStyleSheet("background-color: #000; border: 1px solid #555;")
+        self.parent_tab = parent 
+
+    def set_image(self, pixmap):
+        self.pixmap = pixmap
+        self.points = []
+        self.update()
+        if self.parent_tab:
+            self.parent_tab.update_marking_info()
+
+    def getScaledImageInfo(self):
+        if not self.pixmap:
+            return None, 0, 0, 0, 0
+        scaled_pixmap = self.pixmap.scaled(
+            self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation
+        )
+        x = (self.width() - scaled_pixmap.width()) // 2
+        y = (self.height() - scaled_pixmap.height()) // 2
+        return scaled_pixmap, x, y, scaled_pixmap.width(), scaled_pixmap.height()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        if not self.pixmap:
+            painter.setPen(QColor(200, 200, 200))
+            painter.drawText(self.rect(), Qt.AlignCenter, "No Image Captured")
+            return
+
+        scaled_pixmap, x, y, scaled_w, scaled_h = self.getScaledImageInfo()
+        painter.drawPixmap(x, y, scaled_pixmap)
+
+        if len(self.points) >= 1:
+            scale_x = scaled_w / self.pixmap.width()
+            scale_y = scaled_h / self.pixmap.height()
+
+            pt1 = self.points[0]
+            sx1 = int(x + pt1.x() * scale_x)
+            sy1 = int(y + pt1.y() * scale_y)
+
+            pen = QPen(QColor(255, 0, 0), 6)
+            painter.setPen(pen)
+            painter.drawPoint(sx1, sy1)
+            
+            painter.setFont(QFont("Arial", 10))
+            painter.setPen(QColor(255, 0, 0))
+            painter.drawText(sx1 + 10, sy1 - 10, "Start")
+
+            if len(self.points) == 2:
+                pt2 = self.points[1]
+                sx2 = int(x + pt2.x() * scale_x)
+                sy2 = int(y + pt2.y() * scale_y)
+
+                pen = QPen(QColor(0, 255, 255), 6)
+                painter.setPen(pen)
+                painter.drawPoint(sx2, sy2)
+
+                painter.setPen(QColor(0, 255, 255))
+                painter.drawText(sx2 + 10, sy2 - 10, "End")
+
+                pen = QPen(QColor(0, 255, 0), 2, Qt.DashLine)
+                painter.setPen(pen)
+                painter.drawLine(sx1, sy1, sx2, sy2)
+
+    def mousePressEvent(self, event):
+        if self.pixmap and event.button() == Qt.LeftButton:
+            scaled_pixmap, x, y, scaled_w, scaled_h = self.getScaledImageInfo()
+            if (event.x() >= x and event.x() <= x + scaled_w and
+                    event.y() >= y and event.y() <= y + scaled_h):
+                rel_x = (event.x() - x) / scaled_w
+                rel_y = (event.y() - y) / scaled_h
+                original_x = int(rel_x * self.pixmap.width())
+                original_y = int(rel_y * self.pixmap.height())
+
+                if len(self.points) < 2:
+                    self.points.append(QPoint(original_x, original_y))
+                else:
+                    self.points[0] = self.points[1]
+                    self.points[1] = QPoint(original_x, original_y)
+                self.update()
+                if self.parent_tab:
+                    self.parent_tab.update_marking_info()
+
+    def resizeEvent(self, event):
+        self.update()
+        super().resizeEvent(event)
+
+# =============================================================================
+# FlexibleNeedleTab
+# =============================================================================
 
 class FlexibleNeedleTab(BeckhoffTab):
     """
@@ -81,31 +182,36 @@ class FlexibleNeedleTab(BeckhoffTab):
         main_layout.addWidget(result_group)
         
         # -----------------------------------------------------------------
-        # 2. Biopsy Interface (Flexible Steering Flow)
+        # [修改] 使用 QHBoxLayout 分割左右两个 Group
         # -----------------------------------------------------------------
+        middle_layout = QHBoxLayout()
+
+        # === LEFT: Biopsy Interface ===
         biopsy_group = QGroupBox("Biopsy Interface (Flexible Needle Steering)")
         biopsy_layout = QGridLayout(biopsy_group)
         biopsy_layout.setSpacing(0) 
-        biopsy_layout.setContentsMargins(20, 20, 20, 20)
+        biopsy_layout.setContentsMargins(5, 10, 5, 10) 
 
-        # 创建按钮
-        self.flow_trocar_in_p1_btn = QPushButton("Trocar Insertion Phase 1")
-        self.flow_trocar_in_p2_btn = QPushButton("Trocar Insertion Phase 2")
-        self.flow_trocar_out_btn = QPushButton("Trocar Retraction")
+        # [修改] 使用换行符 \n 来适应 115px 的宽度，保持名字完整
+        self.flow_trocar_in_p1_btn = QPushButton("Trocar Insertion\nPhase 1")
+        self.flow_trocar_in_p2_btn = QPushButton("Trocar Insertion\nPhase 2")
+        self.flow_trocar_out_btn = QPushButton("Trocar\nRetraction")
 
-        self.flow_calc_1_btn = QPushButton("Adjust Needle Dir")
-        self.flow_needle_in_p1_btn = QPushButton("Needle Insertion Phase 1")
+        self.flow_calc_1_btn = QPushButton("Adjust\nNeedle Dir")
+        self.flow_needle_in_p1_btn = QPushButton("Needle Insertion\nPhase 1")
         
-        self.flow_calc_2_btn = QPushButton("Adjust Needle Dir")
-        self.flow_needle_in_p2_btn = QPushButton("Needle Insertion Phase 2")
+        self.flow_calc_2_btn = QPushButton("Adjust\nNeedle Dir")
+        self.flow_needle_in_p2_btn = QPushButton("Needle Insertion\nPhase 2")
         
-        self.flow_calc_3_btn = QPushButton("Adjust Needle Dir")
-        self.flow_needle_in_p3_btn = QPushButton("Needle Insertion Phase 3")
+        self.flow_calc_3_btn = QPushButton("Adjust\nNeedle Dir")
+        self.flow_needle_in_p3_btn = QPushButton("Needle Insertion\nPhase 3")
         
-        self.flow_needle_out_btn = QPushButton("Needle Retraction")
+        self.flow_needle_out_btn = QPushButton("Needle\nRetraction")
 
-        BTN_WIDTH = 160
-        BTN_HEIGHT = 35
+        # 压缩宽度
+        BTN_WIDTH = 115
+        BTN_HEIGHT = 40 # 稍微增加高度以容纳两行文字 (原35 -> 40)
+        
         for btn in [self.flow_trocar_in_p1_btn, self.flow_trocar_in_p2_btn, self.flow_trocar_out_btn,
                     self.flow_calc_1_btn, self.flow_needle_in_p1_btn,
                     self.flow_calc_2_btn, self.flow_needle_in_p2_btn,
@@ -113,6 +219,8 @@ class FlexibleNeedleTab(BeckhoffTab):
                     self.flow_needle_out_btn]:
             btn.setFixedWidth(BTN_WIDTH)
             btn.setFixedHeight(BTN_HEIGHT)
+            # 设置较小字体以显示完整
+            btn.setStyleSheet("font-size: 10px; text-align: center;")
 
         def make_node_label(text):
             l = QLabel(text)
@@ -128,12 +236,11 @@ class FlexibleNeedleTab(BeckhoffTab):
         # 布局逻辑
         # -------------------------------------------------------------
         
-        # [关键] 设置第0列最小宽度为固定值，确保所有垂直线组件宽度一致
         biopsy_layout.setColumnMinimumWidth(0, self.CELL_WIDTH) 
-        biopsy_layout.setColumnMinimumWidth(2, 40) 
-        biopsy_layout.setColumnMinimumWidth(4, 40)
+        biopsy_layout.setColumnMinimumWidth(2, 25) 
+        biopsy_layout.setColumnMinimumWidth(4, 25)
         
-        # 强制包含线条的行的高度，防止压缩
+        # 强制包含线条的行的高度
         for r in [6, 8, 10]: 
             biopsy_layout.setRowMinimumHeight(r, 30)
 
@@ -152,14 +259,13 @@ class FlexibleNeedleTab(BeckhoffTab):
         
         biopsy_layout.addWidget(self._create_v_arrow_widget(), 4, 1, alignment=Qt.AlignCenter)
 
-        # Row 5: Adjust 1 -> Phase 1 (Loop Re-entry Point)
-        # (5, 0) Entry Arrow
+        # Row 5: Adjust 1 -> Phase 1
         biopsy_layout.addWidget(self._create_entry_arrow_widget(), 5, 0)
         biopsy_layout.addWidget(self.flow_calc_1_btn, 5, 1, alignment=Qt.AlignCenter)
         biopsy_layout.addWidget(self._create_h_arrow_widget(), 5, 2)
         biopsy_layout.addWidget(self.flow_needle_in_p1_btn, 5, 3, alignment=Qt.AlignCenter)
         
-        # Row 6: Down Arrows & Loop Line (Vertical Up)
+        # Row 6: Down Arrows
         biopsy_layout.addWidget(self._create_v_line_widget(), 6, 0) 
         biopsy_layout.addWidget(self._create_v_arrow_widget(), 6, 3, alignment=Qt.AlignCenter)
 
@@ -169,7 +275,7 @@ class FlexibleNeedleTab(BeckhoffTab):
         biopsy_layout.addWidget(self._create_h_arrow_widget(), 7, 2)
         biopsy_layout.addWidget(self.flow_needle_in_p2_btn, 7, 3, alignment=Qt.AlignCenter)
 
-        # Row 8: Down Arrows & Loop Line (Vertical Up)
+        # Row 8: Down Arrows
         biopsy_layout.addWidget(self._create_v_line_widget(), 8, 0) 
         biopsy_layout.addWidget(self._create_v_arrow_widget(), 8, 3, alignment=Qt.AlignCenter)
 
@@ -181,15 +287,12 @@ class FlexibleNeedleTab(BeckhoffTab):
         biopsy_layout.addWidget(self._create_h_arrow_widget(), 9, 4)
         biopsy_layout.addWidget(self.flow_needle_out_btn, 9, 5, alignment=Qt.AlignCenter)
 
-        # Row 10: Loop Path (Bottom Row)
-        # (10, 0): Corner (Right -> Up)
+        # Row 10: Loop Path
         biopsy_layout.addWidget(self._create_corner_LL_widget(), 10, 0)
-        # (10, 1-4): Horizontal Lines
         biopsy_layout.addWidget(self._create_h_line_widget(), 10, 1)
         biopsy_layout.addWidget(self._create_h_line_widget(), 10, 2)
         biopsy_layout.addWidget(self._create_h_line_widget(), 10, 3)
         biopsy_layout.addWidget(self._create_h_line_widget(), 10, 4)
-        # (10, 5): T-Junction (Top -> Bottom, Left -> In)
         biopsy_layout.addWidget(self._create_t_junction_widget(), 10, 5)
 
         # Row 11+: Trocar Retraction Flow
@@ -198,9 +301,39 @@ class FlexibleNeedleTab(BeckhoffTab):
         biopsy_layout.addWidget(self._create_v_arrow_widget(), 13, 5, alignment=Qt.AlignCenter)
         biopsy_layout.addWidget(self.flow_end_lbl, 14, 5, alignment=Qt.AlignCenter)
 
-        # Extra stretch
         biopsy_layout.setColumnStretch(6, 1) 
-        main_layout.addWidget(biopsy_group)
+        middle_layout.addWidget(biopsy_group, 60) # 60% Width
+
+        # === RIGHT: Needle Image Marking Group ===
+        img_group = QGroupBox("Needle Image Marking")
+        img_layout = QVBoxLayout(img_group)
+
+        # 1. Image Viewer
+        self.needle_viewer = NeedleImageViewer(self)
+        img_layout.addWidget(self.needle_viewer, 1)
+
+        # 2. Info Labels
+        info_layout = QGridLayout()
+        self.mark_start_lbl = QLabel("Start: --")
+        self.mark_end_lbl = QLabel("End: --")
+        self.mark_vec_lbl = QLabel("Vector (px): --")
+        info_layout.addWidget(self.mark_start_lbl, 0, 0)
+        info_layout.addWidget(self.mark_end_lbl, 0, 1)
+        info_layout.addWidget(self.mark_vec_lbl, 1, 0, 1, 2)
+        img_layout.addLayout(info_layout)
+
+        # 3. Control Buttons
+        btn_layout = QHBoxLayout()
+        self.capture_img_btn = QPushButton("Capture from Ultrasound")
+        self.clear_marks_btn = QPushButton("Clear Marks")
+        self.capture_img_btn.setStyleSheet("background-color: #E1F5FE; font-weight: bold;")
+        
+        btn_layout.addWidget(self.capture_img_btn)
+        btn_layout.addWidget(self.clear_marks_btn)
+        img_layout.addLayout(btn_layout)
+
+        middle_layout.addWidget(img_group, 40) # 40% Width
+        main_layout.addLayout(middle_layout)
 
         # -----------------------------------------------------------------
         # 3. Beckhoff PLC Communication
@@ -229,14 +362,14 @@ class FlexibleNeedleTab(BeckhoffTab):
         main_layout.addStretch()
 
     def setup_connections(self):
-        # 基础连接
+        # Shared Connections
         self.connect_ads_btn.clicked.connect(self.manager.connect_ads)
         self.disconnect_ads_btn.clicked.connect(self.manager.disconnect_ads)
         self.enable_motor_btn.clicked.connect(self.manager.toggle_motor_enable)
         self.reset_all_btn.clicked.connect(self.trigger_reset)
         self.apply_inc_btn.clicked.connect(self.apply_joint_increment)
         
-        # 流程图连接
+        # Specific Connections
         self.flow_calc_1_btn.clicked.connect(self.adjust_needle_direction)
         self.flow_calc_2_btn.clicked.connect(self.adjust_needle_direction)
         self.flow_calc_3_btn.clicked.connect(self.adjust_needle_direction)
@@ -250,7 +383,6 @@ class FlexibleNeedleTab(BeckhoffTab):
         self.flow_needle_in_p3_btn.clicked.connect(self.run_needle_insertion_phase_3)
         self.flow_needle_out_btn.clicked.connect(self.run_needle_retraction)
 
-        # 信号连接
         self.manager.connection_state_changed.connect(self.on_connection_changed)
         self.manager.position_update.connect(self.on_position_update)
         self.manager.enable_status_update.connect(self.on_enable_status_update)
@@ -258,9 +390,12 @@ class FlexibleNeedleTab(BeckhoffTab):
         self.manager.target_update.connect(self.on_target_update)
         self.manager.position_update.connect(self.beckhoff_position_update.emit)
 
+        # Image Connections
+        self.capture_img_btn.clicked.connect(self.capture_image_from_ultrasound)
+        self.clear_marks_btn.clicked.connect(self.clear_marks)
+
     # =========================================================================
-    # Visual Helper Functions for Drawing Lines
-    # [FIX] 使用 Spacers 代替 Alignment 标志，确保垂直线能够填满高度
+    # Visual Helper Functions for Drawing Lines (恢复原始代码)
     # =========================================================================
 
     def _get_line_style(self):
@@ -269,177 +404,127 @@ class FlexibleNeedleTab(BeckhoffTab):
     def _create_v_line_widget(self):
         """标准垂直线"""
         w = QWidget()
-        w.setFixedWidth(self.CELL_WIDTH) # 固定宽度
-        
-        # [FIX] 使用 HBox + Spacers 确保垂直线居中且不被压缩
+        w.setFixedWidth(self.CELL_WIDTH) 
         lay = QHBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
-        
         line = QFrame()
         line.setFixedWidth(self.LINE_WIDTH)
         line.setStyleSheet(self._get_line_style())
-        line.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding) # 垂直方向拉伸
-        
-        lay.addStretch(1)  # 左弹簧
+        line.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding) 
+        lay.addStretch(1)
         lay.addWidget(line)
-        lay.addStretch(1)  # 右弹簧
-        
+        lay.addStretch(1)
         return w
 
     def _create_h_line_widget(self):
         """标准水平线"""
         w = QWidget()
         w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        
-        # [FIX] 使用 VBox + Spacers 确保水平线居中且不被压缩
         lay = QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
-        
-        lay.addStretch(1) # 上弹簧
-        
+        lay.addStretch(1) 
         line = QFrame()
         line.setFixedHeight(self.LINE_WIDTH)
         line.setStyleSheet(self._get_line_style())
         line.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         lay.addWidget(line)
-        
-        lay.addStretch(1) # 下弹簧
-        
+        lay.addStretch(1) 
         return w
 
     def _create_entry_arrow_widget(self):
-        """
-        Entry Point (Row 5, Col 0). '└>' shape.
-        Line comes from Bottom, turns Right.
-        """
+        """Entry Point (Row 5, Col 0). '└>' shape."""
         w = QWidget()
         w.setFixedWidth(self.CELL_WIDTH)
         main_layout = QVBoxLayout(w)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
         
-        # 1. Top Part (Stretch) - Empty
         main_layout.addStretch(1)
         
-        # 2. Middle Part (Height=Fixed) - Horizontal Arrow
         mid_container = QWidget()
         mid_lay = QHBoxLayout(mid_container)
         mid_lay.setContentsMargins(0,0,0,0)
         mid_lay.setSpacing(0)
+        mid_lay.addStretch(1) 
         
-        mid_lay.addStretch(1) # Left Spacer (50%)
-        
-        # Right Arrow Line + Head
         arrow_box = QWidget()
         arrow_lay = QHBoxLayout(arrow_box)
         arrow_lay.setContentsMargins(0,0,0,0)
         arrow_lay.setSpacing(0)
-        
         h_line = QFrame()
         h_line.setFixedHeight(self.LINE_WIDTH)
         h_line.setStyleSheet(self._get_line_style())
         h_line.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        
         head = QLabel("►")
         head.setStyleSheet("color: #444; font-size: 14px; font-weight: bold; margin-bottom: 2px;")
         head.setAlignment(Qt.AlignCenter)
-        
         arrow_lay.addWidget(h_line)
         arrow_lay.addWidget(head)
         
-        mid_lay.addWidget(arrow_box, 1) # Right Stretch
-        
+        mid_lay.addWidget(arrow_box, 1) 
         main_layout.addWidget(mid_container)
         
-        # 3. Bottom Part (Stretch) - Vertical Line
         bot_container = QWidget()
         bot_lay = QHBoxLayout(bot_container)
         bot_lay.setContentsMargins(0,0,0,0)
         bot_lay.setSpacing(0)
-        
         v_line = QFrame()
         v_line.setFixedWidth(self.LINE_WIDTH)
         v_line.setStyleSheet(self._get_line_style())
         v_line.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
-        
-        # [FIX] Use spacers for centering
         bot_lay.addStretch(1)
         bot_lay.addWidget(v_line)
         bot_lay.addStretch(1)
         
-        main_layout.addWidget(bot_container, 1) # Stretch 1
-        
+        main_layout.addWidget(bot_container, 1) 
         return w
 
     def _create_corner_LL_widget(self):
-        """
-        Bottom-Left Corner (Row 10, Col 0). '┘' shape.
-        Line from Right, turns Up.
-        """
+        """Bottom-Left Corner (Row 10, Col 0). '┘' shape."""
         w = QWidget()
         w.setFixedWidth(self.CELL_WIDTH)
         main_layout = QVBoxLayout(w)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
         
-        # 1. Top Part (Stretch) - Vertical Line
         top_container = QWidget()
         top_lay = QHBoxLayout(top_container)
         top_lay.setContentsMargins(0,0,0,0)
         top_lay.setSpacing(0)
-        
         v_line = QFrame()
         v_line.setFixedWidth(self.LINE_WIDTH)
         v_line.setStyleSheet(self._get_line_style())
         v_line.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
-        
-        # [FIX] Use spacers for centering
         top_lay.addStretch(1)
         top_lay.addWidget(v_line)
         top_lay.addStretch(1)
         
-        main_layout.addWidget(top_container, 1) # Stretch 1
+        main_layout.addWidget(top_container, 1)
         
-        # 2. Middle Part (Height=Fixed) - Horizontal Line (Right side)
         mid_container = QWidget()
         mid_lay = QHBoxLayout(mid_container)
         mid_lay.setContentsMargins(0,0,0,0)
         mid_lay.setSpacing(0)
-        
-        mid_lay.addStretch(1) # Left Spacer (50%)
-        
+        mid_lay.addStretch(1) 
         h_line = QFrame()
         h_line.setFixedHeight(self.LINE_WIDTH)
         h_line.setStyleSheet(self._get_line_style())
         h_line.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        
-        mid_lay.addWidget(h_line, 1) # Right line
-        
+        mid_lay.addWidget(h_line, 1) 
         main_layout.addWidget(mid_container)
-        
-        # 3. Bottom Part (Stretch) - Empty
         main_layout.addStretch(1)
-        
         return w
 
     def _create_t_junction_widget(self):
-        """
-        T-Junction (Row 10, Col 5). '┤' shape.
-        """
+        """T-Junction (Row 10, Col 5). '┤' shape."""
         w = QWidget()
         w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        
-        # Use HBox to split Left/Center/Right
         layout = QHBoxLayout(w)
         layout.setContentsMargins(0,0,0,0)
         layout.setSpacing(0)
-        
-        # Left: H-Line (Using standard H-line creation for alignment)
         left_w = self._create_h_line_widget()
-        
-        # Center: V-Line
         center_w = QWidget()
         c_lay = QHBoxLayout(center_w)
         c_lay.setContentsMargins(0,0,0,0)
@@ -448,20 +533,17 @@ class FlexibleNeedleTab(BeckhoffTab):
         v_line.setStyleSheet(self._get_line_style())
         v_line.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         c_lay.addWidget(v_line, alignment=Qt.AlignCenter)
-        
-        # Right: Spacer
         right_w = QWidget()
         right_w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        
         layout.addWidget(left_w, 1)
         layout.addWidget(center_w, 0)
         layout.addWidget(right_w, 1)
-        
         return w
 
-    # ... [Same Kinematics Helper Functions] ...
+    # =========================================================================
+    # Kinematics Logic
+    # =========================================================================
     def _calculate_current_d4(self):
-        """辅助函数：计算当前状态下到 B 点的剩余距离 d4"""
         try:
             delta_j1 = float(self.inc_j1_input.text())
             delta_j2 = float(self.inc_j2_input.text()) if self.inc_j2_input.text() else 0.0
@@ -470,6 +552,7 @@ class FlexibleNeedleTab(BeckhoffTab):
             theoretical_j3 = delta_j3 - delta_j2
             
             parent = self.main_window
+            if not hasattr(parent, 'left_panel'): return None
             b_point_p = parent.left_panel.b_point_in_tcp_p
             if b_point_p is None:
                 QMessageBox.warning(self, "Error", "B point in TCP_P is missing.")
@@ -506,3 +589,42 @@ class FlexibleNeedleTab(BeckhoffTab):
             val = d4
             self.inc_j0_input.setText(f"{val:.4f}")
             self.apply_joint_increment()
+
+    # Image Slots
+    def capture_image_from_ultrasound(self):
+        if self.main_window and hasattr(self.main_window, 'ultrasound_tab'):
+            frame = self.main_window.ultrasound_tab.current_frame
+            if frame is not None:
+                rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                h, w, ch = rgb_image.shape
+                bytes_per_line = ch * w
+                qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format_RGB888)
+                pixmap = QPixmap.fromImage(qt_image)
+                
+                self.needle_viewer.set_image(pixmap)
+                self.main_window.status_bar.showMessage("Image Captured from Ultrasound Tab.")
+            else:
+                QMessageBox.warning(self, "Warning", "No image available. Please start the probe in Ultrasound Tab.")
+        else:
+            QMessageBox.warning(self, "Error", "Cannot access Ultrasound Tab.")
+
+    def clear_marks(self):
+        self.needle_viewer.points = []
+        self.needle_viewer.update()
+        self.update_marking_info()
+
+    def update_marking_info(self):
+        points = self.needle_viewer.points
+        if len(points) >= 1:
+            self.mark_start_lbl.setText(f"Start: ({points[0].x()}, {points[0].y()})")
+        else:
+            self.mark_start_lbl.setText("Start: --")
+
+        if len(points) == 2:
+            self.mark_end_lbl.setText(f"End: ({points[1].x()}, {points[1].y()})")
+            vec_x = points[1].x() - points[0].x()
+            vec_y = points[1].y() - points[0].y()
+            self.mark_vec_lbl.setText(f"Vector (px): ({vec_x}, {vec_y})")
+        else:
+            self.mark_end_lbl.setText("End: --")
+            self.mark_vec_lbl.setText("Vector (px): --")
