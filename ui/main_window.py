@@ -3,8 +3,9 @@ import numpy as np
 from PyQt5.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QTabWidget, QStatusBar
 from core.tcp_manager import TCPManager
 from kinematics.prostate_biopsy_robot_kinematics import RobotKinematics
-# [修改] 导入 Manager 和 Tab 类
+# [修改] 导入 Manager 和 Tab 类, 以及新的 Flexible Tab
 from ui.beckhoff_tab import BeckhoffTab, BeckhoffManager
+from ui.flexible_needle_tab import FlexibleNeedleTab
 from ui.ultrasound_tab import UltrasoundTab
 from ui.left_panel import LeftPanel
 from ui.right_panel import RightPanel
@@ -55,7 +56,7 @@ class RobotControlWindow(QMainWindow):
         self.ultrasound_tab = UltrasoundTab(self.tcp_manager, self)
         self.tabs.addTab(self.ultrasound_tab, "Ultrasound Imaging")
         
-        # --- Tab 3: Beckhoff (Instance 1) ---
+        # --- Tab 3: Beckhoff (Instance 1) - Standard ---
         # 传递共享的 manager
         self.beckhoff_tab = BeckhoffTab(self.beckhoff_manager, self.robot_kinematics, self)
         self.tabs.addTab(self.beckhoff_tab, "Beckhoff Communication")
@@ -64,9 +65,9 @@ class RobotControlWindow(QMainWindow):
         self.navigation_tab = NavigationTab(self)
         self.tabs.addTab(self.navigation_tab, "Navigation Communication")
         
-        # --- [NEW] Tab 5: Flexible needle steering (Instance 2) ---
-        # 同样传递共享的 manager，实现状态同步
-        self.flexible_needle_tab = BeckhoffTab(self.beckhoff_manager, self.robot_kinematics, self)
+        # --- [NEW] Tab 5: Flexible needle steering (Instance 2) - Flexible Tab ---
+        # 使用新的 FlexibleNeedleTab 类，但传递相同的 manager 实现状态同步
+        self.flexible_needle_tab = FlexibleNeedleTab(self.beckhoff_manager, self.robot_kinematics, self)
         self.tabs.addTab(self.flexible_needle_tab, "Flexible needle steering")
         
         # [连接信号] 将 Beckhoff Tab 的位置更新信号连接到 Navigation Tab

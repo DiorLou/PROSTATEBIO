@@ -38,6 +38,7 @@ POS_J3_PV = "MAIN.MotorCurPos[3]"
 READ_LREAL_T   = pyads.PLCTYPE_LREAL
 WRITE_LREAL_T  = pyads.PLCTYPE_LREAL
 WRITE_INT_T    = pyads.PLCTYPE_INT
+
 # ----------------------------------------------------
 
 class ADS:
@@ -178,19 +179,17 @@ class ADSThread(QThread):
             self.movement_status_update.emit(f"ADS Write or Start Failed: {e}")
 
 # ====================================================================
-# [NEW] Beckhoff Manager (Shared Logic)
+# Beckhoff Manager (Shared Logic)
 # ====================================================================
 class BeckhoffManager(QObject):
     """
     负责管理 ADS 连接、状态和线程的单一数据源。
-    所有 BeckhoffTab 实例共享同一个 BeckhoffManager。
     """
     # 信号定义
     connection_state_changed = pyqtSignal(bool, str) # connected, message
     position_update = pyqtSignal(float, float, float, float)
     movement_status_update = pyqtSignal(str)
     enable_status_update = pyqtSignal(bool)
-    # 定义目标更新信号: 发送 J0, J1, J2, J3, Time
     target_update = pyqtSignal(float, float, float, float, float)
     
     RESET_J0 = 0.000
@@ -277,19 +276,16 @@ class BeckhoffManager(QObject):
             self.ads_command_thread.wait()
 
 # ====================================================================
-# BeckhoffTab Class (UI View)
+# BeckhoffTab Class (Standard / Original)
 # ====================================================================
 class BeckhoffTab(QWidget):
-    # [NEW] 定义一个信号，用于广播当前的 J0-J3 值
     beckhoff_position_update = pyqtSignal(float, float, float, float)
-
-    # Constant for Trocar distance used in Phase 2 and Retraction
     D4_TROCAR = 17.5 
 
     def __init__(self, manager: BeckhoffManager, robot_kinematics, parent=None):
         super().__init__(parent)
-        self.main_window = parent  # 显式保存主窗口引用
-        self.manager = manager     # [IMPORTANT] 引用共享的 Manager
+        self.main_window = parent
+        self.manager = manager
         self.robot = robot_kinematics
         
         self.vector_inputs = [None] * 3  
@@ -312,14 +308,11 @@ class BeckhoffTab(QWidget):
         self.flow_needle_out_btn = None
         self.flow_trocar_out_btn = None
         
-        # Automation States
         self.trocar_phase_1_state = 0
         self.phase_1_done = False 
         
         self.init_ui()
         self.setup_connections()
-        
-        # [Sync] 初始化时同步当前 Manager 的状态
         self.on_connection_changed(self.manager.is_connected, "Synced")
 
     # --- Helper Functions for Arrows ---
@@ -329,18 +322,14 @@ class BeckhoffTab(QWidget):
         layout = QHBoxLayout(w)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
-        line.setFrameShadow(QFrame.Plain)
         line.setStyleSheet("background-color: #444; min-height: 2px; max-height: 2px; border: none;")
         line.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        
         head = QLabel("►")
         head.setStyleSheet("color: #444; font-size: 14px; font-weight: bold; border: none; margin-left: -2px;")
         head.setAlignment(Qt.AlignCenter)
         head.setFixedWidth(15)
-        
         layout.addWidget(line)
         layout.addWidget(head)
         return w
@@ -351,19 +340,16 @@ class BeckhoffTab(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.setAlignment(Qt.AlignCenter)
-        
         line = QFrame()
         line.setFrameShape(QFrame.VLine)
         line.setStyleSheet("background-color: #444; min-width: 2px; max-width: 2px; border: none;")
         line.setFixedWidth(2)
         line.setFixedHeight(12)
-        
         head = QLabel("▼")
         head.setStyleSheet("color: #444; font-size: 12px; font-weight: bold; border: none; margin-top: -3px;")
         head.setAlignment(Qt.AlignCenter)
         head.setFixedHeight(12)
         head.setFixedWidth(20)
-        
         layout.addWidget(line, 0, Qt.AlignHCenter)
         layout.addWidget(head, 0, Qt.AlignHCenter)
         return w
@@ -373,17 +359,14 @@ class BeckhoffTab(QWidget):
         layout = QHBoxLayout(w)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        
         head = QLabel("◄")
         head.setStyleSheet("color: #444; font-size: 14px; font-weight: bold; border: none; margin-right: -2px;")
         head.setAlignment(Qt.AlignCenter)
         head.setFixedWidth(15)
-
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
         line.setStyleSheet("background-color: #444; min-height: 2px; max-height: 2px; border: none;")
         line.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        
         layout.addWidget(head)
         layout.addWidget(line)
         return w
@@ -394,19 +377,16 @@ class BeckhoffTab(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.setAlignment(Qt.AlignCenter)
-        
         head = QLabel("▲")
         head.setStyleSheet("color: #444; font-size: 12px; font-weight: bold; border: none; margin-bottom: -3px;")
         head.setAlignment(Qt.AlignCenter)
         head.setFixedHeight(12)
         head.setFixedWidth(20)
-        
         line = QFrame()
         line.setFrameShape(QFrame.VLine)
         line.setStyleSheet("background-color: #444; min-width: 2px; max-width: 2px; border: none;")
         line.setFixedWidth(2)
         line.setFixedHeight(12)
-        
         layout.addWidget(head, 0, Qt.AlignHCenter)
         layout.addWidget(line, 0, Qt.AlignHCenter)
         return w
@@ -414,15 +394,11 @@ class BeckhoffTab(QWidget):
     def init_ui(self):
         main_layout = QVBoxLayout(self)
 
-        # -----------------------------------------------------------------
-        # Need Vector Inputs (Hidden logic compatible)
-        # -----------------------------------------------------------------
+        # Vector Inputs
         for i in range(3):
             self.vector_inputs[i] = QLineEdit("0.00")
 
-        # -----------------------------------------------------------------
-        # 1. Position Control (J0 - J3)
-        # -----------------------------------------------------------------
+        # 1. Position Control
         result_group = QGroupBox("Position Control (J0 - J3)")
         result_content_layout = QHBoxLayout()
         result_layout = QGridLayout()
@@ -435,12 +411,10 @@ class BeckhoffTab(QWidget):
 
         for idx, axis in enumerate(["J0", "J1", "J2", "J3"]):
             unit = "(mm)" if idx < 2 else "(Deg)"
-            
             inc_label = QLabel(f"Δ {axis} {unit}:")
             inc_label.setAlignment(Qt.AlignVCenter)
             inc_input = QLineEdit("0.00")
             inc_input.setFixedWidth(100)
-            
             cur_label = QLabel(f"Current {axis} {unit}:")
             cur_label.setAlignment(Qt.AlignVCenter)
             pos_output = QLineEdit("--")
@@ -470,18 +444,14 @@ class BeckhoffTab(QWidget):
         result_content_layout.addLayout(result_layout)
         result_content_layout.addStretch(1) 
         result_group.setLayout(result_content_layout)
-        
         main_layout.addWidget(result_group)
         
-        # -----------------------------------------------------------------
-        # 2. Biopsy Interface (Flowchart)
-        # -----------------------------------------------------------------
-        biopsy_group = QGroupBox("Biopsy Interface")
+        # 2. Biopsy Interface (Standard Flow)
+        biopsy_group = QGroupBox("Biopsy Interface (Standard)")
         biopsy_layout = QGridLayout(biopsy_group)
         biopsy_layout.setSpacing(5) 
         biopsy_layout.setContentsMargins(10, 10, 10, 10)
 
-        # Define Buttons
         self.flow_trocar_in_p1_btn = QPushButton("Trocar Insertion Phase 1")
         self.flow_trocar_in_p2_btn = QPushButton("Trocar Insertion Phase 2")
         self.flow_calc_btn = QPushButton("Adjust Needle Dir") 
@@ -505,7 +475,6 @@ class BeckhoffTab(QWidget):
         self.flow_start_lbl = make_node_label("Start")
         self.flow_end_lbl = make_node_label("End")
 
-        # --- Grid Layout Logic ---
         biopsy_layout.addWidget(self.flow_start_lbl, 0, 0, alignment=Qt.AlignCenter)
         biopsy_layout.addWidget(self._create_v_arrow_widget(), 1, 0, alignment=Qt.AlignCenter) 
         
@@ -536,9 +505,7 @@ class BeckhoffTab(QWidget):
         biopsy_layout.setColumnStretch(5, 1)
         main_layout.addWidget(biopsy_group)
 
-        # -----------------------------------------------------------------
         # 3. Beckhoff PLC Communication
-        # -----------------------------------------------------------------
         beckhoff_comm_group = QGroupBox("Beckhoff PLC Communication")
         beckhoff_comm_layout = QVBoxLayout(beckhoff_comm_group)
 
@@ -563,7 +530,6 @@ class BeckhoffTab(QWidget):
         main_layout.addStretch()
 
     def setup_connections(self):
-        # Local UI events triggering Manager actions
         self.connect_ads_btn.clicked.connect(self.manager.connect_ads)
         self.disconnect_ads_btn.clicked.connect(self.manager.disconnect_ads)
         self.enable_motor_btn.clicked.connect(self.manager.toggle_motor_enable)
@@ -577,24 +543,18 @@ class BeckhoffTab(QWidget):
         self.flow_needle_out_btn.clicked.connect(self.run_needle_retraction)
         self.flow_trocar_out_btn.clicked.connect(self.run_trocar_retraction)
 
-        # Manager Signals -> UI Updates
         self.manager.connection_state_changed.connect(self.on_connection_changed)
         self.manager.position_update.connect(self.on_position_update)
         self.manager.enable_status_update.connect(self.on_enable_status_update)
         self.manager.movement_status_update.connect(self.on_movement_status_update)
         self.manager.target_update.connect(self.on_target_update)
-        
-        # 将 Manager 的位置信号也转发给 Navigation Tab 需要的信号
         self.manager.position_update.connect(self.beckhoff_position_update.emit)
-        
-    # 处理函数：当任何一个 Tap 触发移动时，更新本页面的输入框
+
     def on_target_update(self, t0, t1, t2, t3, time_ms):
-        # 更新目标位置输入框
         self.result_labels["J0"].setText(f"{t0:.4f}")
         self.result_labels["J1"].setText(f"{t1:.4f}")
         self.result_labels["J2"].setText(f"{t2:.4f}")
         self.result_labels["J3"].setText(f"{t3:.4f}")
-        # 更新时间输入框
         if self.motion_time_input:
             self.motion_time_input.setText(str(int(time_ms)))
 
@@ -625,11 +585,6 @@ class BeckhoffTab(QWidget):
 
     def on_movement_status_update(self, msg):
         self.movement_status_label.setText(f"Movement Status: {msg}")
-        
-        # [Automation Logic] Shared across tabs because they check self.trocar_phase_1_state
-        # Note: This state is local to the Tab. If you switch tabs during automation, 
-        # the new tab won't know the phase. This is acceptable or requires state moving to Manager.
-        # For now, we assume automation is monitored on the active tab.
         
         if self.trocar_phase_1_state == 1 and "Movement Completed" in msg:
             self.trocar_phase_1_state = 2 
@@ -673,8 +628,6 @@ class BeckhoffTab(QWidget):
                     if hasattr(parent, 'navigation_tab'):
                         parent.navigation_tab.nav_manager.send_command(msg_out)
                         parent.navigation_tab.log_message(f"Sent RCM Data: {msg_out}")
-                else:
-                    print("Warning: Missing coordinate definitions in LeftPanel.")
         except Exception as e:
             print(f"Error calculating/sending RCM in Volume: {e}")
 
@@ -836,6 +789,4 @@ class BeckhoffTab(QWidget):
         self.apply_joint_increment()
 
     def cleanup(self):
-        # The Tab cleanup doesn't close connection, 
-        # connection is managed by BeckhoffManager which should be cleaned up by MainWindow
         pass
