@@ -1,5 +1,6 @@
 import numpy as np
 import cv2
+import math
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, 
     QLabel, QLineEdit, QPushButton, QMessageBox, QGroupBox, 
@@ -10,7 +11,7 @@ from PyQt5.QtCore import Qt, pyqtSignal, QPoint
 from ui.beckhoff_tab import BeckhoffManager, BeckhoffTab
 
 # =============================================================================
-# [新增] 自定义图像标记控件 (NeedleImageViewer)
+# [修改] 自定义图像标记控件 (NeedleImageViewer)
 # =============================================================================
 class NeedleImageViewer(QWidget):
     def __init__(self, parent=None):
@@ -37,6 +38,25 @@ class NeedleImageViewer(QWidget):
         x = (self.width() - scaled_pixmap.width()) // 2
         y = (self.height() - scaled_pixmap.height()) // 2
         return scaled_pixmap, x, y, scaled_pixmap.width(), scaled_pixmap.height()
+    
+    # [新增] 计算图像上绘制线段的角度 (度)
+    # 假设图像坐标系：左上角(0,0)，X向右，Y向下。
+    # 物理坐标系（超声切面）：通常假设 X向右，Z向上(Pitch方向)。
+    # 因此，图像上的 -dy 对应物理上的 dz。
+    def get_angle(self):
+        if len(self.points) < 2:
+            return None
+        
+        p1 = self.points[0]
+        p2 = self.points[1]
+        
+        dx = p2.x() - p1.x()
+        dy = p2.y() - p1.y()
+        
+        # 计算角度，注意 y 轴反转 (图像y向下为正，物理z向上为正)
+        # 结果范围 (-180, 180)
+        angle_rad = math.atan2(-dy, dx)
+        return math.degrees(angle_rad)
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -125,6 +145,9 @@ class FlexibleNeedleTab(BeckhoffTab):
         self.current_yaw = 0.0
         self.current_pitch = 0.0
         
+        # [NEW] Error Correction Variables
+        self.last_commanded_pitch = None # 上一次 adjust needle dir 计算出的理论 Pitch
+        
     def init_ui(self):
         main_layout = QVBoxLayout(self)
 
@@ -174,8 +197,6 @@ class FlexibleNeedleTab(BeckhoffTab):
             result_layout.addWidget(pos_output, idx, 4)
 
         # --- [NEW] Yaw / Pitch Control Rows ---
-        # Need extra rows for Yaw and Pitch
-        
         # Row 4: Needle Yaw
         yaw_label = QLabel("Needle Yaw (°):")
         self.yaw_display = QLineEdit("0.0")
@@ -230,7 +251,7 @@ class FlexibleNeedleTab(BeckhoffTab):
         main_layout.addWidget(result_group)
         
         # -----------------------------------------------------------------
-        # [修改] 使用 QHBoxLayout 分割左右两个 Group
+        # Middle Layout
         # -----------------------------------------------------------------
         middle_layout = QHBoxLayout()
 
@@ -240,7 +261,6 @@ class FlexibleNeedleTab(BeckhoffTab):
         biopsy_layout.setSpacing(0) 
         biopsy_layout.setContentsMargins(5, 10, 5, 10) 
 
-        # [修改] 使用换行符 \n 来适应 115px 的宽度，保持名字完整
         self.flow_trocar_in_p1_btn = QPushButton("Trocar Insertion\nPhase 1")
         self.flow_trocar_in_p2_btn = QPushButton("Trocar Insertion\nPhase 2")
         self.flow_trocar_out_btn = QPushButton("Trocar\nRetraction")
@@ -258,7 +278,7 @@ class FlexibleNeedleTab(BeckhoffTab):
 
         # 压缩宽度
         BTN_WIDTH = 115
-        BTN_HEIGHT = 40 # 稍微增加高度以容纳两行文字 (原35 -> 40)
+        BTN_HEIGHT = 40 
         
         for btn in [self.flow_trocar_in_p1_btn, self.flow_trocar_in_p2_btn, self.flow_trocar_out_btn,
                     self.flow_calc_1_btn, self.flow_needle_in_p1_btn,
@@ -267,7 +287,6 @@ class FlexibleNeedleTab(BeckhoffTab):
                     self.flow_needle_out_btn]:
             btn.setFixedWidth(BTN_WIDTH)
             btn.setFixedHeight(BTN_HEIGHT)
-            # 设置较小字体以显示完整
             btn.setStyleSheet("font-size: 10px; text-align: center;")
 
         def make_node_label(text):
@@ -288,7 +307,6 @@ class FlexibleNeedleTab(BeckhoffTab):
         biopsy_layout.setColumnMinimumWidth(2, 25) 
         biopsy_layout.setColumnMinimumWidth(4, 25)
         
-        # 强制包含线条的行的高度
         for r in [6, 8, 10]: 
             biopsy_layout.setRowMinimumHeight(r, 30)
 
@@ -362,12 +380,46 @@ class FlexibleNeedleTab(BeckhoffTab):
 
         # 2. Info Labels
         info_layout = QGridLayout()
+        # [修改] 增加水平间距以拉开两列
+        info_layout.setHorizontalSpacing(30)
+        
         self.mark_start_lbl = QLabel("Start: --")
         self.mark_end_lbl = QLabel("End: --")
+        
+        # [修改] 增加角度、误差、Next Target相关显示
         self.mark_vec_lbl = QLabel("Vector (px): --")
+        self.actual_angle_lbl = QLabel("Actual Angle: --°")
+        self.theo_angle_lbl = QLabel("Theo Angle: --°")
+        self.error_angle_lbl = QLabel("Error Angle: --°")
+        self.next_angle_lbl = QLabel("Next Target: --°")
+        
+        # [新增] 系数 K 输入
+        k_lbl = QLabel("Coeff k:")
+        self.k_input = QLineEdit("0.4")
+        self.k_input.setFixedWidth(50)
+        
         info_layout.addWidget(self.mark_start_lbl, 0, 0)
         info_layout.addWidget(self.mark_end_lbl, 0, 1)
         info_layout.addWidget(self.mark_vec_lbl, 1, 0, 1, 2)
+        
+        info_layout.addWidget(self.actual_angle_lbl, 2, 0)
+        info_layout.addWidget(self.theo_angle_lbl, 2, 1)
+        
+        # [修改] Error Angle 独占一行 (第3行)
+        info_layout.addWidget(self.error_angle_lbl, 3, 0, 1, 2)
+        
+        # [修改] 第4行: 左侧放 Next Target, 右侧放 Coeff k
+        # 将 Next Target 放在第0列 (Actual Angle下方)
+        info_layout.addWidget(self.next_angle_lbl, 4, 0)
+        
+        # 将 Coeff k 放在第1列 (Theo Angle下方)
+        k_layout = QHBoxLayout()
+        k_layout.addWidget(k_lbl)
+        k_layout.addWidget(self.k_input)
+        k_layout.addStretch() # 保持靠左 (靠近label)
+        
+        info_layout.addLayout(k_layout, 4, 1)
+        
         img_layout.addLayout(info_layout)
 
         # 3. Control Buttons
@@ -447,6 +499,101 @@ class FlexibleNeedleTab(BeckhoffTab):
         # Image Connections
         self.capture_img_btn.clicked.connect(self.capture_image_from_ultrasound)
         self.clear_marks_btn.clicked.connect(self.clear_marks)
+        
+    # [修改] 重写 adjust_needle_direction 以加入误差补偿逻辑
+    def adjust_needle_direction(self):
+        parent = self.main_window
+        if not parent or not hasattr(parent, 'left_panel'): return
+        b_point_p = parent.left_panel.b_point_in_tcp_p
+        if b_point_p is None:
+            QMessageBox.warning(self, "Data Missing", "Biopsy Point B in TCP_P is not defined.")
+            return
+        
+        try:
+            # 1. 计算理论上的基础向量 (Raw Target Vector)
+            # RCM点会随着 Trocar insertion 改变 (delta_j1)
+            delta_j1 = float(self.inc_j1_input.text())
+            rcm_point = self.robot.get_rcm_point([delta_j1, 0, 0, 0])
+            raw_vector = np.array(b_point_p) - rcm_point
+            
+            # 归一化
+            norm = np.linalg.norm(raw_vector)
+            if norm < 1e-6:
+                QMessageBox.critical(self, "Error", "Vector magnitude zero.")
+                return
+            raw_unit_vec = raw_vector / norm
+            
+            # 2. 将 Raw Vector 转换为 Pitch 和 Yaw
+            # 根据 change_needle_angle 中的公式:
+            # vx = -sin(y)*cos(p), vy = cos(y)*cos(p), vz = sin(p)
+            # 所以 p = arcsin(vz)
+            raw_pitch_rad = np.arcsin(raw_unit_vec[2])
+            raw_pitch_deg = np.rad2deg(raw_pitch_rad)
+            
+            # y = arctan2(-vx, vy)
+            raw_yaw_rad = np.arctan2(-raw_unit_vec[0], raw_unit_vec[1])
+            raw_yaw_deg = np.rad2deg(raw_yaw_rad)
+            
+            # 3. 检查是否有图像标记以及上一次的指令，以计算误差
+            measured_angle = self.needle_viewer.get_angle()
+            
+            target_pitch_deg = raw_pitch_deg # 默认目标为几何计算值
+            
+            # 读取用户输入的系数 K
+            try:
+                k_val = float(self.k_input.text())
+            except ValueError:
+                k_val = 0.4
+                self.k_input.setText("0.4")
+            
+            if (measured_angle is not None and self.last_commanded_pitch is not None):
+                # 误差 = 上次理论 - 实际测量 (代表我们少了多少度)
+                # 例如：目标30，实际25，误差+5。我们需要补偿让下次更高。
+                # 您的公式：角度调整为 (k * 误差) + 原本Target
+                error_deg = self.last_commanded_pitch - measured_angle
+                
+                correction = k_val * error_deg
+                target_pitch_deg = raw_pitch_deg + correction
+                
+                # 更新显示
+                self.error_angle_lbl.setText(f"Error: {error_deg:.2f}°")
+                if self.main_window:
+                    self.main_window.status_bar.showMessage(f"Applied Correction: {raw_pitch_deg:.1f} + {k_val}*{error_deg:.1f} = {target_pitch_deg:.1f}°")
+            else:
+                 self.error_angle_lbl.setText("Error Angle: --°")
+            
+            # 4. 根据修正后的 Pitch 和 原本的 Yaw 重建向量
+            # 我们假设误差主要发生在 Pitch (超声切面内)
+            final_pitch_rad = np.deg2rad(target_pitch_deg)
+            final_yaw_rad = np.deg2rad(raw_yaw_deg)
+            
+            new_vx = -np.sin(final_yaw_rad) * np.cos(final_pitch_rad)
+            new_vy = np.cos(final_yaw_rad) * np.cos(final_pitch_rad)
+            new_vz = np.sin(final_pitch_rad)
+            
+            # 5. 更新 UI 和 内部状态
+            self.vector_inputs[0].setText(f"{new_vx:.4f}")
+            self.vector_inputs[1].setText(f"{new_vy:.4f}")
+            self.vector_inputs[2].setText(f"{new_vz:.4f}")
+            
+            self.current_yaw = raw_yaw_deg
+            self.current_pitch = target_pitch_deg
+            self.yaw_display.setText(f"{self.current_yaw:.1f}")
+            self.pitch_display.setText(f"{self.current_pitch:.1f}")
+            
+            # 6. 保存本次的 Target Pitch
+            self.last_commanded_pitch = target_pitch_deg
+            self.theo_angle_lbl.setText(f"Theo Angle: {self.last_commanded_pitch:.2f}°")
+            self.next_angle_lbl.setText(f"Next Target: {self.last_commanded_pitch:.2f}°")
+            
+            # 7. 触发逆运动学计算
+            self.calculate_joint_values()
+            
+            # 自动应用增量 (可选，根据流程是否需要自动执行)
+            self.apply_joint_increment()
+            
+        except Exception as e:
+             QMessageBox.critical(self, "Error", f"Failed: {e}")
 
     # =========================================================================
     # [NEW] Yaw/Pitch Logic
@@ -706,6 +853,8 @@ class FlexibleNeedleTab(BeckhoffTab):
 
     def update_marking_info(self):
         points = self.needle_viewer.points
+        
+        # 1. Update Points Info
         if len(points) >= 1:
             self.mark_start_lbl.setText(f"Start: ({points[0].x()}, {points[0].y()})")
         else:
@@ -719,3 +868,27 @@ class FlexibleNeedleTab(BeckhoffTab):
         else:
             self.mark_end_lbl.setText("End: --")
             self.mark_vec_lbl.setText("Vector (px): --")
+            
+        # 2. Update Angle Info
+        # 获取实际测量角度
+        actual_ang = self.needle_viewer.get_angle()
+        
+        if actual_ang is not None:
+            self.actual_angle_lbl.setText(f"Actual Angle: {actual_ang:.2f}°")
+            
+            # 计算并显示误差
+            if self.last_commanded_pitch is not None:
+                self.theo_angle_lbl.setText(f"Theo Angle: {self.last_commanded_pitch:.2f}°")
+                err = self.last_commanded_pitch - actual_ang
+                self.error_angle_lbl.setText(f"Error Angle: {err:.2f}°")
+            else:
+                self.theo_angle_lbl.setText(f"Theo Angle: --°")
+                self.error_angle_lbl.setText(f"Error Angle: --°")
+        else:
+            self.actual_angle_lbl.setText("Actual Angle: --°")
+            # 保持 Theoretical 不变或清除，取决于需求，这里暂不清除 Theo
+            if self.last_commanded_pitch is not None:
+                 self.theo_angle_lbl.setText(f"Theo Angle: {self.last_commanded_pitch:.2f}°")
+            else:
+                 self.theo_angle_lbl.setText(f"Theo Angle: --°")
+            self.error_angle_lbl.setText("Error Angle: --°")
