@@ -502,16 +502,16 @@ class UltrasoundTab(QWidget):
 
     def _get_rotation_x_value(self):
         """
-        [修改版] 从输入框获取旋转范围 x 的值。
-        现在支持负数（输入负数表示反向旋转），但不支持 0。
+        从输入框获取旋转范围 x 的值。
+        [修改] 仅支持正整数。
         """
         try:
             x_text = self.rotation_range_input.text()
             x = int(x_text) 
             
-            # [修改] 只要不等于 0 即可，允许负数
-            if x == 0:
-                QMessageBox.warning(self, "Input Error", "Rotation range cannot be 0.")
+            # [修改] 限制 x 必须大于 0
+            if x <= 0:
+                QMessageBox.warning(self, "Input Error", "Rotation range must be a positive integer.")
                 return None
             return x
         except ValueError:
@@ -563,14 +563,10 @@ class UltrasoundTab(QWidget):
         if x is None:
             return
             
-        # 方向与角度处理逻辑
+        # [修改] 移除负数处理逻辑，固定为左转 (BACKWARD)
         move_direction = BACKWARD
         move_angle = x
-        if x < 0:
-            move_direction = FORWARD
-            move_angle = abs(x)
-            print(f"Debug: Input is negative ({x}), switching to RIGHT turn {move_angle} deg.")
-
+        
         # TCP_E 检查
         robot_control_window = self.main_window
         if not robot_control_window or not hasattr(robot_control_window, 'latest_tool_pose'):
@@ -589,7 +585,7 @@ class UltrasoundTab(QWidget):
         # 立即计算 volume_in_base
         robot_control_window.compute_and_store_volume_in_base()
             
-        # 2. [修改] 获取所有 A 点(Volume系) 并保存到 TXT
+        # 2. 获取所有 A 点(Volume系) 并保存到 TXT
         all_a_in_vol = robot_control_window.left_panel.calculate_all_a_points_in_volume()
         
         if all_a_in_vol:
@@ -607,16 +603,13 @@ class UltrasoundTab(QWidget):
                 QMessageBox.warning(self, "File Error", f"Failed to save A_points_in_volume.txt: {e}")
         else:
             print("Warning: No A points calculated (History empty or Calc failed).")
-            # 即使没有 A 点，流程上也可能允许继续旋转，这里仅打印警告
 
         # 3. 发送旋转指令
         command = f"MoveRelJ,0,5,{move_direction},{move_angle};"
         
         if self.tcp_manager and self.tcp_manager.is_connected:
             self.tcp_manager.send_command(command)
-            
-            dir_str = "LEFT" if move_direction == BACKWARD else "RIGHT (Negative Input)"
-            QMessageBox.information(self, "Command Sent", f"Sent rotate {dir_str} {move_angle} degrees command.\nA points saved to TXT.")
+            QMessageBox.information(self, "Command Sent", f"Sent rotate LEFT {move_angle} degrees command.\nA points saved to TXT.")
         else:
             QMessageBox.warning(self, "Connection Error", "Not connected to robot or TCP manager.")
 
