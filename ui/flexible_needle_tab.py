@@ -121,6 +121,9 @@ class FlexibleNeedleTab(BeckhoffTab):
     
     def __init__(self, manager: BeckhoffManager, robot_kinematics, parent=None):
         super().__init__(manager, robot_kinematics, parent)
+        # [NEW] Initialize Yaw and Pitch state
+        self.current_yaw = 0.0
+        self.current_pitch = 0.0
         
     def init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -144,6 +147,7 @@ class FlexibleNeedleTab(BeckhoffTab):
         self.result_labels["J3"] = QLineEdit("0.00")
         self.motion_time_input = QLineEdit("5000") 
 
+        # --- J0 - J3 Rows ---
         for idx, axis in enumerate(["J0", "J1", "J2", "J3"]):
             unit = "(mm)" if idx < 2 else "(Deg)"
             inc_label = QLabel(f"Δ {axis} {unit}:")
@@ -169,12 +173,56 @@ class FlexibleNeedleTab(BeckhoffTab):
             result_layout.addWidget(cur_label, idx, 3)
             result_layout.addWidget(pos_output, idx, 4)
 
+        # --- [NEW] Yaw / Pitch Control Rows ---
+        # Need extra rows for Yaw and Pitch
+        
+        # Row 4: Needle Yaw
+        yaw_label = QLabel("Needle Yaw (°):")
+        self.yaw_display = QLineEdit("0.0")
+        self.yaw_display.setReadOnly(True)
+        self.yaw_display.setFixedWidth(60)
+        self.yaw_display.setStyleSheet("background-color: #f0f0f0;")
+        
+        yaw_btn_layout = QHBoxLayout()
+        self.yaw_minus_btn = QPushButton("-")
+        self.yaw_plus_btn = QPushButton("+")
+        self.yaw_minus_btn.setFixedWidth(30)
+        self.yaw_plus_btn.setFixedWidth(30)
+        yaw_btn_layout.addWidget(self.yaw_minus_btn)
+        yaw_btn_layout.addWidget(self.yaw_display)
+        yaw_btn_layout.addWidget(self.yaw_plus_btn)
+        yaw_btn_layout.addStretch()
+
+        result_layout.addWidget(yaw_label, 4, 0)
+        result_layout.addLayout(yaw_btn_layout, 4, 1, 1, 2)
+
+        # Row 5: Needle Pitch
+        pitch_label = QLabel("Needle Pitch (°):")
+        self.pitch_display = QLineEdit("0.0")
+        self.pitch_display.setReadOnly(True)
+        self.pitch_display.setFixedWidth(60)
+        self.pitch_display.setStyleSheet("background-color: #f0f0f0;")
+        
+        pitch_btn_layout = QHBoxLayout()
+        self.pitch_minus_btn = QPushButton("-")
+        self.pitch_plus_btn = QPushButton("+")
+        self.pitch_minus_btn.setFixedWidth(30)
+        self.pitch_plus_btn.setFixedWidth(30)
+        pitch_btn_layout.addWidget(self.pitch_minus_btn)
+        pitch_btn_layout.addWidget(self.pitch_display)
+        pitch_btn_layout.addWidget(self.pitch_plus_btn)
+        pitch_btn_layout.addStretch()
+        
+        result_layout.addWidget(pitch_label, 5, 0)
+        result_layout.addLayout(pitch_btn_layout, 5, 1, 1, 2)
+
+        # Buttons (moved to row 6)
         self.apply_inc_btn = QPushButton("Apply Increment (All)")
-        result_layout.addWidget(self.apply_inc_btn, 4, 0, 1, 2) 
+        result_layout.addWidget(self.apply_inc_btn, 6, 0, 1, 2) 
 
         self.reset_all_btn = QPushButton("Reset All (J0-J3)")
         self.reset_all_btn.setEnabled(False) 
-        result_layout.addWidget(self.reset_all_btn, 4, 3, 1, 2)
+        result_layout.addWidget(self.reset_all_btn, 6, 3, 1, 2)
         
         result_content_layout.addLayout(result_layout)
         result_content_layout.addStretch(1) 
@@ -383,6 +431,12 @@ class FlexibleNeedleTab(BeckhoffTab):
         self.flow_needle_in_p3_btn.clicked.connect(self.run_needle_insertion_phase_3)
         self.flow_needle_out_btn.clicked.connect(self.run_needle_retraction)
 
+        # [NEW] Yaw/Pitch Connections
+        self.yaw_minus_btn.clicked.connect(lambda: self.change_needle_angle(-1, 0))
+        self.yaw_plus_btn.clicked.connect(lambda: self.change_needle_angle(1, 0))
+        self.pitch_minus_btn.clicked.connect(lambda: self.change_needle_angle(0, -1))
+        self.pitch_plus_btn.clicked.connect(lambda: self.change_needle_angle(0, 1))
+
         self.manager.connection_state_changed.connect(self.on_connection_changed)
         self.manager.position_update.connect(self.on_position_update)
         self.manager.enable_status_update.connect(self.on_enable_status_update)
@@ -393,6 +447,43 @@ class FlexibleNeedleTab(BeckhoffTab):
         # Image Connections
         self.capture_img_btn.clicked.connect(self.capture_image_from_ultrasound)
         self.clear_marks_btn.clicked.connect(self.clear_marks)
+
+    # =========================================================================
+    # [NEW] Yaw/Pitch Logic
+    # =========================================================================
+    def change_needle_angle(self, yaw_delta, pitch_delta):
+        """
+        Adjust yaw or pitch, recalculate vector, and update ΔJ2/ΔJ3.
+        """
+        self.current_yaw += yaw_delta
+        self.current_pitch += pitch_delta
+        
+        # Update display
+        self.yaw_display.setText(f"{self.current_yaw:.1f}")
+        self.pitch_display.setText(f"{self.current_pitch:.1f}")
+        
+        # Calculate new vector
+        # Base vector (0, 1, 0)
+        # Yaw rotates around Z-axis (creating X component)
+        # Pitch rotates around X-axis (creating Z component)
+        # x = -sin(Yaw) * cos(Pitch)
+        # y = cos(Yaw) * cos(Pitch)
+        # z = sin(Pitch)
+        
+        yaw_rad = np.deg2rad(self.current_yaw)
+        pitch_rad = np.deg2rad(self.current_pitch)
+        
+        vx = -np.sin(yaw_rad) * np.cos(pitch_rad)
+        vy = np.cos(yaw_rad) * np.cos(pitch_rad)
+        vz = np.sin(pitch_rad)
+        
+        # Update Vector Inputs (UI only)
+        self.vector_inputs[0].setText(f"{vx:.4f}")
+        self.vector_inputs[1].setText(f"{vy:.4f}")
+        self.vector_inputs[2].setText(f"{vz:.4f}")
+        
+        # Recalculate Joints (this updates inc_j2/inc_j3 inputs automatically)
+        self.calculate_joint_values()
 
     # =========================================================================
     # Visual Helper Functions for Drawing Lines (恢复原始代码)
