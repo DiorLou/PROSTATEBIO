@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
     QFrame, QSizePolicy
 )
 from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen, QColor, QFont
-from PyQt5.QtCore import Qt, pyqtSignal, QPoint
+from PyQt5.QtCore import Qt, pyqtSignal, QPoint, QTimer
 from ui.beckhoff_tab import BeckhoffManager, BeckhoffTab
 
 # =============================================================================
@@ -148,6 +148,10 @@ class FlexibleNeedleTab(BeckhoffTab):
         # [NEW] Error Correction Variables
         self.last_commanded_pitch = None # 上一次 adjust needle dir 计算出的理论 Pitch
         
+        # [新增] 自动化序列相关的 Timer
+        self.scan_polling_timer = QTimer(self)
+        self.scan_polling_timer.timeout.connect(self._check_scan_status)
+
     def init_ui(self):
         main_layout = QVBoxLayout(self)
 
@@ -195,6 +199,52 @@ class FlexibleNeedleTab(BeckhoffTab):
             result_layout.addWidget(QLabel(" "), idx, 2)
             result_layout.addWidget(cur_label, idx, 3)
             result_layout.addWidget(pos_output, idx, 4)
+
+        # [修改] 设置第5列作为间隔，拉开与右侧组件的距离
+        result_layout.setColumnMinimumWidth(5, 40)
+
+        # --- [NEW] Simplified Manual Controls (Column 6, 4 Components) ---
+        
+        # 1. Descent Distance (Label + Input)
+        row0_container = QWidget()
+        row0_layout = QHBoxLayout(row0_container)
+        row0_layout.setContentsMargins(0,0,0,0)
+        
+        lbl_descent = QLabel("Descent Distance (mm)")
+        self.descent_dist_input = QLineEdit("10")
+        self.descent_dist_input.setAlignment(Qt.AlignCenter)
+        self.descent_dist_input.setFixedWidth(50)
+        
+        row0_layout.addWidget(lbl_descent)
+        row0_layout.addWidget(self.descent_dist_input)
+        row0_layout.addStretch()
+        result_layout.addWidget(row0_container, 0, 6)
+
+        # 2. Rotate x Deg (Label + Input)
+        row1_container = QWidget()
+        row1_layout = QHBoxLayout(row1_container)
+        row1_layout.setContentsMargins(0,0,0,0)
+        
+        lbl_rotate = QLabel("Rotate x Deg")
+        self.rot_range_input = QLineEdit("10") # 默认值 10
+        self.rot_range_input.setAlignment(Qt.AlignCenter)
+        self.rot_range_input.setFixedWidth(50) 
+        
+        row1_layout.addWidget(lbl_rotate)
+        row1_layout.addWidget(self.rot_range_input)
+        row1_layout.addStretch()
+        result_layout.addWidget(row1_container, 1, 6)
+
+        # 3. Button: Δ J1 decreases
+        self.btn_j1_decrease = QPushButton("Δ J1 decreases")
+        self.btn_j1_decrease.clicked.connect(self.on_j1_decrease_clicked)
+        result_layout.addWidget(self.btn_j1_decrease, 2, 6)
+
+        # 4. Button: Rotate Probe and Reset (Automation)
+        self.btn_rotate_reset = QPushButton("Rotate Probe and Reset")
+        self.btn_rotate_reset.clicked.connect(self.on_rotate_probe_reset_clicked)
+        result_layout.addWidget(self.btn_rotate_reset, 3, 6)
+
 
         # --- [NEW] Yaw / Pitch Control Rows ---
         # Row 4: Needle Yaw
@@ -631,6 +681,104 @@ class FlexibleNeedleTab(BeckhoffTab):
         
         # Recalculate Joints (this updates inc_j2/inc_j3 inputs automatically)
         self.calculate_joint_values()
+
+        # [新增] 自动 Apply Increment
+        self.apply_joint_increment()
+
+    # =========================================================================
+    # [新增] Manual Controls Logic (J1 Decrease & Auto Rotate)
+    # =========================================================================
+    
+    def on_j1_decrease_clicked(self):
+        """让 Δ J1 减少指定的 'Descent Distance' 并执行"""
+        try:
+            current_inc = float(self.inc_j1_input.text())
+            decrease_amount = float(self.descent_dist_input.text())
+            
+            new_val = current_inc - decrease_amount
+            self.inc_j1_input.setText(f"{new_val:.4f}")
+            self.apply_joint_increment()
+            
+        except ValueError:
+            QMessageBox.warning(self, "Input Error", "Please check J1 or Descent Distance input format.")
+
+    def on_rotate_probe_reset_clicked(self):
+        """
+        自动化序列：
+        1. Probe Left x
+        2. (1s后) Probe Right 2X (Scan)
+        3. (等待扫描完成)
+        4. (1s后) Probe Left x (Reset)
+        5. (1s后) J1 Increase (Descent Dist) & Apply
+        """
+        # 1. Probe Left x
+        self.rotate_probe(direction=0, multiplier=1) # 0=Left/Backward
+        
+        # 2. 1s 后执行扫描 (Right 2x)
+        QTimer.singleShot(1000, self._step2_start_scan)
+
+    def _step2_start_scan(self):
+        # 触发 Ultrasound Tab 的扫描功能
+        if self.main_window and hasattr(self.main_window, 'ultrasound_tab'):
+             try:
+                 # 同步角度
+                 x_val = self.rot_range_input.text()
+                 self.main_window.ultrasound_tab.rotation_range_input.setText(x_val)
+                 
+                 # 调用扫描
+                 self.main_window.ultrasound_tab.rotate_and_capture_2x()
+                 
+                 # 启动轮询 Timer，等待扫描结束
+                 self.scan_polling_timer.start(500) # 每500ms检查一次
+                 
+             except Exception as e:
+                 QMessageBox.critical(self, "Error", f"Failed to start scan: {e}")
+        else:
+             QMessageBox.warning(self, "Warning", "Ultrasound Tab not found. Sequence aborted.")
+
+    def _check_scan_status(self):
+        """轮询检查扫描是否完成"""
+        if self.main_window and hasattr(self.main_window, 'ultrasound_tab'):
+            # 如果 is_rotating 变为 False，说明扫描结束
+            if not self.main_window.ultrasound_tab.is_rotating:
+                self.scan_polling_timer.stop()
+                
+                # 扫描完成，1s 后执行复位
+                QTimer.singleShot(1000, self._step4_reset_probe)
+
+    def _step4_reset_probe(self):
+        # Probe Left x (从 +x 回到 0)
+        self.rotate_probe(direction=0, multiplier=1) # 0=Left
+        
+        # 1s 后执行 J1 增加
+        QTimer.singleShot(1000, self._step5_increase_j1)
+
+    def _step5_increase_j1(self):
+        # J1 Increase by Descent Distance
+        try:
+            current_inc = float(self.inc_j1_input.text())
+            increase_amount = float(self.descent_dist_input.text())
+            new_val = current_inc + increase_amount
+            self.inc_j1_input.setText(f"{new_val:.4f}")
+            self.apply_joint_increment()
+            
+            if self.main_window:
+                self.main_window.status_bar.showMessage("Auto Sequence Completed: Scanned, Reset, and Advanced Needle.")
+                
+        except ValueError:
+            pass
+
+    def rotate_probe(self, direction, multiplier):
+        if not self.main_window or not hasattr(self.main_window, 'tcp_manager'):
+            return
+        try:
+            deg = float(self.rot_range_input.text())
+            if deg <= 0: raise ValueError
+        except ValueError:
+            return
+        angle = deg * multiplier
+        command = f"MoveRelJ,0,5,{direction},{angle};"
+        self.main_window.tcp_manager.send_command(command)
 
     # =========================================================================
     # Visual Helper Functions for Drawing Lines (恢复原始代码)
