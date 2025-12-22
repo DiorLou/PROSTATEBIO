@@ -964,7 +964,7 @@ class FlexibleNeedleTab(BeckhoffTab):
         d4 = self._calculate_current_d4()
         if d4 is not None:
             # Phase 2: 走当前剩余的 1/2
-            val = d4 / 2.0
+            val = d4 * 2.0 / 3.0
             self.inc_j0_input.setText(f"{val:.4f}")
             self.apply_joint_increment()
 
@@ -972,7 +972,7 @@ class FlexibleNeedleTab(BeckhoffTab):
         d4 = self._calculate_current_d4()
         if d4 is not None:
             # Phase 3: 走完剩余全部
-            val = d4
+            val = d4 + self.NEEDLE_TIP_OFFSET
             self.inc_j0_input.setText(f"{val:.4f}")
             self.apply_joint_increment()
 

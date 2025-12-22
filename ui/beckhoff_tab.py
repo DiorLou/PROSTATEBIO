@@ -281,6 +281,7 @@ class BeckhoffManager(QObject):
 class BeckhoffTab(QWidget):
     beckhoff_position_update = pyqtSignal(float, float, float, float)
     D4_TROCAR = 17.5 
+    NEEDLE_TIP_OFFSET = 16.0
 
     def __init__(self, manager: BeckhoffManager, robot_kinematics, parent=None):
         super().__init__(parent)
@@ -775,6 +776,7 @@ class BeckhoffTab(QWidget):
             tip_pos = self.robot.get_tip_of_needle([delta_j1, theoretical_j2, theoretical_j3, 0])
             b_point_vec = np.array(b_point_p)
             d4 = np.linalg.norm(b_point_vec - tip_pos)
+            d4 = d4 + self.NEEDLE_TIP_OFFSET
             self.inc_j0_input.setText(f"{d4:.4f}")
             self.apply_joint_increment()
         except Exception as e:
