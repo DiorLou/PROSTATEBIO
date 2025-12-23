@@ -246,8 +246,9 @@ class FlexibleNeedleTab(BeckhoffTab):
         result_layout.addWidget(self.btn_rotate_reset, 3, 6)
 
 
-        # --- [NEW] Yaw / Pitch Control Rows ---
-        # Row 4: Needle Yaw
+        # --- [NEW] Yaw / Pitch Control Rows (Row 4 & 5) ---
+        
+        # Row 4: Needle Yaw (Target) & Current Yaw (Current)
         yaw_label = QLabel("Needle Yaw (°):")
         self.yaw_display = QLineEdit("0.0")
         self.yaw_display.setReadOnly(True)
@@ -266,8 +267,20 @@ class FlexibleNeedleTab(BeckhoffTab):
 
         result_layout.addWidget(yaw_label, 4, 0)
         result_layout.addLayout(yaw_btn_layout, 4, 1, 1, 2)
+        
+        # [NEW] Current Yaw Display
+        cur_yaw_label = QLabel("Current Yaw (°):")
+        cur_yaw_label.setAlignment(Qt.AlignVCenter)
+        self.cur_yaw_display = QLineEdit("--")
+        self.cur_yaw_display.setReadOnly(True)
+        self.cur_yaw_display.setFixedWidth(100)
+        self.cur_yaw_display.setStyleSheet("background-color: #E8F5E9; border: 1px inset grey;") # Distinct color
+        
+        result_layout.addWidget(cur_yaw_label, 4, 3)
+        result_layout.addWidget(self.cur_yaw_display, 4, 4)
 
-        # Row 5: Needle Pitch
+
+        # Row 5: Needle Pitch (Target) & Current Pitch (Current)
         pitch_label = QLabel("Needle Pitch (°):")
         self.pitch_display = QLineEdit("0.0")
         self.pitch_display.setReadOnly(True)
@@ -286,6 +299,17 @@ class FlexibleNeedleTab(BeckhoffTab):
         
         result_layout.addWidget(pitch_label, 5, 0)
         result_layout.addLayout(pitch_btn_layout, 5, 1, 1, 2)
+
+        # [NEW] Current Pitch Display
+        cur_pitch_label = QLabel("Current Pitch (°):")
+        cur_pitch_label.setAlignment(Qt.AlignVCenter)
+        self.cur_pitch_display = QLineEdit("--")
+        self.cur_pitch_display.setReadOnly(True)
+        self.cur_pitch_display.setFixedWidth(100)
+        self.cur_pitch_display.setStyleSheet("background-color: #E8F5E9; border: 1px inset grey;")
+
+        result_layout.addWidget(cur_pitch_label, 5, 3)
+        result_layout.addWidget(self.cur_pitch_display, 5, 4)
 
         # Buttons (moved to row 6)
         self.apply_inc_btn = QPushButton("Apply Increment (All)")
@@ -533,23 +557,144 @@ class FlexibleNeedleTab(BeckhoffTab):
         self.flow_needle_in_p3_btn.clicked.connect(self.run_needle_insertion_phase_3)
         self.flow_needle_out_btn.clicked.connect(self.run_needle_retraction)
 
-        # [NEW] Yaw/Pitch Connections
+        # [NEW] Yaw/Pitch Connections (+/- Buttons)
         self.yaw_minus_btn.clicked.connect(lambda: self.change_needle_angle(-1, 0))
         self.yaw_plus_btn.clicked.connect(lambda: self.change_needle_angle(1, 0))
         self.pitch_minus_btn.clicked.connect(lambda: self.change_needle_angle(0, -1))
         self.pitch_plus_btn.clicked.connect(lambda: self.change_needle_angle(0, 1))
 
+        # Manager Signals
         self.manager.connection_state_changed.connect(self.on_connection_changed)
         self.manager.position_update.connect(self.on_position_update)
         self.manager.enable_status_update.connect(self.on_enable_status_update)
         self.manager.movement_status_update.connect(self.on_movement_status_update)
         self.manager.target_update.connect(self.on_target_update)
         self.manager.position_update.connect(self.beckhoff_position_update.emit)
+        
+        # [NEW] Real-time Current Yaw/Pitch Update
+        self.manager.position_update.connect(self.update_current_yaw_pitch)
+
+        # [NEW] Link J2/J3 Inputs to Needle Yaw/Pitch Target Display
+        self.inc_j2_input.textChanged.connect(self.update_target_yaw_pitch_from_inputs)
+        self.inc_j3_input.textChanged.connect(self.update_target_yaw_pitch_from_inputs)
 
         # Image Connections
         self.capture_img_btn.clicked.connect(self.capture_image_from_ultrasound)
         self.clear_marks_btn.clicked.connect(self.clear_marks)
+    
+    # =========================================================================
+    # [NEW] Yaw/Pitch Calculation Helper
+    # =========================================================================
+    def calculate_angles_from_vector(self, vector):
+        """
+        Calculate Yaw and Pitch relative to reference vector (0, 1, 0).
+        Ref: 
+          vx = -sin(y)*cos(p)
+          vy = cos(y)*cos(p)
+          vz = sin(p)
+        Returns: (Yaw_deg, Pitch_deg, Roll_deg)
+        """
+        norm = np.linalg.norm(vector)
+        if norm < 1e-6:
+            return 0.0, 0.0, 0.0
         
+        v = vector / norm
+        
+        # Pitch = arcsin(vz)
+        pitch_rad = np.arcsin(v[2])
+        
+        # Yaw = arctan2(-vx, vy)
+        yaw_rad = np.arctan2(-v[0], v[1])
+        
+        # Roll (placeholder, typically 0 for needle vector unless we have full orientation matrix)
+        roll_rad = 0.0
+        
+        return np.rad2deg(yaw_rad), np.rad2deg(pitch_rad), np.rad2deg(roll_rad)
+
+    # =========================================================================
+    # [NEW] Update Target Yaw/Pitch from Inputs
+    # =========================================================================
+    def update_target_yaw_pitch_from_inputs(self):
+        """
+        Calculates Target Needle Yaw/Pitch based on the text in ΔJ2 and ΔJ3 inputs.
+        Logic: 
+          theoretical_target ΔJ2 = input ΔJ2
+          theoretical_target ΔJ3 = input ΔJ3 - input ΔJ2
+          vector = robot.get_needle_vector(...)
+        """
+        try:
+            val_j2_str = self.inc_j2_input.text()
+            val_j3_str = self.inc_j3_input.text()
+            
+            if not val_j2_str or not val_j3_str:
+                return
+
+            target_delta_j2 = float(val_j2_str)
+            target_delta_j3 = float(val_j3_str)
+            
+            # Formula from prompt
+            theo_target_j2 = target_delta_j2
+            theo_target_j3 = target_delta_j3 - target_delta_j2
+            
+            # Get vector (using 0 for J0, J1 as they don't affect orientation relative to TCP_P in this model usually, or J1 is rotation around Z which is handled separately)
+            # Prompt says: use [0, theo_j2, theo_j3, 0]
+            vector = self.robot.get_needle_vector([0, theo_target_j2, theo_target_j3, 0])
+            
+            # Calculate Yaw/Pitch
+            yaw, pitch, roll = self.calculate_angles_from_vector(vector)
+            
+            # Update Display (block signals to prevent recursion if we were setting inputs here, but we are setting display only)
+            self.yaw_display.setText(f"{yaw:.1f}")
+            self.pitch_display.setText(f"{pitch:.1f}")
+            
+            # Print Target Roll as requested
+            print(f"Target Roll: {roll:.2f}")
+            
+            # Sync internal state
+            self.current_yaw = yaw
+            self.current_pitch = pitch
+            
+        except ValueError:
+            pass # Input might be incomplete (e.g. "-")
+        except Exception as e:
+            print(f"Error updating target yaw/pitch: {e}")
+
+    # =========================================================================
+    # [NEW] Update Current Yaw/Pitch from Real-time Feedback
+    # =========================================================================
+    def update_current_yaw_pitch(self, j0, j1, j2, j3):
+        """
+        Calculates Current Yaw and Pitch based on real-time motor positions.
+        """
+        try:
+            # Get Reset values from Manager
+            reset_j2 = self.manager.RESET_J2
+            reset_j3 = self.manager.RESET_J3
+            
+            # Calculate Current Deltas
+            cur_delta_j2 = j2 - reset_j2
+            cur_delta_j3 = j3 - reset_j3
+            
+            # Calculate Theoretical Currents (Prompt Formula)
+            theo_cur_j2 = cur_delta_j2
+            theo_cur_j3 = cur_delta_j3 - cur_delta_j2
+            
+            # Get vector
+            vector = self.robot.get_needle_vector([0, theo_cur_j2, theo_cur_j3, 0])
+            
+            # Calculate Angles
+            yaw, pitch, roll = self.calculate_angles_from_vector(vector)
+            
+            # Update UI
+            self.cur_yaw_display.setText(f"{yaw:.1f}")
+            self.cur_pitch_display.setText(f"{pitch:.1f}")
+            
+            # Print Current Roll
+            print(f"Current Roll: {roll:.2f}")
+            
+        except Exception as e:
+            print(f"Error updating current yaw/pitch: {e}")
+
     # [修改] 重写 adjust_needle_direction 以加入误差补偿逻辑
     def adjust_needle_direction(self):
         parent = self.main_window
@@ -628,8 +773,8 @@ class FlexibleNeedleTab(BeckhoffTab):
             
             self.current_yaw = raw_yaw_deg
             self.current_pitch = target_pitch_deg
-            self.yaw_display.setText(f"{self.current_yaw:.1f}")
-            self.pitch_display.setText(f"{self.current_pitch:.1f}")
+            # 注意：这里不需要再手动 set Text Yaw/Pitch，因为 calculate_joint_values 更新 J2/J3 输入框后，
+            # textChanged 信号会自动触发 update_target_yaw_pitch_from_inputs 更新显示。
             
             # 6. 保存本次的 Target Pitch
             self.last_commanded_pitch = target_pitch_deg
@@ -650,39 +795,46 @@ class FlexibleNeedleTab(BeckhoffTab):
     # =========================================================================
     def change_needle_angle(self, yaw_delta, pitch_delta):
         """
-        Adjust yaw or pitch, recalculate vector, and update ΔJ2/ΔJ3.
+        调整 Yaw 或 Pitch。
+        注意：此处不直接修改 self.current_yaw/pitch，
+        而是计算出临时目标值 target_yaw/pitch，用于推算向量和关节角。
+        最终 self.current_yaw/pitch 的更新由输入框的 textChanged 信号触发 update_target_yaw_pitch_from_inputs 完成。
+        这样保证了“单点真实原则”(Single Source of Truth)，即内部状态永远与界面输入框数值保持一致。
         """
-        self.current_yaw += yaw_delta
-        self.current_pitch += pitch_delta
+        # 1. 使用局部变量计算目标角度 (基于当前状态 + 增量)
+        target_yaw = self.current_yaw + yaw_delta
+        target_pitch = self.current_pitch + pitch_delta
         
-        # Update display
-        self.yaw_display.setText(f"{self.current_yaw:.1f}")
-        self.pitch_display.setText(f"{self.current_pitch:.1f}")
-        
-        # Calculate new vector
+        # 2. 根据目标角度计算新的方向向量
         # Base vector (0, 1, 0)
-        # Yaw rotates around Z-axis (creating X component)
-        # Pitch rotates around X-axis (creating Z component)
         # x = -sin(Yaw) * cos(Pitch)
         # y = cos(Yaw) * cos(Pitch)
         # z = sin(Pitch)
         
-        yaw_rad = np.deg2rad(self.current_yaw)
-        pitch_rad = np.deg2rad(self.current_pitch)
+        yaw_rad = np.deg2rad(target_yaw)
+        pitch_rad = np.deg2rad(target_pitch)
         
         vx = -np.sin(yaw_rad) * np.cos(pitch_rad)
         vy = np.cos(yaw_rad) * np.cos(pitch_rad)
         vz = np.sin(pitch_rad)
         
-        # Update Vector Inputs (UI only)
+        # 3. 更新向量输入框 (UI)
+        # 父类的 calculate_joint_values() 依赖界面上的 Vector 输入框数值进行计算
         self.vector_inputs[0].setText(f"{vx:.4f}")
         self.vector_inputs[1].setText(f"{vy:.4f}")
         self.vector_inputs[2].setText(f"{vz:.4f}")
         
-        # Recalculate Joints (this updates inc_j2/inc_j3 inputs automatically)
+        # 4. 逆运动学解算 & 更新关节角输入框
+        # 流程：
+        #   a. 读取 self.vector_inputs
+        #   b. 计算 IK 得到 J2, J3
+        #   c. self.inc_j2_input.setText(...) / self.inc_j3_input.setText(...)
+        #   d. setText 触发 textChanged 信号
+        #   e. 信号调用 update_target_yaw_pitch_from_inputs()
+        #   f. 该函数通过正运动学反算 Yaw/Pitch，并最终更新 self.current_yaw 和 self.current_pitch
         self.calculate_joint_values()
 
-        # [新增] 自动 Apply Increment
+        # 5. 自动应用增量
         self.apply_joint_increment()
 
     # =========================================================================
