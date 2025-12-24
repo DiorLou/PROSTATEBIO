@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QMessageBox, QGroupBox, 
     QFrame, QSizePolicy
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QTimer
 import pyads 
 import threading
 import time
@@ -167,7 +167,6 @@ class ADSThread(QThread):
     def run(self):
         self.movement_status_update.emit("Sending Target...")
         try:
-            # Write all joint targets
             self.ads.write_lreal(J0_PV, self.target_j0)
             self.ads.write_lreal(J1_PV, self.target_j1)
             self.ads.write_lreal(J2_PV, self.target_j2)
@@ -179,7 +178,7 @@ class ADSThread(QThread):
             self.movement_status_update.emit(f"ADS Write or Start Failed: {e}")
 
 # ====================================================================
-# Beckhoff Manager (Shared Logic)
+# Beckhoff Manager
 # ====================================================================
 class BeckhoffManager(QObject):
     """
@@ -257,7 +256,6 @@ class BeckhoffManager(QObject):
             self.movement_status_update.emit("Warning: Movement in progress.")
             return
         
-        # 在发送指令前，先广播这个目标给所有 Tap 页
         self.target_update.emit(t0, t1, t2, t3, time_ms)
 
         self.ads_command_thread = ADSThread(self.ads_client, t0, t1, t2, t3, time_ms)
@@ -289,6 +287,12 @@ class BeckhoffTab(QWidget):
         self.manager = manager
         self.robot = robot_kinematics
         
+        # [NEW] Steering Logic Variables
+        self.current_yaw = 0.0
+        self.current_pitch = 0.0
+        self.scan_polling_timer = QTimer(self)
+        self.scan_polling_timer.timeout.connect(self._check_scan_status)
+        
         self.vector_inputs = [None] * 3  
         self.result_labels = {}
         self.ads_status_label = QLabel("ADS: Disconnected") 
@@ -303,7 +307,6 @@ class BeckhoffTab(QWidget):
         # Flowchart Controls
         self.flow_trocar_in_p1_btn = None 
         self.flow_trocar_in_p2_btn = None
-        
         self.flow_calc_btn = None
         self.flow_needle_in_btn = None
         self.flow_needle_out_btn = None
@@ -399,7 +402,7 @@ class BeckhoffTab(QWidget):
         for i in range(3):
             self.vector_inputs[i] = QLineEdit("0.00")
 
-        # 1. Position Control
+        # 1. Position Control (Integrated steering controls)
         result_group = QGroupBox("Position Control (J0 - J3)")
         result_content_layout = QHBoxLayout()
         result_layout = QGridLayout()
@@ -435,19 +438,64 @@ class BeckhoffTab(QWidget):
             result_layout.addWidget(cur_label, idx, 3)
             result_layout.addWidget(pos_output, idx, 4)
 
+        # Gap and steering controls
+        result_layout.setColumnMinimumWidth(5, 40)
+        
+        # Descent Dist
+        row0_container = QWidget()
+        row0_layout = QHBoxLayout(row0_container); row0_layout.setContentsMargins(0,0,0,0)
+        row0_layout.addWidget(QLabel("Descent Distance (mm)"))
+        self.descent_dist_input = QLineEdit("10"); self.descent_dist_input.setFixedWidth(50)
+        row0_layout.addWidget(self.descent_dist_input); row0_layout.addStretch()
+        result_layout.addWidget(row0_container, 0, 6)
+        
+        # Rotate Deg
+        row1_container = QWidget()
+        row1_layout = QHBoxLayout(row1_container); row1_layout.setContentsMargins(0,0,0,0)
+        row1_layout.addWidget(QLabel("Rotate x Deg"))
+        self.rot_range_input = QLineEdit("10"); self.rot_range_input.setFixedWidth(50)
+        row1_layout.addWidget(self.rot_range_input); row1_layout.addStretch()
+        result_layout.addWidget(row1_container, 1, 6)
+        
+        self.btn_j1_decrease = QPushButton("Δ J1 decreases"); result_layout.addWidget(self.btn_j1_decrease, 2, 6)
+        self.btn_rotate_reset = QPushButton("Rotate Probe and Reset"); result_layout.addWidget(self.btn_rotate_reset, 3, 6)
+
+        # Yaw/Pitch Target & Current
+        result_layout.addWidget(QLabel("Needle Yaw (°):"), 4, 0)
+        yaw_l = QHBoxLayout()
+        self.yaw_minus_btn = QPushButton("-"); self.yaw_plus_btn = QPushButton("+"); self.yaw_display = QLineEdit("0.0")
+        self.yaw_display.setReadOnly(True); self.yaw_display.setFixedWidth(60)
+        yaw_l.addWidget(self.yaw_minus_btn); yaw_l.addWidget(self.yaw_display); yaw_l.addWidget(self.yaw_plus_btn); yaw_l.addStretch()
+        result_layout.addLayout(yaw_l, 4, 1, 1, 2)
+        
+        result_layout.addWidget(QLabel("Current Yaw (°):"), 4, 3)
+        self.cur_yaw_display = QLineEdit("--"); self.cur_yaw_display.setReadOnly(True); self.cur_yaw_display.setFixedWidth(100); self.cur_yaw_display.setStyleSheet("background-color: #E8F5E9;")
+        result_layout.addWidget(self.cur_yaw_display, 4, 4)
+
+        result_layout.addWidget(QLabel("Needle Pitch (°):"), 5, 0)
+        pitch_l = QHBoxLayout()
+        self.pitch_minus_btn = QPushButton("-"); self.pitch_plus_btn = QPushButton("+"); self.pitch_display = QLineEdit("0.0")
+        self.pitch_display.setReadOnly(True); self.pitch_display.setFixedWidth(60)
+        pitch_l.addWidget(self.pitch_minus_btn); pitch_l.addWidget(self.pitch_display); pitch_l.addWidget(self.pitch_plus_btn); pitch_l.addStretch()
+        result_layout.addLayout(pitch_l, 5, 1, 1, 2)
+        
+        result_layout.addWidget(QLabel("Current Pitch (°):"), 5, 3)
+        self.cur_pitch_display = QLineEdit("--"); self.cur_pitch_display.setReadOnly(True); self.cur_pitch_display.setFixedWidth(100); self.cur_pitch_display.setStyleSheet("background-color: #E8F5E9;")
+        result_layout.addWidget(self.cur_pitch_display, 5, 4)
+
         self.apply_inc_btn = QPushButton("Apply Increment (All)")
-        result_layout.addWidget(self.apply_inc_btn, 4, 0, 1, 2) 
+        result_layout.addWidget(self.apply_inc_btn, 6, 0, 1, 2) 
 
         self.reset_all_btn = QPushButton("Reset All (J0-J3)")
         self.reset_all_btn.setEnabled(False) 
-        result_layout.addWidget(self.reset_all_btn, 4, 3, 1, 2)
+        result_layout.addWidget(self.reset_all_btn, 6, 3, 1, 2)
         
         result_content_layout.addLayout(result_layout)
         result_content_layout.addStretch(1) 
         result_group.setLayout(result_content_layout)
         main_layout.addWidget(result_group)
         
-        # 2. Biopsy Interface (Standard Flow)
+        # 2. Biopsy Interface (Standard Flow - RETAINED ORIGINAL COMPACT LAYOUT)
         biopsy_group = QGroupBox("Biopsy Interface (Standard)")
         biopsy_layout = QGridLayout(biopsy_group)
         biopsy_layout.setSpacing(5) 
@@ -550,7 +598,107 @@ class BeckhoffTab(QWidget):
         self.manager.movement_status_update.connect(self.on_movement_status_update)
         self.manager.target_update.connect(self.on_target_update)
         self.manager.position_update.connect(self.beckhoff_position_update.emit)
+        
+        # [NEW] Additional Steering/Automation Connections
+        self.yaw_minus_btn.clicked.connect(lambda: self.change_needle_angle(-1, 0))
+        self.yaw_plus_btn.clicked.connect(lambda: self.change_needle_angle(1, 0))
+        self.pitch_minus_btn.clicked.connect(lambda: self.change_needle_angle(0, -1))
+        self.pitch_plus_btn.clicked.connect(lambda: self.change_needle_angle(0, 1))
+        self.btn_j1_decrease.clicked.connect(self.on_j1_decrease_clicked)
+        self.btn_rotate_reset.clicked.connect(self.on_rotate_probe_reset_clicked)
+        self.manager.position_update.connect(self.update_current_yaw_pitch)
+        self.inc_j2_input.textChanged.connect(self.update_target_yaw_pitch_from_inputs)
+        self.inc_j3_input.textChanged.connect(self.update_target_yaw_pitch_from_inputs)
 
+    # =========================================================================
+    # Steering & Angle Logic
+    # =========================================================================
+    def calculate_angles_from_vector(self, vector):
+        norm = np.linalg.norm(vector)
+        if norm < 1e-6: return 0.0, 0.0, 0.0
+        v = vector / norm
+        pitch_rad = np.arcsin(v[2])
+        yaw_rad = np.arctan2(-v[0], v[1])
+        return np.rad2deg(yaw_rad), np.rad2deg(pitch_rad), 0.0
+
+    def change_needle_angle(self, y_d, p_d):
+        target_yaw = self.current_yaw + y_d
+        target_pitch = self.current_pitch + p_d
+        y_rad, p_rad = np.deg2rad(target_yaw), np.deg2rad(target_pitch)
+        vx = -np.sin(y_rad) * np.cos(p_rad)
+        vy = np.cos(y_rad) * np.cos(p_rad)
+        vz = np.sin(p_rad)
+        self.vector_inputs[0].setText(f"{vx:.4f}")
+        self.vector_inputs[1].setText(f"{vy:.4f}")
+        self.vector_inputs[2].setText(f"{vz:.4f}")
+        self.calculate_joint_values()
+        self.apply_joint_increment()
+
+    def update_target_yaw_pitch_from_inputs(self):
+        try:
+            val2 = self.inc_j2_input.text(); val3 = self.inc_j3_input.text()
+            if not val2 or not val3: return
+            tj2 = float(val2); tj3 = float(val3) - float(val2)
+            vector = self.robot.get_needle_vector([0, tj2, tj3, 0])
+            yaw, pitch, _ = self.calculate_angles_from_vector(vector)
+            self.yaw_display.setText(f"{yaw:.1f}"); self.pitch_display.setText(f"{pitch:.1f}")
+            self.current_yaw = yaw; self.current_pitch = pitch
+        except: pass
+
+    def update_current_yaw_pitch(self, j0, j1, j2, j3):
+        try:
+            dj2 = j2 - self.manager.RESET_J2
+            dj3 = (j3 - self.manager.RESET_J3) - (j2 - self.manager.RESET_J2)
+            vector = self.robot.get_needle_vector([0, dj2, dj3, 0])
+            yaw, pitch, _ = self.calculate_angles_from_vector(vector)
+            self.cur_yaw_display.setText(f"{yaw:.1f}"); self.cur_pitch_display.setText(f"{pitch:.1f}")
+        except: pass
+
+    # =========================================================================
+    # Automation / Manual Controls
+    # =========================================================================
+    def on_j1_decrease_clicked(self):
+        try:
+            val = float(self.inc_j1_input.text()) - float(self.descent_dist_input.text())
+            self.inc_j1_input.setText(f"{val:.4f}"); self.apply_joint_increment()
+        except: pass
+
+    def on_rotate_probe_reset_clicked(self):
+        self.rotate_probe(0, 1) # Probe Left
+        QTimer.singleShot(1000, self._step2_start_scan)
+
+    def _step2_start_scan(self):
+        if self.main_window and hasattr(self.main_window, 'ultrasound_tab'):
+            self.main_window.ultrasound_tab.rotation_range_input.setText(self.rot_range_input.text())
+            self.main_window.ultrasound_tab.rotate_and_capture_2x()
+            self.scan_polling_timer.start(500)
+
+    def _check_scan_status(self):
+        if self.main_window and hasattr(self.main_window, 'ultrasound_tab'):
+            if not self.main_window.ultrasound_tab.is_rotating:
+                self.scan_polling_timer.stop()
+                QTimer.singleShot(1000, self._step4_reset_probe)
+
+    def _step4_reset_probe(self):
+        self.rotate_probe(0, 1) # Reset back
+        QTimer.singleShot(1000, self._step5_increase_j1)
+
+    def _step5_increase_j1(self):
+        try:
+            val = float(self.inc_j1_input.text()) + float(self.descent_dist_input.text())
+            self.inc_j1_input.setText(f"{val:.4f}"); self.apply_joint_increment()
+        except: pass
+
+    def rotate_probe(self, d, m):
+        if self.main_window and hasattr(self.main_window, 'tcp_manager'):
+            try:
+                angle = float(self.rot_range_input.text()) * m
+                self.main_window.tcp_manager.send_command(f"MoveRelJ,0,5,{d},{angle};")
+            except: pass
+
+    # =========================================================================
+    # Original Shared UI Logic
+    # =========================================================================
     def on_target_update(self, t0, t1, t2, t3, time_ms):
         self.result_labels["J0"].setText(f"{t0:.4f}")
         self.result_labels["J1"].setText(f"{t1:.4f}")
@@ -565,7 +713,6 @@ class BeckhoffTab(QWidget):
         self.disconnect_ads_btn.setEnabled(connected)
         self.reset_all_btn.setEnabled(connected)
         self.enable_motor_btn.setEnabled(connected)
-        
         if not connected:
              for key in ["CurJ0", "CurJ1", "CurJ2", "CurJ3"]:
                 self.pos_labels[key].setText("--")
@@ -586,7 +733,6 @@ class BeckhoffTab(QWidget):
 
     def on_movement_status_update(self, msg):
         self.movement_status_label.setText(f"Movement Status: {msg}")
-        
         if self.trocar_phase_1_state == 1 and "Movement Completed" in msg:
             self.trocar_phase_1_state = 2 
             self.vector_inputs[0].setText("0")
@@ -595,7 +741,6 @@ class BeckhoffTab(QWidget):
             self.calculate_joint_values() 
             self.apply_joint_increment()
             self.trocar_phase_1_state = 3 
-        
         elif self.trocar_phase_1_state == 3 and "Movement Completed" in msg:
             self.trocar_phase_1_state = 0
             self.phase_1_done = True
@@ -609,29 +754,23 @@ class BeckhoffTab(QWidget):
                 delta_j1_str = self.inc_j1_input.text()
                 delta_j1 = float(delta_j1_str) if delta_j1_str else 0.0
                 rcm_in_p = self.robot.get_rcm_point([delta_j1, 0, 0, 0])
-
                 if (left_p.tcp_p_definition_pose is not None and 
                     left_p.latest_tool_pose is not None and 
                     left_p.volume_in_base is not None):
-                    
                     T_E_P = left_p._pose_to_matrix(left_p.tcp_p_definition_pose)
                     T_Base_E = left_p._pose_to_matrix(left_p.latest_tool_pose)
                     T_Base_Vol = left_p._pose_to_matrix(left_p.volume_in_base)
-                    
                     T_Base_P = np.dot(T_Base_E, T_E_P)
                     rcm_p_homo = np.append(rcm_in_p, 1.0)
                     rcm_base_homo = np.dot(T_Base_P, rcm_p_homo)
                     T_Vol_Base = np.linalg.inv(T_Base_Vol)
                     rcm_vol_homo = np.dot(T_Vol_Base, rcm_base_homo)
                     rcm_vol = rcm_vol_homo[:3]
-
                     msg_out = f"UpdateRCMInVolume,{rcm_vol[0]:.3f},{rcm_vol[1]:.3f},{rcm_vol[2]:.3f};"
                     if hasattr(parent, 'navigation_tab'):
                         parent.navigation_tab.nav_manager.send_command(msg_out)
                         parent.navigation_tab.log_message(f"Sent RCM Data: {msg_out}")
-        except Exception as e:
-            print(f"Error calculating/sending RCM in Volume: {e}")
-
+        except Exception as e: print(f"Error calculating RCM: {e}")
         if self.main_window and hasattr(self.main_window, 'status_bar'):
             self.main_window.status_bar.showMessage("Status: Trocar Insertion Phase 1 Completed.")
 
