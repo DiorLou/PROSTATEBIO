@@ -110,26 +110,26 @@ class UltrasoundTab(QWidget):
         # --- 水平裁剪 (左右) ---
         left_crop_layout = QHBoxLayout()
         # 滑块范围将在启动捕获后动态设置
-        self.left_slider.setRange(0, 1920)
+        self.left_slider.setRange(0, 1280)
         self.left_slider.setValue(self.DEFAULT_LEFT_CROP)
         left_crop_layout.addWidget(self.left_label)
         left_crop_layout.addWidget(self.left_slider)
         
         right_crop_layout = QHBoxLayout()
-        self.right_slider.setRange(0, 1920) # 已修改为 1920
-        self.right_slider.setValue(self.DEFAULT_RIGHT_CROP)    # 已修改为 1920
+        self.right_slider.setRange(0, 1280) # 已修改为 1280
+        self.right_slider.setValue(self.DEFAULT_RIGHT_CROP)    # 已修改为 1280
         right_crop_layout.addWidget(self.right_label)
         right_crop_layout.addWidget(self.right_slider)
 
         # --- 垂直裁剪 (上下) ---
         top_crop_layout = QHBoxLayout()
-        self.top_slider.setRange(0, 1080)
+        self.top_slider.setRange(0, 720)
         self.top_slider.setValue(self.DEFAULT_TOP_CROP)
         top_crop_layout.addWidget(self.top_label)
         top_crop_layout.addWidget(self.top_slider)
 
         bottom_crop_layout = QHBoxLayout()
-        self.bottom_slider.setRange(0, 1080)
+        self.bottom_slider.setRange(0, 720)
         self.bottom_slider.setValue(self.DEFAULT_BOTTOM_CROP)
         bottom_crop_layout.addWidget(self.bottom_label)
         bottom_crop_layout.addWidget(self.bottom_slider)
@@ -274,8 +274,8 @@ class UltrasoundTab(QWidget):
             return
 
         # 主动请求高分辨率
-        self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-        self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+        self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
         ret, frame = self.camera.read()
         if not ret:
