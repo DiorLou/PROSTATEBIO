@@ -26,4 +26,8 @@ Base 系下的 B 点, 更新完后, 会根据 tool_pose_in_puncture_position 以
 然后点击 Rotate the ultrasound plane to pass through the biopsy point, 这一步会根据列表中选中的 B point in base 以及当前姿态来计算下一步需要绕 OA 旋转的度数,
 
 
-
+点击 ultrasound probe rotate left x Deg 的时候，所有选取的 a_points_in_base 会转化为 a_points_in_volume 然后导出到 A_points_in_volume.txt
+超声平面旋转至B点时，会调用_calculate_and_send_rcm_and_tcp_u_to_nav,
+发送组合数据: "index(B点索引), x, y, z(RCM_in_Volume系), rx, ry, rz, rcm_x, rcm_y, rcm_z(TCP_U_in_Volume)"
+倍福连接后开始轮询，穿刺机构的位置更新会同时 update_needle_pose_in_volume，
+格式化并发送 针尖位姿(Volume系) 到导航服务器。发送格式示例: "UpdateNeedlePoseInVol,Nx,Ny,Nz,Nrx,Nry,Nrz;"

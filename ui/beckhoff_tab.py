@@ -744,36 +744,7 @@ class BeckhoffTab(QWidget):
         elif self.trocar_phase_1_state == 3 and "Movement Completed" in msg:
             self.trocar_phase_1_state = 0
             self.phase_1_done = True
-            self._handle_phase_1_completion()
-
-    def _handle_phase_1_completion(self):
-        try:
-            parent = self.main_window
-            if parent and hasattr(parent, 'left_panel'):
-                left_p = parent.left_panel
-                delta_j1_str = self.inc_j1_input.text()
-                delta_j1 = float(delta_j1_str) if delta_j1_str else 0.0
-                rcm_in_p = self.robot.get_rcm_point([delta_j1, 0, 0, 0])
-                if (left_p.tcp_p_definition_pose is not None and 
-                    left_p.latest_tool_pose is not None and 
-                    left_p.volume_in_base is not None):
-                    T_E_P = left_p._pose_to_matrix(left_p.tcp_p_definition_pose)
-                    T_Base_E = left_p._pose_to_matrix(left_p.latest_tool_pose)
-                    T_Base_Vol = left_p._pose_to_matrix(left_p.volume_in_base)
-                    T_Base_P = np.dot(T_Base_E, T_E_P)
-                    rcm_p_homo = np.append(rcm_in_p, 1.0)
-                    rcm_base_homo = np.dot(T_Base_P, rcm_p_homo)
-                    T_Vol_Base = np.linalg.inv(T_Base_Vol)
-                    rcm_vol_homo = np.dot(T_Vol_Base, rcm_base_homo)
-                    rcm_vol = rcm_vol_homo[:3]
-                    msg_out = f"UpdateRCMInVolume,{rcm_vol[0]:.3f},{rcm_vol[1]:.3f},{rcm_vol[2]:.3f};"
-                    if hasattr(parent, 'navigation_tab'):
-                        parent.navigation_tab.nav_manager.send_command(msg_out)
-                        parent.navigation_tab.log_message(f"Sent RCM Data: {msg_out}")
-        except Exception as e: print(f"Error calculating RCM: {e}")
-        if self.main_window and hasattr(self.main_window, 'status_bar'):
-            self.main_window.status_bar.showMessage("Status: Trocar Insertion Phase 1 Completed.")
-
+            
     def calculate_joint_values(self):
         try:
             x = float(self.vector_inputs[0].text())
