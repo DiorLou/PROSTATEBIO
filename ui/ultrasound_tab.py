@@ -22,10 +22,10 @@ BACKWARD = 0
 
 class UltrasoundTab(QWidget):
     # 默认裁剪常量
-    DEFAULT_LEFT_CROP   = 0
-    DEFAULT_RIGHT_CROP  = 720
-    DEFAULT_TOP_CROP    = 0
-    DEFAULT_BOTTOM_CROP = 1280
+    DEFAULT_LEFT_CROP   = 158
+    DEFAULT_RIGHT_CROP  = 564
+    DEFAULT_TOP_CROP    = 131
+    DEFAULT_BOTTOM_CROP = 551
     
     def __init__(self, tcp_manager, parent=None):
         super().__init__(parent)
@@ -76,7 +76,7 @@ class UltrasoundTab(QWidget):
         self.save_folder = "" # 旋转保存的文件夹
 
         # 新增: 旋转范围输入框和按钮
-        self.rotation_range_input = QLineEdit("45") # 默认值 45
+        self.rotation_range_input = QLineEdit("50") # 默认值 50
         self.left_x_btn = QPushButton("Ultrasound Probe Rotate Left x Deg")
         self.right_2x_btn = QPushButton("Ultrasound Probe Rotate Right 2x Deg")
 
@@ -111,26 +111,26 @@ class UltrasoundTab(QWidget):
         # --- 水平裁剪 (左右) ---
         left_crop_layout = QHBoxLayout()
         # 滑块范围将在启动捕获后动态设置
-        self.left_slider.setRange(0, 1280)
+        self.left_slider.setRange(0, 720)
         self.left_slider.setValue(self.DEFAULT_LEFT_CROP)
         left_crop_layout.addWidget(self.left_label)
         left_crop_layout.addWidget(self.left_slider)
         
         right_crop_layout = QHBoxLayout()
-        self.right_slider.setRange(0, 1280) # 已修改为 1280
-        self.right_slider.setValue(self.DEFAULT_RIGHT_CROP)    # 已修改为 1280
+        self.right_slider.setRange(0, 720)
+        self.right_slider.setValue(self.DEFAULT_RIGHT_CROP)
         right_crop_layout.addWidget(self.right_label)
         right_crop_layout.addWidget(self.right_slider)
 
         # --- 垂直裁剪 (上下) ---
         top_crop_layout = QHBoxLayout()
-        self.top_slider.setRange(0, 720)
+        self.top_slider.setRange(0, 1280)
         self.top_slider.setValue(self.DEFAULT_TOP_CROP)
         top_crop_layout.addWidget(self.top_label)
         top_crop_layout.addWidget(self.top_slider)
 
         bottom_crop_layout = QHBoxLayout()
-        self.bottom_slider.setRange(0, 720)
+        self.bottom_slider.setRange(0, 1280)
         self.bottom_slider.setValue(self.DEFAULT_BOTTOM_CROP)
         bottom_crop_layout.addWidget(self.bottom_label)
         bottom_crop_layout.addWidget(self.bottom_slider)

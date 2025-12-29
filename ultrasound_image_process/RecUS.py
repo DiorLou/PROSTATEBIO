@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 
 # -------------------------- 核心配置 --------------------------
 IMAGE_FOLDER = ""
-PIXEL_SPACING = 10 / 47  # 像素间距 (mm/像素)
+PIXEL_SPACING = 63.8 / 406  # 像素间距 (mm/像素)
 ORIGIN_OFFSET = 10       # 物理原点偏移
 ROTATION_START = None    # 将在运行时更新为 -x
 ROTATION_END = None      # 将在运行时更新为 x
