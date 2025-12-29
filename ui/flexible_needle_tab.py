@@ -212,7 +212,7 @@ class FlexibleNeedleTab(BeckhoffTab):
         
         lbl_descent = QLabel("Descent Distance (mm)")
         self.descent_dist_input = QLineEdit("10")
-        self.descent_dist_input.setAlignment(Qt.AlignCenter)
+        self.descent_dist_input.setAlignment(Qt.AlignLeft)
         self.descent_dist_input.setFixedWidth(50)
         
         row0_layout.addWidget(lbl_descent)
@@ -227,7 +227,7 @@ class FlexibleNeedleTab(BeckhoffTab):
         
         lbl_rotate = QLabel("Rotate x Deg")
         self.rot_range_input = QLineEdit("10") # 默认值 10
-        self.rot_range_input.setAlignment(Qt.AlignCenter)
+        self.rot_range_input.setAlignment(Qt.AlignLeft)
         self.rot_range_input.setFixedWidth(50) 
         
         row1_layout.addWidget(lbl_rotate)
@@ -854,7 +854,43 @@ class FlexibleNeedleTab(BeckhoffTab):
         except ValueError:
             QMessageBox.warning(self, "Input Error", "Please check J1 or Descent Distance input format.")
 
+    def generate_local_us_folder_name(self):
+        """构建复杂的局部重建文件夹名"""
+        lp = self.main_window.left_panel
+        
+        # 1. 转换 A、B 点到 Volume 坐标系
+        # 假设 A_idx, B_idx, a_vol, b_vol 已通过 left_panel 转换函数获得
+        # 这里演示逻辑，需确保 left_panel 有对应转换方法
+        a_id = lp.a_points_combo.currentText() # 例如 "A1"
+        b_id = lp.b_points_combo.currentText() # 例如 "B1"
+        
+        a_vol = lp.get_current_a_in_volume() # 需在 left_panel 实现此转换
+        b_vol = lp.get_current_b_in_volume() 
+        
+        a_str = f"{a_id}({a_vol[0]:.1f},{a_vol[1]:.1f},{a_vol[2]:.1f})"
+        b_str = f"{b_id}({b_vol[0]:.1f},{b_vol[1]:.1f},{b_vol[2]:.1f})"
+
+        # 2. 计算 RCM in Volume
+        delta_j1 = float(self.inc_j1_input.text())
+        rcm_in_p = self.robot.get_rcm_point([delta_j1, 0, 0, 0])
+        rcm_vol = lp.transform_point_p_to_volume(rcm_in_p) # 需在 left_panel 实现
+        rcm_str = f"RCM({rcm_vol[0]:.1f},{rcm_vol[1]:.1f},{rcm_vol[2]:.1f})"
+
+        # 3. 获取 deg(x) 和 U 姿态
+        # deg_x 来自点击过旋转对准后的内部变量
+        deg_x = getattr(lp, 'last_calculated_rotation_to_b', 0) 
+        
+        # 计算 TCP_U 在 Volume 系下的姿态
+        # T_Vol_U = T_Vol_Base * T_Base_E * T_E_U
+        u_pose_vol = lp.get_current_tcp_u_in_volume() # 需在 left_panel 实现
+        u_str = f"U({','.join([f'{p:.1f}' for p in u_pose_vol])})"
+
+        return f"{a_str}{b_str}{rcm_str}deg({deg_x}){u_str}LocalUS"
+    
     def on_rotate_probe_reset_clicked(self):
+        """局部图像重建入口"""
+        folder_name = self.generate_local_us_folder_name()
+        
         """
         自动化序列：
         1. Probe Left x
@@ -866,27 +902,16 @@ class FlexibleNeedleTab(BeckhoffTab):
         # 1. Probe Left x
         self.rotate_probe(direction=0, multiplier=1) # 0=Left/Backward
         
-        # 2. 1s 后执行扫描 (Right 2x)
-        QTimer.singleShot(1000, self._step2_start_scan)
+        # 2. 1秒后触发带自定义名称的扫描
+        QTimer.singleShot(1000, lambda: self._step2_start_scan_local(folder_name))
 
-    def _step2_start_scan(self):
-        # 触发 Ultrasound Tab 的扫描功能
+    def _step2_start_scan_local(self, folder_name):
         if self.main_window and hasattr(self.main_window, 'ultrasound_tab'):
-             try:
-                 # 同步角度
-                 x_val = self.rot_range_input.text()
-                 self.main_window.ultrasound_tab.rotation_range_input.setText(x_val)
-                 
-                 # 调用扫描
-                 self.main_window.ultrasound_tab.rotate_and_capture_2x()
-                 
-                 # 启动轮询 Timer，等待扫描结束
-                 self.scan_polling_timer.start(500) # 每500ms检查一次
-                 
-             except Exception as e:
-                 QMessageBox.critical(self, "Error", f"Failed to start scan: {e}")
-        else:
-             QMessageBox.warning(self, "Warning", "Ultrasound Tab not found. Sequence aborted.")
+            us_tab = self.main_window.ultrasound_tab
+            us_tab.rotation_range_input.setText(self.rot_range_input.text())
+            # 传入自定义文件名
+            us_tab.rotate_and_capture_2x(custom_folder_name=folder_name)
+            self.scan_polling_timer.start(500)
 
     def _check_scan_status(self):
         """轮询检查扫描是否完成"""

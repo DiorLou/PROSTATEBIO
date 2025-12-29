@@ -464,6 +464,8 @@ class BeckhoffTab(QWidget):
         result_layout.addWidget(QLabel("Needle Yaw (°):"), 4, 0)
         yaw_l = QHBoxLayout()
         self.yaw_minus_btn = QPushButton("-"); self.yaw_plus_btn = QPushButton("+"); self.yaw_display = QLineEdit("0.0")
+        self.yaw_minus_btn.setFixedWidth(30)
+        self.yaw_plus_btn.setFixedWidth(30)
         self.yaw_display.setReadOnly(True); self.yaw_display.setFixedWidth(60)
         yaw_l.addWidget(self.yaw_minus_btn); yaw_l.addWidget(self.yaw_display); yaw_l.addWidget(self.yaw_plus_btn); yaw_l.addStretch()
         result_layout.addLayout(yaw_l, 4, 1, 1, 2)
@@ -475,6 +477,8 @@ class BeckhoffTab(QWidget):
         result_layout.addWidget(QLabel("Needle Pitch (°):"), 5, 0)
         pitch_l = QHBoxLayout()
         self.pitch_minus_btn = QPushButton("-"); self.pitch_plus_btn = QPushButton("+"); self.pitch_display = QLineEdit("0.0")
+        self.pitch_minus_btn.setFixedWidth(30)
+        self.pitch_plus_btn.setFixedWidth(30)
         self.pitch_display.setReadOnly(True); self.pitch_display.setFixedWidth(60)
         pitch_l.addWidget(self.pitch_minus_btn); pitch_l.addWidget(self.pitch_display); pitch_l.addWidget(self.pitch_plus_btn); pitch_l.addStretch()
         result_layout.addLayout(pitch_l, 5, 1, 1, 2)
@@ -664,13 +668,54 @@ class BeckhoffTab(QWidget):
         except: pass
 
     def on_rotate_probe_reset_clicked(self):
-        self.rotate_probe(0, 1) # Probe Left
-        QTimer.singleShot(1000, self._step2_start_scan)
+        """局部图像重建入口"""
+        folder_name = self.generate_local_us_folder_name()
+        
+        # 1. 探头左转
+        self.rotate_probe(0, 1) 
+        
+        # 2. 1秒后触发带自定义名称的扫描
+        QTimer.singleShot(1000, lambda: self._step2_start_scan_local(folder_name))
+        
+    def generate_local_us_folder_name(self):
+        """构建复杂的局部重建文件夹名"""
+        lp = self.main_window.left_panel
+        
+        # 1. 转换 A、B 点到 Volume 坐标系
+        # 假设 A_idx, B_idx, a_vol, b_vol 已通过 left_panel 转换函数获得
+        # 这里演示逻辑，需确保 left_panel 有对应转换方法
+        a_id = lp.a_points_combo.currentText() # 例如 "A1"
+        b_id = lp.b_points_combo.currentText() # 例如 "B1"
+        
+        a_vol = lp.get_current_a_in_volume() # 需在 left_panel 实现此转换
+        b_vol = lp.get_current_b_in_volume() 
+        
+        a_str = f"{a_id}({a_vol[0]:.1f},{a_vol[1]:.1f},{a_vol[2]:.1f})"
+        b_str = f"{b_id}({b_vol[0]:.1f},{b_vol[1]:.1f},{b_vol[2]:.1f})"
 
-    def _step2_start_scan(self):
+        # 2. 计算 RCM in Volume
+        delta_j1 = float(self.inc_j1_input.text())
+        rcm_in_p = self.robot.get_rcm_point([delta_j1, 0, 0, 0])
+        rcm_vol = lp.transform_point_p_to_volume(rcm_in_p) # 需在 left_panel 实现
+        rcm_str = f"RCM({rcm_vol[0]:.1f},{rcm_vol[1]:.1f},{rcm_vol[2]:.1f})"
+
+        # 3. 获取 deg(x) 和 U 姿态
+        # deg_x 来自点击过旋转对准后的内部变量
+        deg_x = getattr(lp, 'last_calculated_rotation_to_b', 0) 
+        
+        # 计算 TCP_U 在 Volume 系下的姿态
+        # T_Vol_U = T_Vol_Base * T_Base_E * T_E_U
+        u_pose_vol = lp.get_current_tcp_u_in_volume() # 需在 left_panel 实现
+        u_str = f"U({','.join([f'{p:.1f}' for p in u_pose_vol])})"
+
+        return f"{a_str}{b_str}{rcm_str}deg({deg_x}){u_str}LocalUS"
+
+    def _step2_start_scan_local(self, folder_name):
         if self.main_window and hasattr(self.main_window, 'ultrasound_tab'):
-            self.main_window.ultrasound_tab.rotation_range_input.setText(self.rot_range_input.text())
-            self.main_window.ultrasound_tab.rotate_and_capture_2x()
+            us_tab = self.main_window.ultrasound_tab
+            us_tab.rotation_range_input.setText(self.rot_range_input.text())
+            # 传入自定义文件名
+            us_tab.rotate_and_capture_2x(custom_folder_name=folder_name)
             self.scan_polling_timer.start(500)
 
     def _check_scan_status(self):
