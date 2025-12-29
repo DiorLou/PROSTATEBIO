@@ -13,9 +13,9 @@ from ui.navigation_tab import NavigationTab
 
 class RobotControlWindow(QMainWindow):
     VARIABLE_NAMES = ['x0', 'x1', 'x2', 'x3']
-    A_PARAMS = [245.472, 0, 0, 0]
+    A_PARAMS = [258.75, 0, 0, 0]
     ALPHA_PARAMS = [0, -65, -30, 34]
-    D_PARAMS = ['x0 - 174.830', 541.695, 0, 'x3 - 26.0']
+    D_PARAMS = ['x0 - 206.717', 571.008, 0, 'x3 - 37.318']
     THETA_PARAMS = [30, 'x1', 'x2 + 85.96', 0]
 
     def __init__(self):

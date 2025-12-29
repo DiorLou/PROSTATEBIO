@@ -467,6 +467,7 @@ class BeckhoffTab(QWidget):
         self.yaw_minus_btn.setFixedWidth(30)
         self.yaw_plus_btn.setFixedWidth(30)
         self.yaw_display.setReadOnly(True); self.yaw_display.setFixedWidth(60)
+        self.yaw_display.setStyleSheet("background-color: #f0f0f0;")
         yaw_l.addWidget(self.yaw_minus_btn); yaw_l.addWidget(self.yaw_display); yaw_l.addWidget(self.yaw_plus_btn); yaw_l.addStretch()
         result_layout.addLayout(yaw_l, 4, 1, 1, 2)
         
@@ -480,6 +481,7 @@ class BeckhoffTab(QWidget):
         self.pitch_minus_btn.setFixedWidth(30)
         self.pitch_plus_btn.setFixedWidth(30)
         self.pitch_display.setReadOnly(True); self.pitch_display.setFixedWidth(60)
+        self.pitch_display.setStyleSheet("background-color: #f0f0f0;")
         pitch_l.addWidget(self.pitch_minus_btn); pitch_l.addWidget(self.pitch_display); pitch_l.addWidget(self.pitch_plus_btn); pitch_l.addStretch()
         result_layout.addLayout(pitch_l, 5, 1, 1, 2)
         
