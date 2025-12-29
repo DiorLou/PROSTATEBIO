@@ -605,11 +605,11 @@ class LeftPanel(QWidget):
         try:
             # 2. 获取当前 TCP_E 在 Base 系下的位姿矩阵 (T_Base_E)
             # self.latest_tool_pose此时对应的是 TCP_E
-            T_Base_E = self._pose_to_matrix(self.latest_tool_pose)
+            T_Base_E = self.pose_to_matrix(self.latest_tool_pose)
 
             # 3. 获取 TCP_tip 在 TCP_E 系下的相对位姿矩阵 (T_E_Tip)
             # 根据您的描述：tcp_tip_definition_pose 是基于 TCP_E 的
-            T_E_Tip = self._pose_to_matrix(self.tcp_tip_definition_pose)
+            T_E_Tip = self.pose_to_matrix(self.tcp_tip_definition_pose)
 
             # 4. 计算 TCP_tip 在 Base 系下的位姿 (T_Base_Tip)
             # 矩阵乘法：Base_Tip = Base_E * E_Tip
@@ -1037,12 +1037,12 @@ class LeftPanel(QWidget):
                 if self.main_window and hasattr(self.main_window, 'right_panel'):
                      self.main_window.right_panel.log_message("System: Using calculated T_Base_E for Nav data.")
             else:
-                T_Base_E = self._pose_to_matrix(self.latest_tool_pose)       # 当前机器人位姿
+                T_Base_E = self.pose_to_matrix(self.latest_tool_pose)       # 当前机器人位姿
 
-            T_E_P = self._pose_to_matrix(self.tcp_p_definition_pose)     # TCP_P 定义
+            T_E_P = self.pose_to_matrix(self.tcp_p_definition_pose)     # TCP_P 定义
             T_Base_P = np.dot(T_Base_E, T_E_P)                           # P -> Base
             
-            T_Base_Vol = self._pose_to_matrix(self.tcp_u_volume)         # Volume -> Base
+            T_Base_Vol = self.pose_to_matrix(self.tcp_u_volume)         # Volume -> Base
             T_Vol_Base = np.linalg.inv(T_Base_Vol)                       # Base -> Volume
 
             # 3. 将 RCM 转换到 Volume 坐标系 (P_rcm_vol = T_Vol_Base * T_Base_P * P_rcm_p)
@@ -1051,7 +1051,7 @@ class LeftPanel(QWidget):
             rcm_vol_xyz = P_rcm_vol[:3]
 
             # 4. 计算 TCP_U 在 Volume 坐标系下的位姿
-            T_E_U = self._pose_to_matrix(self.tcp_u_definition_pose)
+            T_E_U = self.pose_to_matrix(self.tcp_u_definition_pose)
             T_Base_U = np.dot(T_Base_E, T_E_U)
             T_Vol_U = np.dot(T_Vol_Base, T_Base_U)
             
@@ -1100,11 +1100,11 @@ class LeftPanel(QWidget):
         try:
             # 2. 获取当前机器臂(TCP_E)在 Base 下的位姿矩阵 T_Base_E
             # 此时机器臂已经运动到了目标位置
-            T_Base_E = self._pose_to_matrix(self.latest_tool_pose)
+            T_Base_E = self.pose_to_matrix(self.latest_tool_pose)
 
             # 3. 获取 TCP_P 在 TCP_E 下的位姿矩阵 T_E_P
             # 根据需求：tcp_p_definition_pose 记录的是相对于工具端(TCP_E)的姿态
-            T_E_P = self._pose_to_matrix(self.tcp_p_definition_pose)
+            T_E_P = self.pose_to_matrix(self.tcp_p_definition_pose)
 
             # 4. 计算 TCP_P 在 Base 下的位姿矩阵 T_Base_P
             # T_Base_P = T_Base_E * T_E_P
@@ -1153,10 +1153,10 @@ class LeftPanel(QWidget):
 
         try:
             # 2. 获取当前机器臂(TCP_E)在 Base 下的位姿矩阵 T_Base_E
-            T_Base_E = self._pose_to_matrix(self.latest_tool_pose)
+            T_Base_E = self.pose_to_matrix(self.latest_tool_pose)
 
             # 3. 获取 TCP_P 在 TCP_E 下的位姿矩阵 T_E_P
-            T_E_P = self._pose_to_matrix(self.tcp_p_definition_pose)
+            T_E_P = self.pose_to_matrix(self.tcp_p_definition_pose)
 
             # 4. 计算 TCP_P 在 Base 下的位姿矩阵 T_Base_P
             T_Base_P = np.dot(T_Base_E, T_E_P)
@@ -1180,8 +1180,8 @@ class LeftPanel(QWidget):
     def compute_and_store_volume_in_base(self):
         if self.tcp_e_in_ultrasound_zero_deg is None or self.tcp_u_definition_pose is None: return
         try:
-            T_Base_E = self._pose_to_matrix(self.tcp_e_in_ultrasound_zero_deg)
-            T_E_U = self._pose_to_matrix(self.tcp_u_definition_pose)
+            T_Base_E = self.pose_to_matrix(self.tcp_e_in_ultrasound_zero_deg)
+            T_E_U = self.pose_to_matrix(self.tcp_u_definition_pose)
             T_Base_U = np.dot(T_Base_E, T_E_U)
             trans = T_Base_U[:3, 3]
             rpy_deg = np.rad2deg(pyrot.euler_from_matrix(T_Base_U[:3, :3], 0, 1, 2, extrinsic=True))
@@ -1213,7 +1213,7 @@ class LeftPanel(QWidget):
 
         try:
             # 2. 获取 Volume 在 Base 下的变换矩阵 T_Base_Volume
-            T_Base_Volume = self._pose_to_matrix(self.volume_in_base)
+            T_Base_Volume = self.pose_to_matrix(self.volume_in_base)
             
             # 3. 计算 Base 在 Volume 下的变换矩阵 (求逆)
             T_Volume_Base = np.linalg.inv(T_Base_Volume)
@@ -1248,7 +1248,7 @@ class LeftPanel(QWidget):
         converted_points = []
         try:
             # 1. 获取 Volume 在 Base 下的变换矩阵 T_Base_Volume
-            T_Base_Volume = self._pose_to_matrix(self.volume_in_base)
+            T_Base_Volume = self.pose_to_matrix(self.volume_in_base)
             
             # 2. 计算 Base 在 Volume 下的变换矩阵 (求逆)
             T_Volume_Base = np.linalg.inv(T_Base_Volume)
@@ -1267,12 +1267,110 @@ class LeftPanel(QWidget):
         except Exception as e:
             print(f"Error calculating all A points in Volume: {e}")
             return []
+    
+    def get_current_a_in_volume(self):
+        """
+        获取当前下拉框选中的 A 点，并将其从 Base 坐标系转换到 Volume 坐标系。
+        """
+        if not self.a_points_list or self.volume_in_base is None:
+            return [0.0, 0.0, 0.0]
+        
+        # 获取当前 A 点下拉框选中的索引
+        current_idx = self.a_point_dropdown.currentIndex()
+        if current_idx < 0 or current_idx >= len(self.a_points_list):
+            return [0.0, 0.0, 0.0]
+            
+        a_base = np.array(self.a_points_list[current_idx])
+        return self.transform_point_base_to_volume(a_base)
 
-    def _pose_to_matrix(self, pose):
+    def get_current_b_in_volume(self):
+        """
+        获取当前界面显示的 B 点（Base系），并转换到 Volume 坐标系。
+        """
+        if self.volume_in_base is None:
+            return [0.0, 0.0, 0.0]
+            
+        try:
+            b_base = np.array([float(v.text()) for v in self.b_vars_in_base])
+            return self.transform_point_base_to_volume(b_base)
+        except ValueError:
+            return [0.0, 0.0, 0.0]
+
+    def transform_point_base_to_volume(self, point_base):
+        """
+        辅助方法：将一个点从 Base 坐标系转换到 Volume 坐标系。
+        公式: P_vol = inv(T_base_vol) * P_base
+        """
+        if self.volume_in_base is None:
+            return point_base
+            
+        # T_base_vol
+        T_base_vol = self.pose_to_matrix(self.volume_in_base)
+        # T_vol_base = inv(T_base_vol)
+        T_vol_base = np.linalg.inv(T_base_vol)
+        
+        p_homo = np.append(point_base, 1.0)
+        p_vol = np.dot(T_vol_base, p_homo)
+        return p_vol[:3].tolist()
+
+    def transform_point_p_to_volume(self, point_p):
+        """
+        辅助方法：将 TCP_P 坐标系下的点转换到 Volume 坐标系。
+        用于计算 RCM in Volume。
+        公式: P_vol = T_vol_base * T_base_e * T_e_p * P_p
+        """
+        if any(x is None for x in [self.volume_in_base, self.latest_tool_pose, self.tcp_p_definition_pose]):
+            return point_p
+
+        T_base_vol = self.pose_to_matrix(self.volume_in_base)
+        T_vol_base = np.linalg.inv(T_base_vol)
+        
+        T_base_e = self.pose_to_matrix(self.latest_tool_pose)
+        T_e_p = self.pose_to_matrix(self.tcp_p_definition_pose)
+        
+        # P -> E -> Base -> Volume
+        T_vol_p = T_vol_base @ T_base_e @ T_e_p
+        
+        p_homo = np.append(point_p, 1.0)
+        p_vol = np.dot(T_vol_p, p_homo)
+        return p_vol[:3].tolist()
+
+    def get_current_tcp_u_in_volume(self):
+        """
+        计算当前的 TCP_U 在 Volume 坐标系下的姿态 (x, y, z, rx, ry, rz)。
+        TCP_U 的相对偏移由 self.tcp_u_definition_pose 提供。
+        """
+        if any(x is None for x in [self.volume_in_base, self.latest_tool_pose, self.tcp_u_definition_pose]):
+            return [0.0] * 6
+
+        # 1. 坐标系矩阵获取
+        T_base_vol = self.pose_to_matrix(self.volume_in_base)
+        T_vol_base = np.linalg.inv(T_base_vol)
+        
+        # 2. 计算 T_vol_u = T_vol_base * T_base_e * T_e_u
+        T_base_e = self.pose_to_matrix(self.latest_tool_pose)
+        T_e_u = self.pose_to_matrix(self.tcp_u_definition_pose)
+        
+        # U -> E -> Base -> Volume
+        T_vol_u = T_vol_base @ T_base_e @ T_e_u
+        
+        # 3. 提取位置和欧拉角
+        pos = T_vol_u[:3, 3]
+        rot_mat = T_vol_u[:3, :3]
+        # 这里的顺序需与您系统一致，通常为 rx, ry, rz (ZYX或XYZ)
+        rpy = np.rad2deg(pyrot.euler_from_matrix(rot_mat, 0, 1, 2, extrinsic=True))
+        
+        return [pos[0], pos[1], pos[2], rpy[0], rpy[1], rpy[2]]
+
+    def pose_to_matrix(self, pose):
+        """
+        将位姿列表 [x, y, z, rx, ry, rz] 转换为 4x4 齐次变换矩阵。
+        """
         x, y, z, rx, ry, rz = pose
         T = np.identity(4)
+        # 使用旋转顺序 0,1,2 (X, Y, Z) 对应 rx, ry, rz
         T[:3, :3] = pyrot.matrix_from_euler(np.deg2rad([rx, ry, rz]), 0, 1, 2, extrinsic=True)
-        T[:3, 3] = np.array([x, y, z])
+        T[:3, 3] = [x, y, z]
         return T
 
     def read_b_points_in_tcp_u_from_file(self):
@@ -1312,9 +1410,9 @@ class LeftPanel(QWidget):
 
     def _calculate_b_point_data(self, p_b_in_u_pose, index):
         if self.tcp_e_in_ultrasound_zero_deg is None or self.tool_pose_in_puncture_position is None: raise ValueError("Missing poses")
-        T_U_to_B = self._pose_to_matrix(p_b_in_u_pose)
-        T_Base_to_E = self._pose_to_matrix(self.tcp_e_in_ultrasound_zero_deg)
-        T_E_to_U = self._pose_to_matrix(self.tcp_u_definition_pose)
+        T_U_to_B = self.pose_to_matrix(p_b_in_u_pose)
+        T_Base_to_E = self.pose_to_matrix(self.tcp_e_in_ultrasound_zero_deg)
+        T_E_to_U = self.pose_to_matrix(self.tcp_u_definition_pose)
         T_Base_to_B = T_Base_to_E @ T_E_to_U @ T_U_to_B
         
         p_b_in_base = T_Base_to_B[:3, 3]
