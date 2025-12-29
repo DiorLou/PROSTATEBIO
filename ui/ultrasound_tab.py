@@ -21,10 +21,10 @@ BACKWARD = 0
 
 class UltrasoundTab(QWidget):
     # 默认裁剪常量
-    DEFAULT_LEFT_CROP   = 407
-    DEFAULT_RIGHT_CROP  = 638
-    DEFAULT_TOP_CROP    = 131
-    DEFAULT_BOTTOM_CROP = 643
+    DEFAULT_LEFT_CROP   = 0
+    DEFAULT_RIGHT_CROP  = 720
+    DEFAULT_TOP_CROP    = 0
+    DEFAULT_BOTTOM_CROP = 1280
     
     def __init__(self, tcp_manager, parent=None):
         super().__init__(parent)
@@ -94,8 +94,8 @@ class UltrasoundTab(QWidget):
         
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setStyleSheet("border: 2px solid grey;")
-        # 将图像显示窗口固定为 640x480，防止窗口无限变大
-        self.image_label.setFixedSize(640, 480) 
+        # 将图像显示窗口固定为 360x640，防止窗口无限变大
+        self.image_label.setFixedSize(360, 640) 
 
         image_layout = QHBoxLayout()
         image_layout.addStretch()
@@ -110,26 +110,26 @@ class UltrasoundTab(QWidget):
         # --- 水平裁剪 (左右) ---
         left_crop_layout = QHBoxLayout()
         # 滑块范围将在启动捕获后动态设置
-        self.left_slider.setRange(0, 1920)
+        self.left_slider.setRange(0, 1280)
         self.left_slider.setValue(self.DEFAULT_LEFT_CROP)
         left_crop_layout.addWidget(self.left_label)
         left_crop_layout.addWidget(self.left_slider)
         
         right_crop_layout = QHBoxLayout()
-        self.right_slider.setRange(0, 1920) # 已修改为 1920
-        self.right_slider.setValue(self.DEFAULT_RIGHT_CROP)    # 已修改为 1920
+        self.right_slider.setRange(0, 1280) # 已修改为 1280
+        self.right_slider.setValue(self.DEFAULT_RIGHT_CROP)    # 已修改为 1280
         right_crop_layout.addWidget(self.right_label)
         right_crop_layout.addWidget(self.right_slider)
 
         # --- 垂直裁剪 (上下) ---
         top_crop_layout = QHBoxLayout()
-        self.top_slider.setRange(0, 1080)
+        self.top_slider.setRange(0, 720)
         self.top_slider.setValue(self.DEFAULT_TOP_CROP)
         top_crop_layout.addWidget(self.top_label)
         top_crop_layout.addWidget(self.top_slider)
 
         bottom_crop_layout = QHBoxLayout()
-        self.bottom_slider.setRange(0, 1080)
+        self.bottom_slider.setRange(0, 720)
         self.bottom_slider.setValue(self.DEFAULT_BOTTOM_CROP)
         bottom_crop_layout.addWidget(self.bottom_label)
         bottom_crop_layout.addWidget(self.bottom_slider)
@@ -274,8 +274,8 @@ class UltrasoundTab(QWidget):
             return
 
         # 主动请求高分辨率
-        self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-        self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+        self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
         ret, frame = self.camera.read()
         if not ret:
@@ -283,7 +283,8 @@ class UltrasoundTab(QWidget):
             QMessageBox.critical(self, "Error", "Cannot read frame from camera.")
             return
             
-        actual_height, actual_width, _ = frame.shape
+        # 原始是 (720, 1280), 旋转 90 度后变成 (1280, 720)
+        actual_height, actual_width = 1280, 720
 
         # --- 设置水平滑块范围 (宽度) ---
         self.left_slider.setRange(0, actual_width)
@@ -325,14 +326,15 @@ class UltrasoundTab(QWidget):
         self.image_label.setText("Capture Stopped.")
     
     def update_frame(self):
-        """从摄像头读取帧，裁剪并显示。"""
+        """从摄像头读取帧，旋转，裁剪并显示。"""
         ret, frame = self.camera.read()
         if not ret:
             self.stop_capture()
-            QMessageBox.critical(self, "Error", "Ultrasound image stream interrupted.")
             return
         
-        self.original_frame = frame
+        # 🌟 修改点 4: 将图像逆时针旋转 90 度
+        # 旋转后尺寸从 1280x720 变为 720x1280
+        self.original_frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
         
         # 获取四向裁剪值
         left_crop = self.left_slider.value()
@@ -340,13 +342,11 @@ class UltrasoundTab(QWidget):
         top_crop = self.top_slider.value()
         bottom_crop = self.bottom_slider.value()
         
-        # 裁剪图像并存储 (同时应用垂直和水平裁剪)
-        # 注意: Python的切片顺序是 [行/Y轴, 列/X轴]
+        # 裁剪旋转后的图像
         self.current_frame = self.original_frame[top_crop:bottom_crop, left_crop:right_crop]
         
-        # 将裁剪后的图像转换为 PyQt 格式，并等比例缩放到显示窗口
+        # 转换为 PyQt 格式
         rgb_image = cv2.cvtColor(self.current_frame, cv2.COLOR_BGR2RGB)
-
         h, w, ch = rgb_image.shape
         bytes_per_line = ch * w
         
