@@ -15,19 +15,25 @@ PLC_IP     = "192.168.10.100"
 PLC_PORT   = 851
 
 # Target Position Variables (J0, J1, J2, J3)
-J0_PV   = "MAIN.J0"              
-J1_PV   = "MAIN.J1"              
-J2_PV   = "MAIN.J2"              
-J3_PV   = "MAIN.J3"              
+J0_PV   = "MAIN.MotorSetPos[0]"              
+J1_PV   = "MAIN.MotorSetPos[1]"              
+J2_PV   = "MAIN.MotorSetPos[2]"              
+J3_PV   = "MAIN.MotorSetPos[3]"              
 
 # Motion Enable Variable
-START_BOOL = "MAIN.Position_5"    
+START_BOOL = "MAIN.PositionT"    
 
 # Motor Enable Status
 ENABLE_STATUS = "MAIN.MotorButtonEnable"
 
 # Motion Time
-MOTION_TIME = "MAIN.t5"   
+MOTION_TIME = "MAIN.t1"   
+
+# Shoudong Mode Switch 
+SHOUDONG_BOOL = "MAIN.SHOUDONG"
+
+# Position Mode Switch
+POSITION_BOOL = "MAIN.PosSetEable"
 
 # Current Position Variables (LREAL)
 POS_J0_PV = "MAIN.MotorCurPos[0]" 
@@ -191,10 +197,10 @@ class BeckhoffManager(QObject):
     enable_status_update = pyqtSignal(bool)
     target_update = pyqtSignal(float, float, float, float, float)
     
-    RESET_J0 = 0.000
-    RESET_J1 = 0.000
-    RESET_J2 = 67.569
-    RESET_J3 = 20.347
+    RESET_J0 = 9.875
+    RESET_J1 = 288.358
+    RESET_J2 = 304.645
+    RESET_J3 = 153.415
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -209,13 +215,8 @@ class BeckhoffManager(QObject):
         self.connection_state_changed.emit(ok, msg)
         
         if ok:
-            try:
-                cur_j0 = self.ads_client.read_lreal(POS_J0_PV)
-                cur_j1 = self.ads_client.read_lreal(POS_J1_PV)
-                self.RESET_J0 = cur_j0
-                self.RESET_J1 = cur_j1
-            except Exception as e:
-                print(f"Failed to read initial positions: {e}")
+            self.ads_client.write_bool(SHOUDONG_BOOL, False)
+            self.ads_client.write_bool(POSITION_BOOL, True)
             self._start_poll()
 
     def disconnect_ads(self):
@@ -278,8 +279,9 @@ class BeckhoffManager(QObject):
 # ====================================================================
 class BeckhoffTab(QWidget):
     beckhoff_position_update = pyqtSignal(float, float, float, float)
-    D4_TROCAR = 17.5 
+    D4_TROCAR = 23.2
     NEEDLE_TIP_OFFSET = 16.0
+    D4_RESET_OFFSET = 2
 
     def __init__(self, manager: BeckhoffManager, robot_kinematics, parent=None):
         super().__init__(parent)
@@ -414,7 +416,10 @@ class BeckhoffTab(QWidget):
         self.motion_time_input = QLineEdit("5000") 
 
         for idx, axis in enumerate(["J0", "J1", "J2", "J3"]):
-            unit = "(mm)" if idx < 2 else "(Deg)"
+            if idx == 0: unit = "(mm)"
+            elif idx == 1: unit = "(Deg)"
+            elif idx == 2: unit = "(Deg)"
+            elif idx == 3: unit = "(mm)"
             inc_label = QLabel(f"Δ {axis} {unit}:")
             inc_label.setAlignment(Qt.AlignVCenter)
             inc_input = QLineEdit("0.00")
@@ -457,7 +462,7 @@ class BeckhoffTab(QWidget):
         row1_layout.addWidget(self.rot_range_input); row1_layout.addStretch()
         result_layout.addWidget(row1_container, 1, 6)
         
-        self.btn_j1_decrease = QPushButton("Δ J1 decreases"); result_layout.addWidget(self.btn_j1_decrease, 2, 6)
+        self.btn_j0_decrease = QPushButton("Δ J0 decreases"); result_layout.addWidget(self.btn_j0_decrease, 2, 6)
         self.btn_rotate_reset = QPushButton("Rotate Probe and Reset"); result_layout.addWidget(self.btn_rotate_reset, 3, 6)
 
         # Yaw/Pitch Target & Current
@@ -610,11 +615,11 @@ class BeckhoffTab(QWidget):
         self.yaw_plus_btn.clicked.connect(lambda: self.change_needle_angle(1, 0))
         self.pitch_minus_btn.clicked.connect(lambda: self.change_needle_angle(0, -1))
         self.pitch_plus_btn.clicked.connect(lambda: self.change_needle_angle(0, 1))
-        self.btn_j1_decrease.clicked.connect(self.on_j1_decrease_clicked)
+        self.btn_j0_decrease.clicked.connect(self.on_j0_decrease_clicked)
         self.btn_rotate_reset.clicked.connect(self.on_rotate_probe_reset_clicked)
         self.manager.position_update.connect(self.update_current_yaw_pitch)
+        self.inc_j1_input.textChanged.connect(self.update_target_yaw_pitch_from_inputs)
         self.inc_j2_input.textChanged.connect(self.update_target_yaw_pitch_from_inputs)
-        self.inc_j3_input.textChanged.connect(self.update_target_yaw_pitch_from_inputs)
 
     # =========================================================================
     # Steering & Angle Logic
@@ -642,10 +647,10 @@ class BeckhoffTab(QWidget):
 
     def update_target_yaw_pitch_from_inputs(self):
         try:
-            val2 = self.inc_j2_input.text(); val3 = self.inc_j3_input.text()
-            if not val2 or not val3: return
-            tj2 = float(val2); tj3 = float(val3) - float(val2)
-            vector = self.robot.get_needle_vector([0, tj2, tj3, 0])
+            val1 = self.inc_j1_input.text(); val2 = self.inc_j2_input.text()
+            if not val1 or not val2: return
+            tj1 = float(val1); tj2 = float(val2) - float(val1)
+            vector = self.robot.get_needle_vector([0, tj1, tj2, 0])
             yaw, pitch, _ = self.calculate_angles_from_vector(vector)
             self.yaw_display.setText(f"{yaw:.1f}"); self.pitch_display.setText(f"{pitch:.1f}")
             self.current_yaw = yaw; self.current_pitch = pitch
@@ -653,9 +658,9 @@ class BeckhoffTab(QWidget):
 
     def update_current_yaw_pitch(self, j0, j1, j2, j3):
         try:
-            dj2 = j2 - self.manager.RESET_J2
-            dj3 = (j3 - self.manager.RESET_J3) - (j2 - self.manager.RESET_J2)
-            vector = self.robot.get_needle_vector([0, dj2, dj3, 0])
+            dj1 = j1 - self.manager.RESET_J1
+            dj2 = (j2 - self.manager.RESET_J2) - (j1 - self.manager.RESET_J1)
+            vector = self.robot.get_needle_vector([0, dj1, dj2, 0])
             yaw, pitch, _ = self.calculate_angles_from_vector(vector)
             self.cur_yaw_display.setText(f"{yaw:.1f}"); self.cur_pitch_display.setText(f"{pitch:.1f}")
         except: pass
@@ -663,10 +668,10 @@ class BeckhoffTab(QWidget):
     # =========================================================================
     # Automation / Manual Controls
     # =========================================================================
-    def on_j1_decrease_clicked(self):
+    def on_j0_decrease_clicked(self):
         try:
-            val = float(self.inc_j1_input.text()) - float(self.descent_dist_input.text())
-            self.inc_j1_input.setText(f"{val:.4f}"); self.apply_joint_increment()
+            val = float(self.inc_j0_input.text()) - float(self.descent_dist_input.text())
+            self.inc_j0_input.setText(f"{val:.4f}"); self.apply_joint_increment()
         except: pass
 
     def on_rotate_probe_reset_clicked(self):
@@ -728,12 +733,12 @@ class BeckhoffTab(QWidget):
 
     def _step4_reset_probe(self):
         self.rotate_probe(0, 1) # Reset back
-        QTimer.singleShot(1000, self._step5_increase_j1)
+        QTimer.singleShot(1000, self._step5_increase_j0)
 
-    def _step5_increase_j1(self):
+    def _step5_increase_j0(self):
         try:
-            val = float(self.inc_j1_input.text()) + float(self.descent_dist_input.text())
-            self.inc_j1_input.setText(f"{val:.4f}"); self.apply_joint_increment()
+            val = float(self.inc_j0_input.text()) + float(self.descent_dist_input.text())
+            self.inc_j0_input.setText(f"{val:.4f}"); self.apply_joint_increment()
         except: pass
 
     def rotate_probe(self, d, m):
@@ -805,10 +810,10 @@ class BeckhoffTab(QWidget):
                  QMessageBox.critical(self, "Input Error", "Vector magnitude is close to zero.")
                  return
             joint_values = self.robot.get_joint23_value(needle_vector)
-            actual_j2 = joint_values[0]
-            actual_j3 = joint_values[1] + joint_values[0]
+            actual_j1 = joint_values[0]
+            actual_j2 = joint_values[1] + joint_values[0]
+            self.inc_j1_input.setText(f"{actual_j1:.4f}")
             self.inc_j2_input.setText(f"{actual_j2:.4f}")
-            self.inc_j3_input.setText(f"{actual_j3:.4f}")
         except ValueError:
             QMessageBox.critical(self, "Input Error", "Vector X, Y, Z must be valid numbers!")
         except Exception as e:
@@ -839,7 +844,7 @@ class BeckhoffTab(QWidget):
         r0 = self.manager.RESET_J0
         r1 = self.manager.RESET_J1
         r2 = self.manager.RESET_J2
-        r3 = self.manager.RESET_J3
+        r3 = self.manager.RESET_J3 + self.D4_RESET_OFFSET
 
         self.result_labels["J0"].setText(f"{r0:.4f}")
         self.result_labels["J1"].setText(f"{r1:.4f}")
@@ -881,14 +886,11 @@ class BeckhoffTab(QWidget):
         try:
             a_z = parent.left_panel.a_point_in_tcp_p[2]
             rcm_z = self.robot.get_rcm_point([0,0,0,0])[2]
-            delta_j1 = a_z - rcm_z
+            delta_j0 = a_z - rcm_z
         except Exception as e:
             QMessageBox.critical(self, "Calculation Error", f"Failed to calculate J1 delta: {e}")
             return
-        self.inc_j0_input.setText("0.00")
-        self.inc_j1_input.setText(f"{delta_j1:.4f}")
-        self.inc_j2_input.setText("0.00")
-        self.inc_j3_input.setText("0.00")
+        self.inc_j0_input.setText(f"{delta_j0:.4f}")
         self.trocar_phase_1_state = 1
         self.apply_joint_increment()
 
@@ -896,7 +898,7 @@ class BeckhoffTab(QWidget):
         if not self.phase_1_done:
             QMessageBox.warning(self, "Sequence Error", "Please complete 'Trocar Insertion Phase 1' first.")
             return
-        self.inc_j0_input.setText(f"{self.D4_TROCAR}")
+        self.inc_j3_input.setText(f"{self.D4_TROCAR}")
         self.apply_joint_increment()
     
     def adjust_needle_direction(self):
@@ -907,8 +909,8 @@ class BeckhoffTab(QWidget):
             QMessageBox.warning(self, "Data Missing", "Biopsy Point B in TCP_P is not defined.")
             return
         try:
-            delta_j1 = float(self.inc_j1_input.text())
-            rcm_point = self.robot.get_rcm_point([delta_j1, 0, 0, 0])
+            delta_j0 = float(self.inc_j0_input.text())
+            rcm_point = self.robot.get_rcm_point([delta_j0, 0, 0, 0])
             vector = np.array(b_point_p) - rcm_point
             self.vector_inputs[0].setText(f"{vector[0]:.4f}")
             self.vector_inputs[1].setText(f"{vector[1]:.4f}")
@@ -920,31 +922,31 @@ class BeckhoffTab(QWidget):
 
     def run_needle_insertion(self):
         try:
+            delta_j0 = float(self.inc_j0_input.text())
             delta_j1 = float(self.inc_j1_input.text())
-            delta_j2 = float(self.inc_j2_input.text()) if self.inc_j2_input.text() else 0.0
-            delta_j3 = float(self.inc_j3_input.text()) if self.inc_j3_input.text() else 0.0
-            theoretical_j2 = delta_j2
-            theoretical_j3 = delta_j3 - delta_j2
+            delta_j2 = float(self.inc_j2_input.text())
+            theoretical_j1 = delta_j1
+            theoretical_j2 = delta_j2 - delta_j1
             
             parent = self.main_window
             b_point_p = parent.left_panel.b_point_in_tcp_p
             if b_point_p is None: return
 
-            tip_pos = self.robot.get_tip_of_needle([delta_j1, theoretical_j2, theoretical_j3, 0])
+            tip_pos = self.robot.get_tip_of_needle([delta_j0, theoretical_j1, theoretical_j2, 0])
             b_point_vec = np.array(b_point_p)
             d4 = np.linalg.norm(b_point_vec - tip_pos)
             d4 = d4 + self.NEEDLE_TIP_OFFSET
-            self.inc_j0_input.setText(f"{d4:.4f}")
+            self.inc_j3_input.setText(f"{d4:.4f}")
             self.apply_joint_increment()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed: {e}")
 
     def run_needle_retraction(self):
-        self.inc_j0_input.setText(f"{self.D4_TROCAR}")
+        self.inc_j3_input.setText(f"{self.D4_TROCAR}")
         self.apply_joint_increment()
 
     def run_trocar_retraction(self):
-        self.inc_j0_input.setText("0")
+        self.inc_j3_input.setText(f"{self.D4_RESET_OFFSET:.4f}")
         self.apply_joint_increment()
 
     def cleanup(self):
