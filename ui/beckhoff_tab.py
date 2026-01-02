@@ -625,24 +625,73 @@ class BeckhoffTab(QWidget):
     # Steering & Angle Logic
     # =========================================================================
     def calculate_angles_from_vector(self, vector):
+        """
+        Calculate Yaw and Pitch relative to reference vector (0, 1, 0).
+        Ref: 
+          vx = -sin(y)*cos(p)
+          vy = cos(y)*cos(p)
+          vz = sin(p)
+        Returns: (Yaw_deg, Pitch_deg, Roll_deg)
+        """
         norm = np.linalg.norm(vector)
-        if norm < 1e-6: return 0.0, 0.0, 0.0
+        if norm < 1e-6:
+            return 0.0, 0.0, 0.0
+        
         v = vector / norm
+        
+        # Pitch = arcsin(vz)
         pitch_rad = np.arcsin(v[2])
+        
+        # Yaw = arctan2(-vx, vy)
         yaw_rad = np.arctan2(-v[0], v[1])
-        return np.rad2deg(yaw_rad), np.rad2deg(pitch_rad), 0.0
+        
+        # Roll (placeholder, typically 0 for needle vector unless we have full orientation matrix)
+        roll_rad = 0.0
+        
+        return np.rad2deg(yaw_rad), np.rad2deg(pitch_rad), np.rad2deg(roll_rad)
 
-    def change_needle_angle(self, y_d, p_d):
-        target_yaw = self.current_yaw + y_d
-        target_pitch = self.current_pitch + p_d
-        y_rad, p_rad = np.deg2rad(target_yaw), np.deg2rad(target_pitch)
-        vx = -np.sin(y_rad) * np.cos(p_rad)
-        vy = np.cos(y_rad) * np.cos(p_rad)
-        vz = np.sin(p_rad)
+    def change_needle_angle(self, yaw_delta, pitch_delta):
+        """
+        调整 Yaw 或 Pitch。
+        注意：此处不直接修改 self.current_yaw/pitch，
+        而是计算出临时目标值 target_yaw/pitch，用于推算向量和关节角。
+        最终 self.current_yaw/pitch 的更新由输入框的 textChanged 信号触发 update_target_yaw_pitch_from_inputs 完成。
+        这样保证了“单点真实原则”(Single Source of Truth)，即内部状态永远与界面输入框数值保持一致。
+        """
+        # 1. 使用局部变量计算目标角度 (基于当前状态 + 增量)
+        target_yaw = self.current_yaw + yaw_delta
+        target_pitch = self.current_pitch + pitch_delta
+        
+        # 2. 根据目标角度计算新的方向向量
+        # Base vector (0, 1, 0)
+        # x = -sin(Yaw) * cos(Pitch)
+        # y = cos(Yaw) * cos(Pitch)
+        # z = sin(Pitch)
+        
+        yaw_rad = np.deg2rad(target_yaw)
+        pitch_rad = np.deg2rad(target_pitch)
+        
+        vx = -np.sin(yaw_rad) * np.cos(pitch_rad)
+        vy = np.cos(yaw_rad) * np.cos(pitch_rad)
+        vz = np.sin(pitch_rad)
+        
+        # 3. 更新向量输入框 (UI)
+        # 父类的 calculate_joint_values() 依赖界面上的 Vector 输入框数值进行计算
         self.vector_inputs[0].setText(f"{vx:.4f}")
         self.vector_inputs[1].setText(f"{vy:.4f}")
         self.vector_inputs[2].setText(f"{vz:.4f}")
+        
+        # 4. 逆运动学解算 & 更新关节角输入框
+        # 流程：
+        #   a. 读取 self.vector_inputs
+        #   b. 计算 IK 得到 J1, J2
+        #   c. self.inc_j1_input.setText(...) / self.inc_j2_input.setText(...)
+        #   d. setText 触发 textChanged 信号
+        #   e. 信号调用 update_target_yaw_pitch_from_inputs()
+        #   f. 该函数通过正运动学反算 Yaw/Pitch，并最终更新 self.current_yaw 和 self.current_pitch
         self.calculate_joint_values()
+
+        # 5. 自动应用增量
         self.apply_joint_increment()
 
     def update_target_yaw_pitch_from_inputs(self):
@@ -678,6 +727,15 @@ class BeckhoffTab(QWidget):
         """局部图像重建入口"""
         folder_name = self.generate_local_us_folder_name()
         
+        """
+        自动化序列：
+        1. Probe Left x
+        2. (1s后) Probe Right 2X (Scan)
+        3. (等待扫描完成)
+        4. (1s后) Probe Left x (Reset)
+        5. (1s后) J0 Increase (Descent Dist) & Apply
+        """
+        
         # 1. 探头左转
         self.rotate_probe(0, 1) 
         
@@ -701,8 +759,8 @@ class BeckhoffTab(QWidget):
         b_str = f"{b_id}({b_vol[0]:.1f},{b_vol[1]:.1f},{b_vol[2]:.1f})"
 
         # 2. 计算 RCM in Volume
-        delta_j1 = float(self.inc_j1_input.text())
-        rcm_in_p = self.robot.get_rcm_point([delta_j1, 0, 0, 0])
+        delta_j0 = float(self.inc_j0_input.text())
+        rcm_in_p = self.robot.get_rcm_point([delta_j0, 0, 0, 0])
         rcm_vol = lp.transform_point_p_to_volume(rcm_in_p) # 需在 left_panel 实现
         rcm_str = f"RCM({rcm_vol[0]:.1f},{rcm_vol[1]:.1f},{rcm_vol[2]:.1f})"
 

@@ -141,16 +141,9 @@ class FlexibleNeedleTab(BeckhoffTab):
     
     def __init__(self, manager: BeckhoffManager, robot_kinematics, parent=None):
         super().__init__(manager, robot_kinematics, parent)
-        # [NEW] Initialize Yaw and Pitch state
-        self.current_yaw = 0.0
-        self.current_pitch = 0.0
         
-        # [NEW] Error Correction Variables
+        # Error Correction Variables
         self.last_commanded_pitch = None # 上一次 adjust needle dir 计算出的理论 Pitch
-        
-        # [新增] 自动化序列相关的 Timer
-        self.scan_polling_timer = QTimer(self)
-        self.scan_polling_timer.timeout.connect(self._check_scan_status)
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -176,7 +169,10 @@ class FlexibleNeedleTab(BeckhoffTab):
 
         # --- J0 - J3 Rows ---
         for idx, axis in enumerate(["J0", "J1", "J2", "J3"]):
-            unit = "(mm)" if idx < 2 else "(Deg)"
+            if idx == 0: unit = "(mm)"
+            elif idx == 1: unit = "(Deg)"
+            elif idx == 2: unit = "(Deg)"
+            elif idx == 3: unit = "(mm)"
             inc_label = QLabel(f"Δ {axis} {unit}:")
             inc_label.setAlignment(Qt.AlignVCenter)
             inc_input = QLineEdit("0.00")
@@ -235,10 +231,10 @@ class FlexibleNeedleTab(BeckhoffTab):
         row1_layout.addStretch()
         result_layout.addWidget(row1_container, 1, 6)
 
-        # 3. Button: Δ J1 decreases
-        self.btn_j1_decrease = QPushButton("Δ J1 decreases")
-        self.btn_j1_decrease.clicked.connect(self.on_j1_decrease_clicked)
-        result_layout.addWidget(self.btn_j1_decrease, 2, 6)
+        # 3. Button: Δ J0 decreases
+        self.btn_j0_decrease = QPushButton("Δ J0 decreases")
+        self.btn_j0_decrease.clicked.connect(self.on_j0_decrease_clicked)
+        result_layout.addWidget(self.btn_j0_decrease, 2, 6)
 
         # 4. Button: Rotate Probe and Reset (Automation)
         self.btn_rotate_reset = QPushButton("Rotate Probe and Reset")
@@ -574,126 +570,14 @@ class FlexibleNeedleTab(BeckhoffTab):
         # [NEW] Real-time Current Yaw/Pitch Update
         self.manager.position_update.connect(self.update_current_yaw_pitch)
 
-        # [NEW] Link J2/J3 Inputs to Needle Yaw/Pitch Target Display
+        # [NEW] Link J1/J2 Inputs to Needle Yaw/Pitch Target Display
+        self.inc_j1_input.textChanged.connect(self.update_target_yaw_pitch_from_inputs)
         self.inc_j2_input.textChanged.connect(self.update_target_yaw_pitch_from_inputs)
-        self.inc_j3_input.textChanged.connect(self.update_target_yaw_pitch_from_inputs)
 
         # Image Connections
         self.capture_img_btn.clicked.connect(self.capture_image_from_ultrasound)
         self.clear_marks_btn.clicked.connect(self.clear_marks)
     
-    # =========================================================================
-    # [NEW] Yaw/Pitch Calculation Helper
-    # =========================================================================
-    def calculate_angles_from_vector(self, vector):
-        """
-        Calculate Yaw and Pitch relative to reference vector (0, 1, 0).
-        Ref: 
-          vx = -sin(y)*cos(p)
-          vy = cos(y)*cos(p)
-          vz = sin(p)
-        Returns: (Yaw_deg, Pitch_deg, Roll_deg)
-        """
-        norm = np.linalg.norm(vector)
-        if norm < 1e-6:
-            return 0.0, 0.0, 0.0
-        
-        v = vector / norm
-        
-        # Pitch = arcsin(vz)
-        pitch_rad = np.arcsin(v[2])
-        
-        # Yaw = arctan2(-vx, vy)
-        yaw_rad = np.arctan2(-v[0], v[1])
-        
-        # Roll (placeholder, typically 0 for needle vector unless we have full orientation matrix)
-        roll_rad = 0.0
-        
-        return np.rad2deg(yaw_rad), np.rad2deg(pitch_rad), np.rad2deg(roll_rad)
-
-    # =========================================================================
-    # [NEW] Update Target Yaw/Pitch from Inputs
-    # =========================================================================
-    def update_target_yaw_pitch_from_inputs(self):
-        """
-        Calculates Target Needle Yaw/Pitch based on the text in ΔJ2 and ΔJ3 inputs.
-        Logic: 
-          theoretical_target ΔJ2 = input ΔJ2
-          theoretical_target ΔJ3 = input ΔJ3 - input ΔJ2
-          vector = robot.get_needle_vector(...)
-        """
-        try:
-            val_j2_str = self.inc_j2_input.text()
-            val_j3_str = self.inc_j3_input.text()
-            
-            if not val_j2_str or not val_j3_str:
-                return
-
-            target_delta_j2 = float(val_j2_str)
-            target_delta_j3 = float(val_j3_str)
-            
-            # Formula from prompt
-            theo_target_j2 = target_delta_j2
-            theo_target_j3 = target_delta_j3 - target_delta_j2
-            
-            # Get vector (using 0 for J0, J1 as they don't affect orientation relative to TCP_P in this model usually, or J1 is rotation around Z which is handled separately)
-            # Prompt says: use [0, theo_j2, theo_j3, 0]
-            vector = self.robot.get_needle_vector([0, theo_target_j2, theo_target_j3, 0])
-            
-            # Calculate Yaw/Pitch
-            yaw, pitch, roll = self.calculate_angles_from_vector(vector)
-            
-            # Update Display (block signals to prevent recursion if we were setting inputs here, but we are setting display only)
-            self.yaw_display.setText(f"{yaw:.1f}")
-            self.pitch_display.setText(f"{pitch:.1f}")
-            
-            # Print Target Roll as requested
-            print(f"Target Roll: {roll:.2f}")
-            
-            # Sync internal state
-            self.current_yaw = yaw
-            self.current_pitch = pitch
-            
-        except ValueError:
-            pass # Input might be incomplete (e.g. "-")
-        except Exception as e:
-            print(f"Error updating target yaw/pitch: {e}")
-
-    # =========================================================================
-    # [NEW] Update Current Yaw/Pitch from Real-time Feedback
-    # =========================================================================
-    def update_current_yaw_pitch(self, j0, j1, j2, j3):
-        """
-        Calculates Current Yaw and Pitch based on real-time motor positions.
-        """
-        try:
-            # Get Reset values from Manager
-            reset_j2 = self.manager.RESET_J2
-            reset_j3 = self.manager.RESET_J3
-            
-            # Calculate Current Deltas
-            cur_delta_j2 = j2 - reset_j2
-            cur_delta_j3 = j3 - reset_j3
-            
-            # Calculate Theoretical Currents (Prompt Formula)
-            theo_cur_j2 = cur_delta_j2
-            theo_cur_j3 = cur_delta_j3 - cur_delta_j2
-            
-            # Get vector
-            vector = self.robot.get_needle_vector([0, theo_cur_j2, theo_cur_j3, 0])
-            
-            # Calculate Angles
-            yaw, pitch, roll = self.calculate_angles_from_vector(vector)
-            
-            # Update UI
-            self.cur_yaw_display.setText(f"{yaw:.1f}")
-            self.cur_pitch_display.setText(f"{pitch:.1f}")
-            
-            # Print Current Roll
-            print(f"Current Roll: {roll:.2f}")
-            
-        except Exception as e:
-            print(f"Error updating current yaw/pitch: {e}")
 
     # [修改] 重写 adjust_needle_direction 以加入误差补偿逻辑
     def adjust_needle_direction(self):
@@ -790,172 +674,6 @@ class FlexibleNeedleTab(BeckhoffTab):
         except Exception as e:
              QMessageBox.critical(self, "Error", f"Failed: {e}")
 
-    # =========================================================================
-    # [NEW] Yaw/Pitch Logic
-    # =========================================================================
-    def change_needle_angle(self, yaw_delta, pitch_delta):
-        """
-        调整 Yaw 或 Pitch。
-        注意：此处不直接修改 self.current_yaw/pitch，
-        而是计算出临时目标值 target_yaw/pitch，用于推算向量和关节角。
-        最终 self.current_yaw/pitch 的更新由输入框的 textChanged 信号触发 update_target_yaw_pitch_from_inputs 完成。
-        这样保证了“单点真实原则”(Single Source of Truth)，即内部状态永远与界面输入框数值保持一致。
-        """
-        # 1. 使用局部变量计算目标角度 (基于当前状态 + 增量)
-        target_yaw = self.current_yaw + yaw_delta
-        target_pitch = self.current_pitch + pitch_delta
-        
-        # 2. 根据目标角度计算新的方向向量
-        # Base vector (0, 1, 0)
-        # x = -sin(Yaw) * cos(Pitch)
-        # y = cos(Yaw) * cos(Pitch)
-        # z = sin(Pitch)
-        
-        yaw_rad = np.deg2rad(target_yaw)
-        pitch_rad = np.deg2rad(target_pitch)
-        
-        vx = -np.sin(yaw_rad) * np.cos(pitch_rad)
-        vy = np.cos(yaw_rad) * np.cos(pitch_rad)
-        vz = np.sin(pitch_rad)
-        
-        # 3. 更新向量输入框 (UI)
-        # 父类的 calculate_joint_values() 依赖界面上的 Vector 输入框数值进行计算
-        self.vector_inputs[0].setText(f"{vx:.4f}")
-        self.vector_inputs[1].setText(f"{vy:.4f}")
-        self.vector_inputs[2].setText(f"{vz:.4f}")
-        
-        # 4. 逆运动学解算 & 更新关节角输入框
-        # 流程：
-        #   a. 读取 self.vector_inputs
-        #   b. 计算 IK 得到 J2, J3
-        #   c. self.inc_j2_input.setText(...) / self.inc_j3_input.setText(...)
-        #   d. setText 触发 textChanged 信号
-        #   e. 信号调用 update_target_yaw_pitch_from_inputs()
-        #   f. 该函数通过正运动学反算 Yaw/Pitch，并最终更新 self.current_yaw 和 self.current_pitch
-        self.calculate_joint_values()
-
-        # 5. 自动应用增量
-        self.apply_joint_increment()
-
-    # =========================================================================
-    # [新增] Manual Controls Logic (J1 Decrease & Auto Rotate)
-    # =========================================================================
-    
-    def on_j1_decrease_clicked(self):
-        """让 Δ J1 减少指定的 'Descent Distance' 并执行"""
-        try:
-            current_inc = float(self.inc_j1_input.text())
-            decrease_amount = float(self.descent_dist_input.text())
-            
-            new_val = current_inc - decrease_amount
-            self.inc_j1_input.setText(f"{new_val:.4f}")
-            self.apply_joint_increment()
-            
-        except ValueError:
-            QMessageBox.warning(self, "Input Error", "Please check J1 or Descent Distance input format.")
-
-    def generate_local_us_folder_name(self):
-        """构建复杂的局部重建文件夹名"""
-        lp = self.main_window.left_panel
-        
-        # 1. 转换 A、B 点到 Volume 坐标系
-        # 假设 A_idx, B_idx, a_vol, b_vol 已通过 left_panel 转换函数获得
-        # 这里演示逻辑，需确保 left_panel 有对应转换方法
-        a_id = lp.a_points_combo.currentText() # 例如 "A1"
-        b_id = lp.b_points_combo.currentText() # 例如 "B1"
-        
-        a_vol = lp.get_current_a_in_volume() # 需在 left_panel 实现此转换
-        b_vol = lp.get_current_b_in_volume() 
-        
-        a_str = f"{a_id}({a_vol[0]:.1f},{a_vol[1]:.1f},{a_vol[2]:.1f})"
-        b_str = f"{b_id}({b_vol[0]:.1f},{b_vol[1]:.1f},{b_vol[2]:.1f})"
-
-        # 2. 计算 RCM in Volume
-        delta_j1 = float(self.inc_j1_input.text())
-        rcm_in_p = self.robot.get_rcm_point([delta_j1, 0, 0, 0])
-        rcm_vol = lp.transform_point_p_to_volume(rcm_in_p) # 需在 left_panel 实现
-        rcm_str = f"RCM({rcm_vol[0]:.1f},{rcm_vol[1]:.1f},{rcm_vol[2]:.1f})"
-
-        # 3. 获取 deg(x) 和 U 姿态
-        # deg_x 来自点击过旋转对准后的内部变量
-        deg_x = getattr(lp, 'last_calculated_rotation_to_b', 0) 
-        
-        # 计算 TCP_U 在 Volume 系下的姿态
-        # T_Vol_U = T_Vol_Base * T_Base_E * T_E_U
-        u_pose_vol = lp.get_current_tcp_u_in_volume() # 需在 left_panel 实现
-        u_str = f"U({','.join([f'{p:.1f}' for p in u_pose_vol])})"
-
-        return f"{a_str}{b_str}{rcm_str}deg({deg_x}){u_str}LocalUS"
-    
-    def on_rotate_probe_reset_clicked(self):
-        """局部图像重建入口"""
-        folder_name = self.generate_local_us_folder_name()
-        
-        """
-        自动化序列：
-        1. Probe Left x
-        2. (1s后) Probe Right 2X (Scan)
-        3. (等待扫描完成)
-        4. (1s后) Probe Left x (Reset)
-        5. (1s后) J1 Increase (Descent Dist) & Apply
-        """
-        # 1. Probe Left x
-        self.rotate_probe(direction=0, multiplier=1) # 0=Left/Backward
-        
-        # 2. 1秒后触发带自定义名称的扫描
-        QTimer.singleShot(1000, lambda: self._step2_start_scan_local(folder_name))
-
-    def _step2_start_scan_local(self, folder_name):
-        if self.main_window and hasattr(self.main_window, 'ultrasound_tab'):
-            us_tab = self.main_window.ultrasound_tab
-            us_tab.rotation_range_input.setText(self.rot_range_input.text())
-            # 传入自定义文件名
-            us_tab.rotate_and_capture_2x(custom_folder_name=folder_name)
-            self.scan_polling_timer.start(500)
-
-    def _check_scan_status(self):
-        """轮询检查扫描是否完成"""
-        if self.main_window and hasattr(self.main_window, 'ultrasound_tab'):
-            # 如果 is_rotating 变为 False，说明扫描结束
-            if not self.main_window.ultrasound_tab.is_rotating:
-                self.scan_polling_timer.stop()
-                
-                # 扫描完成，1s 后执行复位
-                QTimer.singleShot(1000, self._step4_reset_probe)
-
-    def _step4_reset_probe(self):
-        # Probe Left x (从 +x 回到 0)
-        self.rotate_probe(direction=0, multiplier=1) # 0=Left
-        
-        # 1s 后执行 J1 增加
-        QTimer.singleShot(1000, self._step5_increase_j1)
-
-    def _step5_increase_j1(self):
-        # J1 Increase by Descent Distance
-        try:
-            current_inc = float(self.inc_j1_input.text())
-            increase_amount = float(self.descent_dist_input.text())
-            new_val = current_inc + increase_amount
-            self.inc_j1_input.setText(f"{new_val:.4f}")
-            self.apply_joint_increment()
-            
-            if self.main_window:
-                self.main_window.status_bar.showMessage("Auto Sequence Completed: Scanned, Reset, and Advanced Needle.")
-                
-        except ValueError:
-            pass
-
-    def rotate_probe(self, direction, multiplier):
-        if not self.main_window or not hasattr(self.main_window, 'tcp_manager'):
-            return
-        try:
-            deg = float(self.rot_range_input.text())
-            if deg <= 0: raise ValueError
-        except ValueError:
-            return
-        angle = deg * multiplier
-        command = f"MoveRelJ,0,5,{direction},{angle};"
-        self.main_window.tcp_manager.send_command(command)
 
     # =========================================================================
     # Visual Helper Functions for Drawing Lines (恢复原始代码)
@@ -1108,11 +826,11 @@ class FlexibleNeedleTab(BeckhoffTab):
     # =========================================================================
     def _calculate_current_d4(self):
         try:
-            delta_j1 = float(self.inc_j1_input.text())
+            delta_j0 = float(self.inc_j0_input.text())
+            delta_j1 = float(self.inc_j1_input.text()) if self.inc_j1_input.text() else 0.0
             delta_j2 = float(self.inc_j2_input.text()) if self.inc_j2_input.text() else 0.0
-            delta_j3 = float(self.inc_j3_input.text()) if self.inc_j3_input.text() else 0.0
-            theoretical_j2 = delta_j2
-            theoretical_j3 = delta_j3 - delta_j2
+            theoretical_j1 = delta_j1
+            theoretical_j2 = delta_j2 - delta_j1
             
             parent = self.main_window
             if not hasattr(parent, 'left_panel'): return None
@@ -1121,7 +839,7 @@ class FlexibleNeedleTab(BeckhoffTab):
                 QMessageBox.warning(self, "Error", "B point in TCP_P is missing.")
                 return None
 
-            tip_pos = self.robot.get_tip_of_needle([delta_j1, theoretical_j2, theoretical_j3, 0])
+            tip_pos = self.robot.get_tip_of_needle([delta_j0, theoretical_j1, theoretical_j2, 0])
             b_point_vec = np.array(b_point_p)
             d4 = np.linalg.norm(b_point_vec - tip_pos)
             return d4
@@ -1134,7 +852,7 @@ class FlexibleNeedleTab(BeckhoffTab):
         if d4 is not None:
             # Phase 1: 走 1/3
             val = d4 / 3.0
-            self.inc_j0_input.setText(f"{val:.4f}")
+            self.inc_j3_input.setText(f"{val:.4f}")
             self.apply_joint_increment()
 
     def run_needle_insertion_phase_2(self):
@@ -1142,7 +860,7 @@ class FlexibleNeedleTab(BeckhoffTab):
         if d4 is not None:
             # Phase 2: 走当前剩余的 1/2
             val = d4 * 2.0 / 3.0
-            self.inc_j0_input.setText(f"{val:.4f}")
+            self.inc_j3_input.setText(f"{val:.4f}")
             self.apply_joint_increment()
 
     def run_needle_insertion_phase_3(self):
@@ -1150,7 +868,7 @@ class FlexibleNeedleTab(BeckhoffTab):
         if d4 is not None:
             # Phase 3: 走完剩余全部
             val = d4 + self.NEEDLE_TIP_OFFSET
-            self.inc_j0_input.setText(f"{val:.4f}")
+            self.inc_j3_input.setText(f"{val:.4f}")
             self.apply_joint_increment()
 
     # Image Slots
