@@ -41,8 +41,8 @@ def run_pipeline(image_folder, rotation_x):
     # 为了防止多线程下 matplotlib 报错，强制使用非交互式后端
     try:
         plt.switch_backend('Agg')
-    except:
-        pass
+    except Exception as e:
+        print(f"Error run_pipeline: {e}")
 
     # 2. 执行主流程
     try:

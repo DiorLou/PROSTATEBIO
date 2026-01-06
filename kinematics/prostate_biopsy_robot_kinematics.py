@@ -240,13 +240,16 @@ class RobotKinematics:
         ])
     
     def get_tip_of_needle(self, joint_values):
-        return np.array(self._forward(joint_values)[:3, 3]).flatten()
+        # 强制指定 dtype=float，确保 SymPy Float 转换为原生浮点数
+        return np.array(self._forward(joint_values)[:3, 3], dtype=float).flatten()
     
     def get_needle_vector(self, joint_values):
-        return np.array(self._forward(joint_values)[:3, 2]).flatten()
+        # 强制指定 dtype=float，防止下游 np.linalg.norm 报错
+        return np.array(self._forward(joint_values)[:3, 2], dtype=float).flatten()
     
     def get_rcm_point(self, joint_values):
-        return np.array(self._forward(joint_values, 2)[:3, 3]).flatten()
+        # 强制指定 dtype=float，确保 RCM 坐标点为纯数值数组
+        return np.array(self._forward(joint_values, 2)[:3, 3], dtype=float).flatten()
     
     def _forward(self, joint_values, n = None, initializing = False):
         # joint_values[2] = joint_values[2] - joint_values[1]
@@ -306,12 +309,16 @@ class RobotKinematics:
             initial_guess = [0, 0]
         result = least_squares(fsolve_fun, initial_guess)
         [joint2_val, joint3_val] = result.x
+        
+        # 执行补偿和坐标旋转逻辑
         self.OB = self._rotate_vector_around_axis(self.OB00, self.OA, joint2_val)
         self.OD0 = self._rotate_vector_around_axis(self.OD00, self.OA, joint2_val)
         self.OC0 = self._rotate_vector_around_axis(self.OC00, self.OA, joint2_val)
         joint3_val_compensated = self._joint3_compensate(joint3_val)
-        #joint3_val_compensated2 = joint3_val_compensated + joint2_val
-        return np.array([joint2_val, joint3_val_compensated])
+        
+        # 【核心修复】：强制指定 dtype=float
+        # 这会强制将可能存在的 SymPy Float 转换为原生 Python float
+        return np.array([joint2_val, joint3_val_compensated], dtype=float)
 
     def get_joint4_value(self, offset_from_rcm):
         """
@@ -326,61 +333,3 @@ class RobotKinematics:
 def valid(num, error=1e-3):
     return abs(num) < error
     
-if __name__ == '__main__':
-    # 定义需要作为符号的变量名
-    variable_names = ['x0', 'x1', 'x2', 'x3']
-    a_params = [258.75, 0, 0, 0]
-    alpha_params = [0, -65, -30, 34]
-    # d_params和theta_params中现在使用字符串来表示变量  
-    d_params = ['x0 - 206.717', 571.008, 0, 'x3 - 37.318']
-    theta_params = [30, 'x1', 'x2 + 85.96', 0]
-    
-    # 初始化类实例
-    robot = RobotKinematics(a_params, alpha_params, d_params, theta_params, variable_names, angle_AOC=np.pi/12)
-    
-    # rcm00 = robot.get_rcm_point([0,0,0,0])
-    # # print(rcm00)
-    # needle_tip = robot.get_tip_of_needle([0,0,0,0])
-    # # print(needle_tip)
-    # val4 = robot.get_joint4_value(0)
-    # # print(val4)
-
-            
-    # # 正逆正验证
-    print("请检查输出第一行与第三行是否相同，第二行是否与给定数值相同")
-    needle_vector = robot.get_needle_vector([0,10,18,0])
-    print(needle_vector)
-    calculated_joint23_value = robot.get_joint23_value(needle_vector)
-    print(calculated_joint23_value)
-    calculated_joint23_value[1]=calculated_joint23_value[1]+calculated_joint23_value[0]
-    print(calculated_joint23_value)
-    #------计算正运动学时需要由真实电机旋转toDH关节旋转
-    calculated_joint23_value[1] = calculated_joint23_value[1] - calculated_joint23_value[0]
-    print(calculated_joint23_value)
-    needle_vector_test = robot.get_needle_vector([0,calculated_joint23_value[0],calculated_joint23_value[1],0])
-    print(needle_vector_test)
-    
-    # 逆正逆验证
-    #print("\n请检查输出第二行与第四行是否相同，第一行与第三行是否相同")
-    #target = [0.2,1,0]
-    #target = target/np.linalg.norm(target)
-    #print(target)
-    #calculated_joint23_value = robot.get_joint23_value(target)
-    #print(calculated_joint23_value)
-    #needle_vector_test = robot.get_needle_vector([0,calculated_joint23_value[0],calculated_joint23_value[2],0])
-    #print(needle_vector_test)
-    #calculated_joint23_value = robot.get_joint23_value(needle_vector_test)
-    #print(calculated_joint23_value)
-
-    #needle_vector_sim = robot.get_needle_vector([0, 0, -45, 0])
-    #print(needle_vector_sim)
-    #calculated_joint23_value = robot.get_joint23_value(needle_vector_sim)
-    #print(calculated_joint23_value)
-
-    #rcm00 = robot.get_rcm_point([0,0,0,0])
-    #print(rcm00)
-
-    #d1 = robot.get_joint1_value(rcm00[2])
-    #print(d1)
-    #needle_tip = rcm00+1000*target
-    #print(needle_tip)
