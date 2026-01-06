@@ -703,7 +703,8 @@ class BeckhoffTab(QWidget):
             yaw, pitch, _ = self.calculate_angles_from_vector(vector)
             self.yaw_display.setText(f"{yaw:.1f}"); self.pitch_display.setText(f"{pitch:.1f}")
             self.current_yaw = yaw; self.current_pitch = pitch
-        except: pass
+        except Exception as e:
+            print(f"Error updating target yaw/pitch: {e}")
 
     def update_current_yaw_pitch(self, j0, j1, j2, j3):
         try:
@@ -712,7 +713,8 @@ class BeckhoffTab(QWidget):
             vector = self.robot.get_needle_vector([0, dj1, dj2, 0])
             yaw, pitch, _ = self.calculate_angles_from_vector(vector)
             self.cur_yaw_display.setText(f"{yaw:.1f}"); self.cur_pitch_display.setText(f"{pitch:.1f}")
-        except: pass
+        except Exception as e:
+            print(f"Error updating current yaw/pitch: {e}")
 
     # =========================================================================
     # Automation / Manual Controls
@@ -721,8 +723,9 @@ class BeckhoffTab(QWidget):
         try:
             val = float(self.inc_j0_input.text()) - float(self.descent_dist_input.text())
             self.inc_j0_input.setText(f"{val:.4f}"); self.apply_joint_increment()
-        except: pass
-
+        except Exception as e:
+            print(f"Error on_j0_decrease_clicked: {e}")
+            
     def on_rotate_probe_reset_clicked(self):
         """局部图像重建入口"""
         folder_name = self.generate_local_us_folder_name()
@@ -797,14 +800,16 @@ class BeckhoffTab(QWidget):
         try:
             val = float(self.inc_j0_input.text()) + float(self.descent_dist_input.text())
             self.inc_j0_input.setText(f"{val:.4f}"); self.apply_joint_increment()
-        except: pass
-
+        except Exception as e:
+            print(f"Error _step5_increase_j0: {e}")
+            
     def rotate_probe(self, d, m):
         if self.main_window and hasattr(self.main_window, 'tcp_manager'):
             try:
                 angle = float(self.rot_range_input.text()) * m
                 self.main_window.tcp_manager.send_command(f"MoveRelJ,0,5,{d},{angle};")
-            except: pass
+            except Exception as e:
+                print(f"Error rotate_probe: {e}")
 
     # =========================================================================
     # Original Shared UI Logic

@@ -481,7 +481,7 @@ class LeftPanel(QWidget):
                 self.tool_pose_labels["Tcp_Rz"].setText(f"{tool_pose_params[5]:.2f}")
                 self.latest_tool_pose = tool_pose_params
             except (ValueError, IndexError):
-                pass
+                print("Error _update_real_time_status")
 
     def _on_override_slider_changed(self, value):
         override_value = value / 100.0
@@ -497,7 +497,8 @@ class LeftPanel(QWidget):
         if len(parts) == 3 and parts[1] == 'OK':
             try:
                 self.current_override_value.setText(f"{float(parts[2]):.2f}")
-            except: pass
+            except Exception as e:
+                print(f"Error _handle_override_message: {e}")
 
     # --- Motor Control ---
     def start_move(self, index, direction):
@@ -1452,7 +1453,8 @@ class LeftPanel(QWidget):
             # [可选]：为了防止残留文件干扰，拆分前可以先清理旧的子文件
             for old_file in glob.glob("biopsy_target_replan_for_a*.txt"):
                 try: os.remove(old_file)
-                except: pass
+                except Exception as e:
+                    print(f"Error read_b_points_volume_from_file_according_to_selected_a: {e}")
 
             split_data = {} 
             try:

@@ -357,7 +357,8 @@ class RightPanel(QWidget):
         if len(parts) >= 8 and parts[1] == 'OK':
             try:
                 for i in range(6): self.cur_tcp_vars[i].setText(f"{float(parts[2+i]):.2f}")
-            except: pass
+            except Exception as e:
+                print(f"Error _handle_tcp_msg: {e}")
 
     def _update_state(self, msg):
         parts = msg.strip(';').strip(',').split(',')
@@ -371,14 +372,16 @@ class RightPanel(QWidget):
                 self.power_btn.setStyleSheet("background-color: lightgreen;" if nElec else "background-color: salmon;")
                 self.enable_btn.setText("Disable" if nEn else "Enable")
                 self.enable_btn.setStyleSheet("background-color: lightgreen;" if nEn else "background-color: salmon;")
-            except: pass
+            except Exception as e:
+                print(f"Error _update_state: {e}")
 
     def _handle_emergency(self, msg):
         parts = msg.strip(';').strip(',').split(',')
         if len(parts) == 6 and parts[1] == 'OK':
             try:
                 self.stop_btn.setEnabled(int(parts[3]) == 0)
-            except: pass
+            except Exception as e:
+                print(f"Error _handle_emergency: {e}")
 
     def _handle_tcp_u_def(self, msg):
         self.temp_expected_response = None
@@ -394,7 +397,8 @@ class RightPanel(QWidget):
                 self.temp_expected_response = "TCP_TIP_DEF"
                 self.log_message("System: Auto-requesting TCP_tip definition...")
                 
-            except: pass
+            except Exception as e:
+                print(f"Error _handle_tcp_u_def: {e}")
             
     def _handle_tcp_tip_def(self, msg):
         self.temp_expected_response = None
