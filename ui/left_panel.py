@@ -685,8 +685,35 @@ class LeftPanel(QWidget):
         # [修改] 统一接口切换到 TCP_E
         self._switch_tcp("TCP_E")
         
-        # 2. 延时后执行参数更新和对齐逻辑
-        QTimer.singleShot(300, self._continue_align_ultrasound_plane_to_aoe)
+        zero_pose = self.tcp_e_in_ultrasound_zero_deg
+        
+        if zero_pose is None:
+            QMessageBox.warning(self, "旋转失败", "未找到 0 度参考位姿。请先在 Ultrasound 标签页点击 'Rotate Left x Deg' 进行采样初始化。")
+            return
+
+        try:
+            # --- 阶段 1：发送 WayPoint 指令复位到 0 度姿态 ---
+            # 格式化位姿字符串 (x,y,z,Rx,Ry,Rz)
+            pos_rpy_str = ",".join([f"{p:.2f}" for p in zero_pose])
+            
+            # 定义 6 个关节的增量为 0
+            dJ_zero = ",".join(["0.00"] * 6)
+            
+            # 构造 WayPoint 指令
+            # 参数含义：类型0(绝对运动), 位姿, 关节增量, 使用TCP坐标系, 参考Base基准, 速度50, 加速度250...
+            reset_cmd = f"WayPoint,0,{pos_rpy_str},{dJ_zero},TCP,Base,50,250,0,1,0,0,0,0,ID1;"
+            
+            print(f"Sending reset command to zero degree pose: {reset_cmd}")
+            self.main_window.tcp_manager.send_command(reset_cmd)
+
+            # --- 阶段 2：延时后执行参数更新和对齐逻辑 ---
+            QTimer.singleShot(3000, self._continue_align_ultrasound_plane_to_aoe)
+            
+        
+        except Exception as e:
+            print(f"Alignment error: {e}")
+            mw.status_bar.showMessage(f"Error: Failed to align ultrasound plane: {e}")
+        
 
     def _continue_align_ultrasound_plane_to_aoe(self):
         # [NEW] 在这里调用更新函数，此时可以保证 TCP 是 TCP_E
