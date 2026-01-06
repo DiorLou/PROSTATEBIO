@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from core.ultrasound_plane import calculate_rotation_for_plane_alignment, calculate_new_rpy_for_b_point, get_final_tcp_e_position_after_delta_rotation
 import pytransform3d.rotations as pyrot
+import glob
 
 # 常量
 FORWARD = 1
@@ -17,14 +18,15 @@ DATA_FILE_NAME = "saved_robot_data.json"
 
 class BPointSelectionDialog(QDialog):
     """
-    B点选择对话框：用于显示从TXT文件读取的B点列表，并允许用户多选。
+    B点选择对话框：更新为显示 B(Volume) 原始坐标和计算后的 B(Base) 坐标。
     """
     b_points_selected = pyqtSignal(list) 
 
-    def __init__(self, b_point_data_list, parent=None):
+    def __init__(self, b_point_data_list, a_index, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("B Point Localization Selection (Multiple)")
-        self.setMinimumSize(900, 400)
+        # [修改] 窗口标题增加当前所属的 A 点编号，方便用户核对
+        self.setWindowTitle(f"B Point Selection for A{a_index} (Volume-based)") 
+        self.setMinimumSize(1000, 450)
         self.b_point_data_list = b_point_data_list 
         self.checkboxes = [] 
         self.init_ui()
@@ -32,8 +34,15 @@ class BPointSelectionDialog(QDialog):
     def init_ui(self):
         main_layout = QVBoxLayout(self)
         self.table = QTableWidget()
+        # [修改] 列数和表头，使其符合新的坐标体系
         self.table.setColumnCount(5) 
-        self.table.setHorizontalHeaderLabels(["Select", "Index", "B Point (TCP_U) Pose", "B Point (Base) Pose", "OA Axis Rotation Angle (Deg)"])
+        self.table.setHorizontalHeaderLabels([
+            "Select", 
+            "B ID", 
+            "B Point (Volume) [x, y, z]", 
+            "B Point (Base) [x, y, z]", 
+            "OA Rotation Angle (Deg)"
+        ])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.NoSelection) 
@@ -42,6 +51,7 @@ class BPointSelectionDialog(QDialog):
         
         btn_layout = QHBoxLayout()
         self.ok_btn = QPushButton("Confirm Selection")
+        # [修改] 取消按钮显示当前加载的点位数量
         self.cancel_btn = QPushButton(f"Cancel (Loaded {len(self.b_point_data_list)} points)")
         btn_layout.addStretch()
         btn_layout.addWidget(self.ok_btn)
@@ -54,11 +64,13 @@ class BPointSelectionDialog(QDialog):
         self.table.cellClicked.connect(self._toggle_checkbox_on_click) 
 
     def _populate_table(self):
-        SELECTION_COLUMN_WIDTH = 180 
+        SELECTION_COLUMN_WIDTH = 100 
         self.table.setRowCount(len(self.b_point_data_list))
         
         for row, data in enumerate(self.b_point_data_list):
-            p_u_pose, p_base_pose, angle, index = data 
+            # 这里的 data 结构需对应新函数传来的: (p_b_vol, p_base_pose, angle, b_idx)
+            p_vol_xyz, p_base_pose, angle, b_idx = data 
+            
             checkbox = QCheckBox()
             checkbox.setChecked(False)
             self.checkboxes.append(checkbox) 
@@ -70,11 +82,18 @@ class BPointSelectionDialog(QDialog):
             check_layout.setContentsMargins(0, 0, 0, 0)
             self.table.setCellWidget(row, 0, check_container)
 
-            self.table.setItem(row, 1, QTableWidgetItem(f"B{index}"))
-            p_u_str = f"({p_u_pose[0]:.2f}, {p_u_pose[1]:.2f}, {p_u_pose[2]:.2f}, {p_u_pose[3]:.2f}, {p_u_pose[4]:.2f}, {p_u_pose[5]:.2f})"
-            self.table.setItem(row, 2, QTableWidgetItem(p_u_str))
-            p_base_str = f"({p_base_pose[0]:.2f}, {p_base_pose[1]:.2f}, {p_base_pose[2]:.2f}, {p_base_pose[3]:.2f}, {p_base_pose[4]:.2f}, {p_base_pose[5]:.2f})"
+            # [修改] 展示 B1-B16 的隐形编号
+            self.table.setItem(row, 1, QTableWidgetItem(f"B{b_idx}"))
+            
+            # [修改] 展示 Volume 系下的原始坐标 (来自 biopsy_target_replan.txt 前三列)
+            p_vol_str = f"({p_vol_xyz[0]:.2f}, {p_vol_xyz[1]:.2f}, {p_vol_xyz[2]:.2f})"
+            self.table.setItem(row, 2, QTableWidgetItem(p_vol_str))
+            
+            # [修改] 展示转换到 Base 系后的坐标
+            p_base_str = f"({p_base_pose[0]:.2f}, {p_base_pose[1]:.2f}, {p_base_pose[2]:.2f})"
             self.table.setItem(row, 3, QTableWidgetItem(p_base_str))
+            
+            # 展示计算出的旋转角度
             self.table.setItem(row, 4, QTableWidgetItem(f"{angle:.2f}"))
         
         self.table.setColumnWidth(0, SELECTION_COLUMN_WIDTH) 
@@ -171,6 +190,9 @@ class LeftPanel(QWidget):
         self.is_waiting_for_puncture_alignment = False
         self.fsm_check_timer = QTimer(self)
         self.fsm_check_timer.timeout.connect(self._check_fsm_status)
+        
+        # 用于标记 biopsy_target_replan.txt 是否已在本次运行中完成拆分
+        self.is_replan_file_split = False
 
         self.init_ui()
         self.setup_connections()
@@ -402,9 +424,9 @@ class LeftPanel(QWidget):
         group_layout.addWidget(b_point_base_subgroup)
 
         button_layout = QHBoxLayout()
-        self.load_b_points_intcp_u_txt_btn = QPushButton("Read B Points in TCP_U from TXT File")
-        self.load_b_points_intcp_u_txt_btn.clicked.connect(self.read_b_points_in_tcp_u_from_file)
-        button_layout.addWidget(self.load_b_points_intcp_u_txt_btn) 
+        self.load_b_points_in_volume_txt_btn = QPushButton("Read B Points (Volume) from Replan File")
+        self.load_b_points_in_volume_txt_btn.clicked.connect(self.read_b_points_volume_from_file_according_to_selected_a)
+        button_layout.addWidget(self.load_b_points_in_volume_txt_btn) 
         group_layout.addLayout(button_layout)
         
         self.rotate_ultrasound_plane_to_b_btn = QPushButton("Rotate the ultrasound plane to pass through the biopsy point")
@@ -1373,56 +1395,124 @@ class LeftPanel(QWidget):
         T[:3, 3] = [x, y, z]
         return T
 
-    def read_b_points_in_tcp_u_from_file(self):
-        if self.tcp_u_definition_pose is None:
-            QMessageBox.warning(self, "Warning", "TCP_U definition missing.")
-            return
-        if self.tcp_e_in_ultrasound_zero_deg is None or self.tool_pose_in_puncture_position is None:
-            QMessageBox.warning(self, "Missing Data", "Record tcp_e_in_ultrasound_zero_deg and tool_pose_in_puncture_position first.")
+    def read_b_points_volume_from_file_according_to_selected_a(self):
+        """
+        处理 biopsy_target_replan.txt。
+        逻辑：如果尚未拆分则执行拆分，然后根据当前选中的 A 点加载对应的子文件。
+        """
+        # 1. 前置检查
+        if self.volume_in_base is None:
+            QMessageBox.warning(self, "Warning", "请先计算 volume_in_base（点击左转x度）。")
             return
         
-        # ... (Simplified file dialog logic similar to original) ...
-        # Assuming file is read into b_point_data_list
-        FILE_NAME = "TCP_U_B_LIST.txt"
-        file_path = os.path.join(os.getcwd(), FILE_NAME)
-        if not os.path.exists(file_path): return 
+        current_a_text = self.a_point_dropdown.currentText()
+        if not current_a_text.startswith("A"):
+            QMessageBox.warning(self, "Warning", "请先在下拉框选择一个 A 点。")
+            return
+        
+        try:
+            current_a_idx = int(current_a_text.split(':')[0].replace("A", ""))
+        except:
+            current_a_idx = 1
+
+        ORIGIN_FILE = "biopsy_target_replan.txt"
+        # [优化点]：使用类属性状态位判断，不再依赖磁盘文件是否存在
+        if not self.is_replan_file_split:
+            if not os.path.exists(ORIGIN_FILE):
+                QMessageBox.critical(self, "Error", f"File {ORIGIN_FILE} not found.")
+                return
+
+            # [可选]：为了防止残留文件干扰，拆分前可以先清理旧的子文件
+            for old_file in glob.glob("biopsy_target_replan_for_a*.txt"):
+                try: os.remove(old_file)
+                except: pass
+
+            split_data = {} 
+            try:
+                with open(ORIGIN_FILE, 'r') as f:
+                    # 这里的逻辑保持不变，处理 B1~B16 隐形编号
+                    for line_idx, line in enumerate(f):
+                        line = line.strip()
+                        if not line or line.startswith("["): continue 
+                        
+                        parts = line.split()
+                        if len(parts) < 4: continue
+                        
+                        b_id = line_idx 
+                        bx, by, bz = parts[0], parts[1], parts[2]
+                        a_ref = int(parts[3])
+                        
+                        if a_ref not in split_data: split_data[a_ref] = []
+                        split_data[a_ref].append(f"{b_id} {bx} {by} {bz}")
+                
+                # 写入子文件
+                for a_key, lines in split_data.items():
+                    with open(f"biopsy_target_replan_for_a{a_key}.txt", 'w') as tf:
+                        tf.write("\n".join(lines))
+                
+                # [核心]：标记为已拆分，后续点击不再触发 IO 处理
+                self.is_replan_file_split = True
+                if self.main_window and hasattr(self.main_window, 'right_panel'):
+                    self.main_window.right_panel.log_message("System: Replan file split completed for this session.")
+                    
+            except Exception as e:
+                QMessageBox.critical(self, "File Process Error", str(e))
+                return
+
+        # 3. 加载当前 A 对应的文件 (此时文件一定是最新的)
+        target_file = f"biopsy_target_replan_for_a{current_a_idx}.txt"
+        if not os.path.exists(target_file):
+            QMessageBox.information(self, "Info", f"No B points associated with A{current_a_idx}.")
+            return
 
         b_point_data_list = []
         try:
-            with open(file_path, 'r') as f:
-                index = 1
+            with open(target_file, 'r') as f:
                 for line in f:
-                    line = line.strip().strip('[] \t\n')
-                    if not line: continue
-                    parts = line.split(',')
-                    if len(parts) != 3: continue
-                    p_b_u = np.array([float(p) for p in parts] + [0.0]*3)
-                    p_base_pose, angle, idx = self._calculate_b_point_data(p_b_u, index)
-                    b_point_data_list.append((p_b_u, p_base_pose, angle, idx))
-                    index += 1
-        except Exception as e: 
-            QMessageBox.critical(self, "Error", str(e))
+                    parts = line.split()
+                    if len(parts) != 4: continue
+                    b_idx = int(parts[0])
+                    p_b_vol = [float(parts[1]), float(parts[2]), float(parts[3])]
+                    
+                    # 调用修改后的计算函数
+                    p_base_pose, angle = self._calculate_b_point_data_from_volume(p_b_vol)
+                    b_point_data_list.append((p_b_vol, p_base_pose, angle, b_idx))
+        except Exception as e:
+            QMessageBox.critical(self, "读取失败", str(e))
             return
 
-        dialog = BPointSelectionDialog(b_point_data_list, self)
+        # 4. 显示对话框
+        dialog = BPointSelectionDialog(b_point_data_list, current_a_idx, self)
         dialog.b_points_selected.connect(self._handle_b_points_list_selection)
         dialog.exec_()
 
-    def _calculate_b_point_data(self, p_b_in_u_pose, index):
-        if self.tcp_e_in_ultrasound_zero_deg is None or self.tool_pose_in_puncture_position is None: raise ValueError("Missing poses")
-        T_U_to_B = self.pose_to_matrix(p_b_in_u_pose)
-        T_Base_to_E = self.pose_to_matrix(self.tcp_e_in_ultrasound_zero_deg)
-        T_E_to_U = self.pose_to_matrix(self.tcp_u_definition_pose)
-        T_Base_to_B = T_Base_to_E @ T_E_to_U @ T_U_to_B
+    def _calculate_b_point_data_from_volume(self, p_b_vol):
+        """
+        核心逻辑变动：从固定的 Volume 坐标系转换到 Base 坐标系。
+        """
+        if self.volume_in_base is None or self.tool_pose_in_puncture_position is None:
+            raise ValueError("缺少 volume_in_base 或穿刺位姿数据")
+
+        # 1. 坐标转换: P_base = T_base_vol * P_vol
+        T_base_vol = self.pose_to_matrix(self.volume_in_base)
+        p_b_vol_homo = np.array(p_b_vol + [1.0])
+        p_b_base = np.dot(T_base_vol, p_b_vol_homo)[:3]
         
-        p_b_in_base = T_Base_to_B[:3, 3]
-        r_b_in_base_rpy = np.rad2deg(pyrot.euler_from_matrix(T_Base_to_B[:3, :3], 0, 1, 2, extrinsic=True))
-        p_b_in_base_pose = np.append(p_b_in_base, r_b_in_base_rpy)
-        
+        # 组装到位姿列表 (x, y, z, rx, ry, rz)，旋转角设为 0 (对齐逻辑只用 xyz)
+        p_b_base_pose = np.concatenate((p_b_base, [0.0, 0.0, 0.0]))
+
+        # 2. 计算旋转角度 (对齐超声平面到 OA-OB 平面)
         a = np.array([float(v.text()) for v in self.a_vars])
         o = np.array([float(v.text()) for v in self.o_vars])
-        angle = self._calculate_oa_rotation_angle(a, o, p_b_in_base, np.array(self.tool_pose_in_puncture_position)[3:], p_b_in_u_pose)
-        return p_b_in_base_pose, angle, index
+        
+        # 复用原有的角度计算函数，此时 B 点已在 Base 系
+        angle = self._calculate_oa_rotation_angle(
+            a, o, p_b_base, 
+            np.array(self.tool_pose_in_puncture_position)[3:], 
+            [0]*6 # 旧的 p_b_u 参数在新逻辑中不再需要，传空
+        )
+        
+        return p_b_base_pose, angle
 
     def _calculate_oa_rotation_angle(self, a, o, b, initial_rpy, p_b_u):
         # (Logic copied from original main_window.py)
