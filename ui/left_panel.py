@@ -568,13 +568,21 @@ class LeftPanel(QWidget):
     def _switch_tcp(self, tcp_name):
         """
         统一的 TCP 切换内部辅助函数。
-        尝试调用 RightPanel 的 switch_tcp 以保持状态同步。
+        尝试调用 RightPanel 的 switch_tcp 以保持状态同步；
+        若不可用（else），则直接弹出报警，不进行强制切换。
         """
+        # 1. 检查是否存在 main_window 及其 right_panel 组件
         if self.main_window and hasattr(self.main_window, 'right_panel'):
+            # 调用 RightPanel 中封装好的 switch_tcp (包含取消勾选和 200ms 延时逻辑)
             self.main_window.right_panel.switch_tcp(tcp_name)
+        
         else:
-            # Fallback (通常不会执行到这里)
-            self.tcp_manager.send_command(f"SetTCPByName,0,{tcp_name};")
+            # 2. 如果找不到 RightPanel，直接弹窗报警，不做任何切换操作
+            QMessageBox.critical(
+                self, 
+                "切换失败", 
+                f"无法执行 TCP 切换：未找到右侧控制面板 (RightPanel)。\n目标 TCP: {tcp_name}"
+            )
 
     # --- Point Recording ---
     def get_a_point_position(self): self._start_point_record("A")

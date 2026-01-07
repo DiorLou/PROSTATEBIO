@@ -246,9 +246,7 @@ class RightPanel(QWidget):
     def switch_tcp(self, tcp_name=None):
         """
         统一的 TCP 切换函数。
-        支持两种调用方式：
-        1. 按钮点击信号触发：此时 tcp_name 通常为 False (bool) 或 None。
-        2. 代码直接调用：例如 self.switch_tcp("TCP_E")，此时 tcp_name 为字符串。
+        逻辑：强制取消 Teach Mode 勾选，延迟 200ms 后发送切换 TCP 命令。
         """
         target_name = None
 
@@ -262,12 +260,21 @@ class RightPanel(QWidget):
             if btn:
                 target_name = btn.text().replace("Switch to ", "")
         
-        # 执行切换指令
         if target_name:
-            self.current_tcp_name = target_name
-            cmd = f"SetTCPByName,0,{target_name};"
-            self.log_message(cmd)
-            self.tcp_manager.send_command(cmd)
+            # 2. 强制关闭 Teach Mode 勾选
+            # 这会触发 self.teach_chk.stateChanged 信号及其绑定的 toggle_teach_mode 逻辑
+            if hasattr(self, 'teach_chk'):
+                self.teach_chk.setChecked(False)
+            
+            # 3. 定义发送命令的闭包函数
+            def send_switch_command():
+                self.current_tcp_name = target_name
+                cmd = f"SetTCPByName,0,{target_name};"
+                self.tcp_manager.send_command(cmd)
+
+            # 4. 使用 QTimer 延迟 200ms 执行
+            # 这种方式不会阻塞主线程，界面依然可以响应
+            QTimer.singleShot(200, send_switch_command)
 
     # [改进] 允许传入 tcp_name 参数，并在发送指令 200ms 后切换到 TCP_E
     def send_set_tcp_command(self, tcp_name=None):
