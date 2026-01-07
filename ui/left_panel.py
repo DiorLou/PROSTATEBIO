@@ -525,7 +525,7 @@ class LeftPanel(QWidget):
         self.tcp_manager.send_command(command)
 
     def send_init_joint_position_command(self):
-        J_STR = "-214.32,-36.68,70.4,-266.45,-90.83,-54.23"
+        J_STR = "-209.02,-57.73,50.97,100,-96.55,-46.02"
         POS_ZERO = "0.00,0.00,0.00,0.00,0.00,0.00"
         cmd = f"WayPoint,0,{POS_ZERO},{J_STR},TCP,Base,50,360,0,0,1,0,0,0,ID1;"
         self.tcp_manager.send_command(cmd)
@@ -582,40 +582,8 @@ class LeftPanel(QWidget):
     
     def _start_point_record(self, name):
         if not self.tcp_manager.is_connected: return
-        # if self.main_window and self.main_window.status_bar:
-        #      # [修改] 提示切换到 TCP_E
-        #      self.main_window.status_bar.showMessage(f"Status: Getting {name} Point (Switching TCP_E)...")
-        
-        # # [修改] 使用统一接口切换到 TCP_E
-        # self._switch_tcp("TCP_E")
         
         # 延时等待状态刷新后进行计算
-        QTimer.singleShot(300, lambda: self._finalize_point_record(name))
-
-    # [NEW] Slot for A Point Dropdown Selection
-    def _on_a_point_selected(self, index):
-        """Handle selection from A point history dropdown."""
-        if index < 0 or index >= len(self.a_points_list):
-            return
-        
-        # Retrieve point data
-        selected_point = self.a_points_list[index]
-        
-        # Update UI text fields
-        for i in range(3):
-            self.a_vars[i].setText(f"{selected_point[i]:.2f}")
-
-        # [新增] 检查 volume_in_base 是否存在，如果存在则自动计算并更新 A_in_Volume
-        if self.volume_in_base is not None:
-             # calculate_a_point_in_u_volume 使用界面上的输入框(a_vars)和 volume_in_base 进行计算
-             new_a_in_vol = self.calculate_a_point_in_u_volume()
-             if self.main_window and hasattr(self.main_window, 'right_panel'):
-                 self.main_window.right_panel.log_message(f"System: A point selected. Updated A_in_Volume: {new_a_in_vol}")
-        else:
-             if self.main_window and hasattr(self.main_window, 'right_panel'):
-                 self.main_window.right_panel.log_message("System: A point selected. volume_in_base not set, skipping A_in_Volume update.")
-        
-    def _finalize_point_record(self, name):
         # 1. 检查必要数据是否存在
         if not self.latest_tool_pose:
             QMessageBox.warning(self, "Warning", "No real-time robot pose data.")
@@ -666,6 +634,29 @@ class LeftPanel(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Calculation Error", f"Failed to calculate point: {e}")
 
+    # [NEW] Slot for A Point Dropdown Selection
+    def _on_a_point_selected(self, index):
+        """Handle selection from A point history dropdown."""
+        if index < 0 or index >= len(self.a_points_list):
+            return
+        
+        # Retrieve point data
+        selected_point = self.a_points_list[index]
+        
+        # Update UI text fields
+        for i in range(3):
+            self.a_vars[i].setText(f"{selected_point[i]:.2f}")
+
+        # [新增] 检查 volume_in_base 是否存在，如果存在则自动计算并更新 A_in_Volume
+        if self.volume_in_base is not None:
+             # calculate_a_point_in_u_volume 使用界面上的输入框(a_vars)和 volume_in_base 进行计算
+             new_a_in_vol = self.calculate_a_point_in_u_volume()
+             if self.main_window and hasattr(self.main_window, 'right_panel'):
+                 self.main_window.right_panel.log_message(f"System: A point selected. Updated A_in_Volume: {new_a_in_vol}")
+        else:
+             if self.main_window and hasattr(self.main_window, 'right_panel'):
+                 self.main_window.right_panel.log_message("System: A point selected. volume_in_base not set, skipping A_in_Volume update.")
+
     def get_e_point_position(self):
         if not self.latest_tool_pose: return
         for i in range(3): self.e_vars[i].setText(f"{self.latest_tool_pose[i]:.2f}")
@@ -686,6 +677,13 @@ class LeftPanel(QWidget):
         # [修改] 统一接口切换到 TCP_E
         self._switch_tcp("TCP_E")
         
+        # --- 阶段 2：延时后执行参数更新和对齐逻辑 ---
+        QTimer.singleShot(3000, self._continue_align_ultrasound_plane_to_aoe)
+        
+        
+        
+
+    def _continue_align_ultrasound_plane_to_aoe(self):
         zero_pose = self.tcp_e_in_ultrasound_zero_deg
         
         if zero_pose is None:
