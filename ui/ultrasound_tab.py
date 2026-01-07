@@ -624,7 +624,7 @@ class UltrasoundTab(QWidget):
         if x is None: return
         
         total_rotation = 2 * x
-        desktop_path = r"C:\Users\hkclr_user\Desktop"
+        desktop_path = r"C:\Users\admin\Desktop"
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         # 判断是全局还是局部重建
