@@ -173,10 +173,12 @@ class NavigationTab(QWidget):
         # 5. 计算针尖在 TCP_P 下的位姿 (T_TCP_P_Needle)
         # robot._forward 返回的是 SymPy 矩阵，需要转换
         try:
+            # 强制将 SymPy 结果转换为标准 Python float 列表再转 NumPy
             res_sympy = mw.robot_kinematics._forward(joint_values)
-            T_P_Needle = np.array(res_sympy).astype(np.float64)
+            # 使用 res_sympy.tolist() 确保提取的是数值内容
+            T_P_Needle = np.array(res_sympy.tolist(), dtype=np.float64) 
         except Exception as e:
-            print(f"Kinematics calc error: {e}")
+            print(f"Kinematics conversion error: {e}")
             return
 
         # 6. 执行坐标系变换链
@@ -184,23 +186,25 @@ class NavigationTab(QWidget):
         try:
             # 辅助函数：Pose (x,y,z,rx,ry,rz) 转 4x4 矩阵
             def to_matrix(pose):
-                x, y, z, rx, ry, rz = pose
+                # 确保 pose 是 flat 的 float 列表
+                x, y, z, rx, ry, rz = [float(val) for val in pose]
                 T = np.identity(4)
-                T[:3, :3] = pyrot.matrix_from_euler(np.deg2rad([rx, ry, rz]), 0, 1, 2, extrinsic=True)
+                # 确保旋转矩阵计算结果也是 float64
+                R = pyrot.matrix_from_euler(np.deg2rad([rx, ry, rz]), 0, 1, 2, extrinsic=True)
+                T[:3, :3] = R.astype(np.float64)
                 T[:3, 3] = [x, y, z]
                 return T
             
-            # T_Base_P = T_Base_E * T_E_P
+            # 获取基础变换矩阵
             T_Base_E = to_matrix(lp.latest_tool_pose)
             T_E_P = to_matrix(lp.tcp_p_definition_pose)
-            T_Base_P = np.dot(T_Base_E, T_E_P)
+            T_Base_P = np.matmul(T_Base_E, T_E_P) # 建议使用 @ 或 np.matmul
             
-            # T_Vol_Base = inv(T_Base_Vol)
             T_Base_Vol = to_matrix(lp.volume_in_base)
             T_Vol_Base = np.linalg.inv(T_Base_Vol)
             
-            # 最终变换
-            T_Vol_Needle = np.dot(T_Vol_Base, np.dot(T_Base_P, T_P_Needle))
+            # 最终乘法：确保所有项都是 (4, 4) 维度
+            T_Vol_Needle = T_Vol_Base @ T_Base_P @ T_P_Needle
             
             # 7. 提取位姿并发送
             pos = T_Vol_Needle[:3, 3]
