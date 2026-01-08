@@ -173,10 +173,8 @@ class NavigationTab(QWidget):
         # 5. 计算针尖在 TCP_P 下的位姿 (T_TCP_P_Needle)
         # robot._forward 返回的是 SymPy 矩阵，需要转换
         try:
-            # 强制将 SymPy 结果转换为标准 Python float 列表再转 NumPy
             res_sympy = mw.robot_kinematics._forward(joint_values)
-            # 使用 res_sympy.tolist() 确保提取的是数值内容
-            T_P_Needle = np.array(res_sympy.tolist(), dtype=np.float64) 
+            T_P_Needle = np.array(res_sympy).astype(np.float64)
         except Exception as e:
             print(f"Kinematics conversion error: {e}")
             return
