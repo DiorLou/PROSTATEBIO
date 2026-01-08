@@ -337,7 +337,7 @@ class RightPanel(QWidget):
         if not connected: self.stop_btn.setEnabled(False)
 
     def handle_incoming_message(self, msg):
-        high_freq_msgs = ("ReadActPos", "ReadOverride", "ReadEmergencyInfo", "ReadRobotState")
+        high_freq_msgs = ("ReadActPos", "ReadOverride", "ReadEmergencyInfo", "ReadRobotState", "ReadCurFSM")
         
         if not msg.startswith(high_freq_msgs): 
              self.log_message(msg) 
