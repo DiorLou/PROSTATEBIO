@@ -191,9 +191,6 @@ class LeftPanel(QWidget):
         self.fsm_check_timer = QTimer(self)
         self.fsm_check_timer.timeout.connect(self._check_fsm_status)
         
-        # 用于标记 biopsy_target_replan.txt 是否已在本次运行中完成拆分
-        self.is_replan_file_split = False
-
         self.init_ui()
         self.setup_connections()
 
@@ -1470,48 +1467,45 @@ class LeftPanel(QWidget):
 
         ORIGIN_FILE = "biopsy_target_replan.txt"
         # [优化点]：使用类属性状态位判断，不再依赖磁盘文件是否存在
-        if not self.is_replan_file_split:
-            if not os.path.exists(ORIGIN_FILE):
-                QMessageBox.critical(self, "Error", f"File {ORIGIN_FILE} not found.")
-                return
+        if not os.path.exists(ORIGIN_FILE):
+            QMessageBox.critical(self, "Error", f"File {ORIGIN_FILE} not found.")
+            return
 
-            # [可选]：为了防止残留文件干扰，拆分前可以先清理旧的子文件
-            for old_file in glob.glob("biopsy_target_replan_for_a*.txt"):
-                try: os.remove(old_file)
-                except Exception as e:
-                    print(f"Error read_b_points_volume_from_file_according_to_selected_a: {e}")
-
-            split_data = {} 
-            try:
-                with open(ORIGIN_FILE, 'r') as f:
-                    # 这里的逻辑保持不变，处理 B1~B16 隐形编号
-                    for line_idx, line in enumerate(f):
-                        line = line.strip()
-                        if not line or line.startswith("["): continue 
-                        
-                        parts = line.split()
-                        if len(parts) < 4: continue
-                        
-                        b_id = line_idx + 1
-                        bx, by, bz = parts[0], parts[1], parts[2]
-                        a_ref = int(parts[3])
-                        
-                        if a_ref not in split_data: split_data[a_ref] = []
-                        split_data[a_ref].append(f"{b_id} {bx} {by} {bz}")
-                
-                # 写入子文件
-                for a_key, lines in split_data.items():
-                    with open(f"biopsy_target_replan_for_a{a_key}.txt", 'w') as tf:
-                        tf.write("\n".join(lines))
-                
-                # [核心]：标记为已拆分，后续点击不再触发 IO 处理
-                self.is_replan_file_split = True
-                if self.main_window and hasattr(self.main_window, 'right_panel'):
-                    self.main_window.right_panel.log_message("System: Replan file split completed for this session.")
-                    
+        # [可选]：为了防止残留文件干扰，拆分前可以先清理旧的子文件
+        for old_file in glob.glob("biopsy_target_replan_for_a*.txt"):
+            try: os.remove(old_file)
             except Exception as e:
-                QMessageBox.critical(self, "File Process Error", str(e))
-                return
+                print(f"Error read_b_points_volume_from_file_according_to_selected_a: {e}")
+
+        split_data = {} 
+        try:
+            with open(ORIGIN_FILE, 'r') as f:
+                # 这里的逻辑保持不变，处理 B1~B16 隐形编号
+                for line_idx, line in enumerate(f):
+                    line = line.strip()
+                    if not line or line.startswith("["): continue 
+                    
+                    parts = line.split()
+                    if len(parts) < 4: continue
+                    
+                    b_id = line_idx + 1
+                    bx, by, bz = parts[0], parts[1], parts[2]
+                    a_ref = int(parts[3])
+                    
+                    if a_ref not in split_data: split_data[a_ref] = []
+                    split_data[a_ref].append(f"{b_id} {bx} {by} {bz}")
+            
+            # 写入子文件
+            for a_key, lines in split_data.items():
+                with open(f"biopsy_target_replan_for_a{a_key}.txt", 'w') as tf:
+                    tf.write("\n".join(lines))
+            
+            if self.main_window and hasattr(self.main_window, 'right_panel'):
+                self.main_window.right_panel.log_message("System: Replan file split completed for this session.")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "File Process Error", str(e))
+            return
 
         # 3. 加载当前 A 对应的文件 (此时文件一定是最新的)
         target_file = f"biopsy_target_replan_for_a{current_a_idx}.txt"
