@@ -1492,7 +1492,7 @@ class LeftPanel(QWidget):
                         parts = line.split()
                         if len(parts) < 4: continue
                         
-                        b_id = line_idx 
+                        b_id = line_idx + 1
                         bx, by, bz = parts[0], parts[1], parts[2]
                         a_ref = int(parts[3])
                         
