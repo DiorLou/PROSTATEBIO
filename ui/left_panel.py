@@ -138,7 +138,7 @@ class LeftPanel(QWidget):
         self.calculated_b_points = []
         
         # [NEW] A Point List for Dropdown
-        self.a_points_list = [] 
+        self.a_points_in_base_list = [] 
         
         # 点击左转x度的时候记录的 E 点位置
         self.tcp_e_in_ultrasound_zero_deg = None
@@ -622,10 +622,10 @@ class LeftPanel(QWidget):
             # [NEW] Add to History if A Point
             if name == "A":
                 new_point = tip_position_base.tolist()
-                self.a_points_list.append(new_point)
+                self.a_points_in_base_list.append(new_point)
                 
                 # Update Dropdown
-                new_index = len(self.a_points_list)
+                new_index = len(self.a_points_in_base_list)
                 # [修改] 增加坐标信息显示
                 coord_str = f"({new_point[0]:.2f}, {new_point[1]:.2f}, {new_point[2]:.2f})"
                 self.a_point_dropdown.addItem(f"A{new_index}: {coord_str}")
@@ -642,11 +642,11 @@ class LeftPanel(QWidget):
     # [NEW] Slot for A Point Dropdown Selection
     def _on_a_point_selected(self, index):
         """Handle selection from A point history dropdown."""
-        if index < 0 or index >= len(self.a_points_list):
+        if index < 0 or index >= len(self.a_points_in_base_list):
             return
         
         # Retrieve point data
-        selected_point = self.a_points_list[index]
+        selected_point = self.a_points_in_base_list[index]
         
         # Update UI text fields
         for i in range(3):
@@ -1313,7 +1313,7 @@ class LeftPanel(QWidget):
             print("Error: volume_in_base is not computed.")
             return []
             
-        if not self.a_points_list:
+        if not self.a_points_in_base_list:
             print("Warning: No A points in history list.")
             return []
 
@@ -1326,7 +1326,7 @@ class LeftPanel(QWidget):
             T_Volume_Base = np.linalg.inv(T_Base_Volume)
             
             # 3. 遍历列表进行转换
-            for pt_base in self.a_points_list:
+            for pt_base in self.a_points_in_base_list:
                 # 转换为齐次坐标 [x, y, z, 1.0]
                 pt_homo = np.array(pt_base + [1.0])
                 # 坐标变换: P_Volume = T_Volume_Base * P_Base
@@ -1344,15 +1344,15 @@ class LeftPanel(QWidget):
         """
         获取当前下拉框选中的 A 点，并将其从 Base 坐标系转换到 Volume 坐标系。
         """
-        if not self.a_points_list or self.volume_in_base is None:
+        if not self.a_points_in_base_list or self.volume_in_base is None:
             return [0.0, 0.0, 0.0]
         
         # 获取当前 A 点下拉框选中的索引
         current_idx = self.a_point_dropdown.currentIndex()
-        if current_idx < 0 or current_idx >= len(self.a_points_list):
+        if current_idx < 0 or current_idx >= len(self.a_points_in_base_list):
             return [0.0, 0.0, 0.0]
             
-        a_base = np.array(self.a_points_list[current_idx])
+        a_base = np.array(self.a_points_in_base_list[current_idx])
         return self.transform_point_base_to_volume(a_base)
 
     def get_current_b_in_volume(self):
@@ -1611,13 +1611,20 @@ class LeftPanel(QWidget):
     def save_data(self):
         try:
             data = {
+                # Save a,o,e Points in base History
                 'a_point': self._get_ui_values(self.a_vars),
                 'o_point': self._get_ui_values(self.o_vars),
                 'e_point': self._get_ui_values(self.e_vars),
+                # Save b Points in base
+                'b_point_in_base': self._get_ui_values(self.b_vars_in_base),
+                # Save b Points in volume & base History (即下拉框信息)
                 'calculated_b_points': [(d[0].tolist(), d[1].tolist(), d[2], d[3]) for d in self.calculated_b_points],
                 
-                # [NEW] Save A Points History
-                'stored_a_points': self.a_points_list,
+                # Save A Points in base History
+                'stored_a_points_in_base': self.a_points_in_base_list,
+                # 保存 A 点和 B 点下拉列表的当前索引
+                "index_a": self.a_point_dropdown.currentIndex(), 
+                "index_b": self.b_point_dropdown.currentIndex(),
 
                 'tcp_e_in_ultrasound_zero_deg': self.tcp_e_in_ultrasound_zero_deg,
                 'tcp_e_in_puncture_position': self.tcp_e_in_puncture_position,
@@ -1640,44 +1647,62 @@ class LeftPanel(QWidget):
             with open(DATA_FILE_NAME, 'r') as f: 
                 data = json.load(f)
             
-            # 1. 恢复界面上的 A, O, E 点数值
+            # 1. 恢复界面上的 A, O, E 点数值 (默认值)
             for i in range(3):
                 self.a_vars[i].setText(f"{data.get('a_point',[0]*3)[i]:.2f}")
                 self.o_vars[i].setText(f"{data.get('o_point',[0]*3)[i]:.2f}")
                 self.e_vars[i].setText(f"{data.get('e_point',[0]*3)[i]:.2f}")
             
-            # 2. 恢复计算过的 B 点列表
-            self.calculated_b_points = []
-            for p_u, p_base, ang, idx in data.get('calculated_b_points', []):
-                self.calculated_b_points.append((np.array(p_u), np.array(p_base), float(ang), int(idx)))
+            # 仅恢复 Base 系下的 B 点界面数值
+            b_base_vals = data.get('b_point_in_base', [0]*3)
+            for i in range(3):
+                self.b_vars_in_base[i].setText(f"{b_base_vals[i]:.2f}")
             
-            # 3. 刷新 B 点下拉框
+            # 2. 恢复计算过的 B 点列表及下拉框
+            self.calculated_b_points = []
+            for p_volume, p_base, ang, idx in data.get('calculated_b_points', []):
+                self.calculated_b_points.append((np.array(p_volume), np.array(p_base), float(ang), int(idx)))
+            
+            self.b_point_dropdown.blockSignals(True)
             self.b_point_dropdown.clear()
             for d in self.calculated_b_points:
                 self.b_point_dropdown.addItem(f"B{d[3]}, {d[2]:.2f}deg")
+            self.b_point_dropdown.blockSignals(False)
                 
-            # [NEW] Restore A Points History
-            self.a_points_list = data.get('stored_a_points', [])
+            saved_index_b = data.get("index_b", -1)
+            if 0 <= saved_index_b < self.b_point_dropdown.count():
+                self.b_point_dropdown.setCurrentIndex(saved_index_b)
+                
+            # --- [核心修改：恢复 A 点列表历史] ---
+            self.a_points_in_base_list = data.get('stored_a_points_in_base', [])
             
-            # Temporarily block signals to avoid overriding the 'a_point' text fields 
-            # (which were just set in step 1) with the first item in the dropdown.
+            # 暂时屏蔽信号，防止在填充下拉框时触发 currentIndexChanged 导致的冲突
             self.a_point_dropdown.blockSignals(True)
             self.a_point_dropdown.clear()
-            for i, pt in enumerate(self.a_points_list):
-                # [修改] 增加坐标信息显示
+            for i, pt in enumerate(self.a_points_in_base_list):
                 coord_str = f"({pt[0]:.2f}, {pt[1]:.2f}, {pt[2]:.2f})"
                 self.a_point_dropdown.addItem(f"A{i+1}: {coord_str}")
+            
             self.a_point_dropdown.blockSignals(False)
             
-            # ... (Rest of loading additional variables) ...
+            saved_index_a = data.get("index_a", -1)
+            if 0 <= saved_index_a < self.a_point_dropdown.count():
+                self.a_point_dropdown.setCurrentIndex(saved_index_a)
+
+            # ------------------------------------
+
+            # 3. 恢复计算结果相关的变量
             self.tcp_e_in_ultrasound_zero_deg = data.get('tcp_e_in_ultrasound_zero_deg')
             self.tcp_e_in_puncture_position = data.get('tcp_e_in_puncture_position')
             self.volume_in_base = data.get('volume_in_base')
+            # a_point_in_tcp_p 和 b_point_in_tcp_p 在超声平面穿过 B点后计算得来
             self.b_point_in_tcp_p = data.get('b_point_in_tcp_p')
             self.a_point_in_tcp_p = data.get('a_point_in_tcp_p')
+            # 无需恢复计算过的 b_point_in_volume, 因为保存在了 biopsy_target_replan.txt 中
+            # a_point_in_volume 是在 a 点下拉列表选中后得来（依赖于 self.volume_in_base 的存在）
             self.a_point_in_volume = data.get('a_point_in_volume')
             
             QMessageBox.information(self, "Success", "Data loaded successfully.")
 
         except Exception as e: 
-            QMessageBox.critical(self, "Error", str(e))
+            QMessageBox.critical(self, "Error", f"Failed to load data: {str(e)}")
