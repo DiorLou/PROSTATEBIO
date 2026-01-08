@@ -143,7 +143,7 @@ class LeftPanel(QWidget):
         # 点击左转x度的时候记录的 E 点位置
         self.tcp_e_in_ultrasound_zero_deg = None
         # 录了超声平面刚刚对齐到 AOE 平面（即穿刺平面）时的机器臂状态
-        self.tool_pose_in_puncture_position = None
+        self.tcp_e_in_puncture_position = None
         # 存储 TCP_U 的定义
         self.tcp_u_definition_pose = None 
         # 存储 TCP_tip 的定义
@@ -686,12 +686,9 @@ class LeftPanel(QWidget):
         self._switch_tcp("TCP_E")
         
         # --- 阶段 2：延时后执行参数更新和对齐逻辑 ---
-        QTimer.singleShot(3000, self._continue_align_ultrasound_plane_to_aoe)
-        
-        
-        
+        QTimer.singleShot(200, self.reset_to_tcp_e_in_ultrasound_zero_deg) 
 
-    def _continue_align_ultrasound_plane_to_aoe(self):
+    def reset_to_tcp_e_in_ultrasound_zero_deg(self):
         zero_pose = self.tcp_e_in_ultrasound_zero_deg
         
         if zero_pose is None:
@@ -710,16 +707,17 @@ class LeftPanel(QWidget):
             # 参数含义：类型0(绝对运动), 位姿, 关节增量, 使用TCP坐标系, 参考Base基准, 速度50, 加速度250...
             reset_cmd = f"WayPoint,0,{pos_rpy_str},{dJ_zero},TCP,Base,50,250,0,1,0,0,0,0,ID1;"
             
-            print(f"Sending reset command to zero degree pose: {reset_cmd}")
             self.main_window.tcp_manager.send_command(reset_cmd)
+            self.main_window.right_panel.log_message("Reset command sent. Waiting for robot to become idle...")
 
-            # --- 阶段 2：延时后执行参数更新和对齐逻辑 ---
-            QTimer.singleShot(3000, self._continue_align_ultrasound_plane_to_aoe)
+            # 设置标志位
+            self.is_waiting_for_puncture_reset = True
             
-        
+            # 500ms 后启动定时器开始轮询状态
+            QTimer.singleShot(500, lambda: self.fsm_check_timer.start(500))
+            
         except Exception as e:
-            print(f"Alignment error: {e}")
-            mw.status_bar.showMessage(f"Error: Failed to align ultrasound plane: {e}")
+            print(f"reset_to_tcp_e_in_ultrasound_zero_deg error: {e}")
         
 
     def _continue_align_ultrasound_plane_to_aoe(self):
@@ -758,20 +756,41 @@ class LeftPanel(QWidget):
     def _check_fsm_status(self): self.tcp_manager.send_command("ReadCurFSM,0;")
 
     def handle_fsm_message(self, message):
-        if not self.is_waiting_for_puncture_alignment: return
+        """
+        处理状态机消息的统一入口
+        ",33," 通常代表机械臂进入了 Idle (空闲) 状态
+        """
         if ",33," in message:
-            self.fsm_check_timer.stop()
-            self.is_waiting_for_puncture_alignment = False
-            QTimer.singleShot(300, self._finalize_puncture_point_recording)
+            # 情况 A: 正在等待穿刺点对齐完成
+            if hasattr(self, 'is_waiting_for_puncture_alignment') and self.is_waiting_for_puncture_alignment:
+                self.fsm_check_timer.stop()
+                self.is_waiting_for_puncture_alignment = False # 重置标志位
+                self.main_window.right_panel.log_message("FSM: Puncture Alignment completed (Idle detected).")
+                # 延迟执行对齐后的最终记录逻辑
+                QTimer.singleShot(300, self._finalize_puncture_point_recording)
+                return # 处理完毕
+
+            # 情况 B: 正在等待穿刺复位（Reset）完成
+            elif hasattr(self, 'is_waiting_for_puncture_reset') and self.is_waiting_for_puncture_reset:
+                self.fsm_check_timer.stop()
+                self.is_waiting_for_puncture_reset = False # 重置标志位
+                self.main_window.right_panel.log_message("FSM: Puncture Reset completed (Idle detected).")
+                # 延迟执行复位后的后续逻辑（例如继续对齐超声平面）
+                QTimer.singleShot(300, self._continue_align_ultrasound_plane_to_aoe)
+                return # 处理完毕
+            
+            else:
+                self.main_window.right_panel.log_message("FSM: Error Occured.") 
+                return # 处理完毕
             
     def _finalize_puncture_point_recording(self):
         if self.latest_tool_pose:
-            self.tool_pose_in_puncture_position = list(self.latest_tool_pose)
+            self.tcp_e_in_puncture_position = list(self.latest_tool_pose)
             if self.main_window and self.main_window.right_panel:
-                self.main_window.right_panel.log_message(f"System: Puncture Point Tool Pose Recorded: {self.tool_pose_in_puncture_position}")
+                self.main_window.right_panel.log_message(f"System: tcp_e_in_puncture_position Recorded: {self.tcp_e_in_puncture_position}")
             
             if self.main_window and self.main_window.status_bar:
-                self.main_window.status_bar.showMessage("Status: Aligned to puncture point & Pose recorded.")
+                self.main_window.status_bar.showMessage("Status: Aligned to puncture point & tcp_e_in_puncture_position recorded.")
 
     def _update_tcp_o_parameters_internally(self):
         """
@@ -1525,7 +1544,7 @@ class LeftPanel(QWidget):
         """
         核心逻辑变动：从固定的 Volume 坐标系转换到 Base 坐标系。
         """
-        if self.volume_in_base is None or self.tool_pose_in_puncture_position is None:
+        if self.volume_in_base is None or self.tcp_e_in_puncture_position is None:
             raise ValueError("缺少 volume_in_base 或穿刺位姿数据")
 
         # 1. 坐标转换: P_base = T_base_vol * P_vol
@@ -1543,7 +1562,7 @@ class LeftPanel(QWidget):
         # 复用原有的角度计算函数，此时 B 点已在 Base 系
         angle = self._calculate_oa_rotation_angle(
             a, o, p_b_base, 
-            np.array(self.tool_pose_in_puncture_position)[3:], 
+            np.array(self.tcp_e_in_puncture_position)[3:], 
             [0]*6 # 旧的 p_b_u 参数在新逻辑中不再需要，传空
         )
         
@@ -1607,7 +1626,7 @@ class LeftPanel(QWidget):
                 'stored_a_points': self.a_points_list,
 
                 'tcp_e_in_ultrasound_zero_deg': self.tcp_e_in_ultrasound_zero_deg,
-                'tool_pose_in_puncture_position': self.tool_pose_in_puncture_position,
+                'tcp_e_in_puncture_position': self.tcp_e_in_puncture_position,
                 'volume_in_base': self.volume_in_base,
                 'b_point_in_tcp_p': self.b_point_in_tcp_p,
                 'a_point_in_tcp_p': self.a_point_in_tcp_p,
@@ -1658,7 +1677,7 @@ class LeftPanel(QWidget):
             
             # ... (Rest of loading additional variables) ...
             self.tcp_e_in_ultrasound_zero_deg = data.get('tcp_e_in_ultrasound_zero_deg')
-            self.tool_pose_in_puncture_position = data.get('tool_pose_in_puncture_position')
+            self.tcp_e_in_puncture_position = data.get('tcp_e_in_puncture_position')
             self.volume_in_base = data.get('volume_in_base')
             self.b_point_in_tcp_p = data.get('b_point_in_tcp_p')
             self.a_point_in_tcp_p = data.get('a_point_in_tcp_p')
