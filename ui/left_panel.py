@@ -522,7 +522,7 @@ class LeftPanel(QWidget):
         self.tcp_manager.send_command(command)
 
     def send_init_joint_position_command(self):
-        J_STR = "-209.02,-57.73,50.97,100,-96.55,-46.02"
+        J_STR = "-212.91,-57.72,60.74,94.30,-91.14,-41.23"
         POS_ZERO = "0.00,0.00,0.00,0.00,0.00,0.00"
         cmd = f"WayPoint,0,{POS_ZERO},{J_STR},TCP,Base,50,360,0,0,1,0,0,0,ID1;"
         self.tcp_manager.send_command(cmd)
@@ -950,10 +950,10 @@ class LeftPanel(QWidget):
             
             # 计算旋转矩阵列表 deltas (这里会使用默认或你传入的 step_size_deg)
             deltas = calculate_new_rpy_for_b_point(a, o, b, init_pose[3:])
-                        
-            if not deltas or (len(deltas)==1 and np.allclose(deltas[0], np.identity(4))):
-                QMessageBox.information(self, "Info", "No rotation needed.")
-                return
+                   
+            # if not deltas or (len(deltas)==1 and np.allclose(deltas[0], np.identity(4))):
+            #     QMessageBox.information(self, "Info", "No rotation needed.")
+            #     return
             
             self.b_point_rotation_steps = deltas
             self.initial_tcp_pose_for_b_rot = init_pose
@@ -963,11 +963,10 @@ class LeftPanel(QWidget):
             # [新增代码] 遍历所有步进，预计算并打印每一步的 E 点目标姿态
             # =========================================================================
             print(f"\n--- [预计算] 即将执行的 {len(deltas)} 个步进的目标 E 点姿态 ---")
-            
             # 提前准备初始旋转矩阵 (R_init)
             init_rpy_rad = np.deg2rad(init_pose[3:])
             R_init = pyrot.matrix_from_euler(init_rpy_rad, 0, 1, 2, extrinsic=True)
-                        
+            
             for i, delta in enumerate(deltas):
                 # 1. 计算该步的位置 (Position)
                 # 使用 core/ultrasound_plane.py 中已有的函数
@@ -993,12 +992,14 @@ class LeftPanel(QWidget):
             # =========================================================================
 
             self.current_b_point_step = -1
+
             self._continue_b_point_rotation()
             
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Rotation Calc Failed: {e}")
 
     def _continue_b_point_rotation(self):
+
         if not self.b_point_rotation_steps: return
         self.current_b_point_step += 1
         if self.current_b_point_step < len(self.b_point_rotation_steps):
