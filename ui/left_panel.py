@@ -1022,6 +1022,8 @@ class LeftPanel(QWidget):
             pos_rpy_str = ",".join([f"{v:.2f}" for v in np.concatenate((P_final, final_rpy_deg))])
             dJ_zero = ",".join(["0.00"] * 6)
             cmd = f"WayPoint,0,{pos_rpy_str},{dJ_zero},TCP,Base,50,250,0,1,0,0,0,0,ID1;"
+            if self.main_window and self.main_window.right_panel:
+                self.main_window.right_panel.log_message(cmd)
             
             QTimer.singleShot(400, lambda: self.tcp_manager.send_command(cmd))
             
@@ -1096,10 +1098,10 @@ class LeftPanel(QWidget):
             a_z = self.a_point_in_tcp_p[2]
             # rcm0 是 [x, y, z] numpy 数组
             rcm0_z = self.robot_kinematics.get_rcm_point([0,0,0,0])[2]
-            delta_j1 = a_z - rcm0_z
+            delta_j0 = a_z - rcm0_z
 
             # 2. 计算 RCM 在 TCP_P 坐标系下的位置 (rcm_in_p)
-            rcm_in_p = self.robot_kinematics.get_rcm_point([delta_j1, 0, 0, 0])
+            rcm_in_p = self.robot_kinematics.get_rcm_point([delta_j0, 0, 0, 0])
             rcm_p_homo = np.append(rcm_in_p, 1.0) # [x, y, z, 1]
 
             # 准备变换矩阵
@@ -1147,11 +1149,18 @@ class LeftPanel(QWidget):
                   f"{rcm_vol_xyz[0]:.3f},{rcm_vol_xyz[1]:.3f},{rcm_vol_xyz[2]:.3f};"
 
             if self.main_window and hasattr(self.main_window, 'navigation_tab'):
-                self.main_window.navigation_tab.nav_manager.send_command(msg)
-                self.main_window.navigation_tab.log_message(f"Sent Nav Data (Post-Rotate): {msg}")
-                # 也在 RightPanel 打印以便确认
-                if hasattr(self.main_window, 'right_panel'):
-                    self.main_window.right_panel.log_message(f"System: Sent Nav Data: {msg}")
+                nav_tab = self.main_window.navigation_tab
+    
+                # [在这里添加检查]
+                if not nav_tab.nav_manager.is_connected:
+                    # 只在 RightPanel 的日志里提示一下，不触发任何 Error 信号
+                    if hasattr(self.main_window, 'right_panel'):
+                        self.main_window.right_panel.log_message("System: Navigation not connected, data sync skipped.")
+                    return # 直接跳出，不再调用 send_command
+
+                # 只有连接了才会执行这里
+                nav_tab.nav_manager.send_command(msg)
+                nav_tab.log_message(f"Sent Nav Data (Post-Rotate): {msg}")
 
         except Exception as e:
             print(f"Error calculating/sending RCM & TCP_U to Nav: {e}")
