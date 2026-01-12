@@ -134,7 +134,7 @@ class LeftPanel(QWidget):
         self.o_vars = [None] * 3
         self.e_vars = [None] * 3
         self.b_vars_in_base = [None] * 3
-        self.b_point_position_in_base = np.zeros(3)
+        self.b_point_in_base = np.zeros(3)
         self.calculated_b_points = []
         
         # [NEW] A Point List for Dropdown
@@ -942,10 +942,10 @@ class LeftPanel(QWidget):
         try:
             a = np.array([float(v.text()) for v in self.a_vars])
             o = np.array([float(v.text()) for v in self.o_vars])
-            if np.all(self.b_point_position_in_base == 0):
+            if np.all(self.b_point_in_base == 0):
                 QMessageBox.warning(self, "Failed", "Invalid B point.")
                 return
-            b = self.b_point_position_in_base
+            b = self.b_point_in_base
             init_pose = self.get_current_tool_pose()
             
             # 计算旋转矩阵列表 deltas (这里会使用默认或你传入的 step_size_deg)
@@ -963,7 +963,6 @@ class LeftPanel(QWidget):
             # [新增代码] 遍历所有步进，预计算并打印每一步的 E 点目标姿态
             # =========================================================================
             print(f"\n--- [预计算] 即将执行的 {len(deltas)} 个步进的目标 E 点姿态 ---")
-            
             # 提前准备初始旋转矩阵 (R_init)
             init_rpy_rad = np.deg2rad(init_pose[3:])
             R_init = pyrot.matrix_from_euler(init_rpy_rad, 0, 1, 2, extrinsic=True)
@@ -1088,8 +1087,8 @@ class LeftPanel(QWidget):
             print("Error: Tool pose missing.")
             return
             
-        if self.tcp_p_definition_pose is None or self.tcp_u_definition_pose is None or self.tcp_u_volume is None:
-            print("Error: TCP definitions or TCP_U_Volume missing.")
+        if self.tcp_p_definition_pose is None or self.tcp_u_definition_pose is None or self.volume_in_base is None:
+            print("Error: TCP definitions or volume_in_base missing.")
             return
 
         try:
@@ -1098,10 +1097,10 @@ class LeftPanel(QWidget):
             a_z = self.a_point_in_tcp_p[2]
             # rcm0 是 [x, y, z] numpy 数组
             rcm0_z = self.robot_kinematics.get_rcm_point([0,0,0,0])[2]
-            delta_j1 = a_z - rcm0_z
+            delta_j0 = a_z - rcm0_z
 
             # 2. 计算 RCM 在 TCP_P 坐标系下的位置 (rcm_in_p)
-            rcm_in_p = self.robot_kinematics.get_rcm_point([delta_j1, 0, 0, 0])
+            rcm_in_p = self.robot_kinematics.get_rcm_point([delta_j0, 0, 0, 0])
             rcm_p_homo = np.append(rcm_in_p, 1.0) # [x, y, z, 1]
 
             # 准备变换矩阵
@@ -1116,7 +1115,7 @@ class LeftPanel(QWidget):
             T_E_P = self.pose_to_matrix(self.tcp_p_definition_pose)     # TCP_P 定义
             T_Base_P = np.dot(T_Base_E, T_E_P)                           # P -> Base
             
-            T_Base_Vol = self.pose_to_matrix(self.tcp_u_volume)         # Volume -> Base
+            T_Base_Vol = self.pose_to_matrix(self.volume_in_base)         # Volume -> Base
             T_Vol_Base = np.linalg.inv(T_Base_Vol)                       # Base -> Volume
 
             # 3. 将 RCM 转换到 Volume 坐标系 (P_rcm_vol = T_Vol_Base * T_Base_P * P_rcm_p)
@@ -1167,7 +1166,7 @@ class LeftPanel(QWidget):
         if self.latest_tool_pose is None:
             print("Error: Robot tool pose is missing.")
             return
-        if self.b_point_position_in_base is None:
+        if self.b_point_in_base is None:
             print("Error: B point (Base) is not selected.")
             return
 
@@ -1185,8 +1184,8 @@ class LeftPanel(QWidget):
             T_Base_P = np.dot(T_Base_E, T_E_P)
 
             # 5. 获取 B 点在 Base 下的坐标 P_B_Base (补齐为齐次坐标)
-            # self.b_point_position_in_base 是 [x, y, z]
-            b_point_base = np.append(self.b_point_position_in_base, 1.0)
+            # self.b_point_in_base 是 [x, y, z]
+            b_point_base = np.append(self.b_point_in_base, 1.0)
 
             # 6. 计算 B 点在 TCP_P 下的坐标 P_B_P
             # P_B_P = inv(T_Base_P) * P_B_Base
@@ -1603,7 +1602,7 @@ class LeftPanel(QWidget):
     def _handle_b_point_dropdown_selection(self, idx):
         if idx < 0 or idx >= len(self.calculated_b_points): return
         p_base = self.calculated_b_points[idx][1][:3]
-        self.b_point_position_in_base = p_base
+        self.b_point_in_base = p_base
         for i in range(3): self.b_vars_in_base[i].setText(f"{p_base[i]:.2f}")
 
     def _get_ui_values(self, vars_list):
