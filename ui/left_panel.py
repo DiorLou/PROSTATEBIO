@@ -892,7 +892,7 @@ class LeftPanel(QWidget):
         # 1. 切换到 TCP_E
         # [修改] 使用统一接口切换到 TCP_E
         self._switch_tcp("TCP_E")
-        QTimer.singleShot(200, self._step_1_get_e)
+        QTimer.singleShot(300, self._step_1_get_e)
 
     def _step_1_get_e(self):
         # 2. 获取当前 E 点位置 (直接调用自身方法)
