@@ -1612,6 +1612,10 @@ class LeftPanel(QWidget):
         
     def save_data(self):
         try:
+            # 定义一个安全转换函数
+            def safe_tolist(obj):
+                # 如果对象有 tolist 方法（是 numpy 数组），则调用；否则直接返回对象本身（已是列表）
+                return obj.tolist() if hasattr(obj, 'tolist') else obj
             data = {
                 # Save a,o,e Points in base History
                 'a_point': self._get_ui_values(self.a_vars),
@@ -1620,7 +1624,7 @@ class LeftPanel(QWidget):
                 # Save b Points in base
                 'b_point_in_base': self._get_ui_values(self.b_vars_in_base),
                 # Save b Points in volume & base History (即下拉框信息)
-                'calculated_b_points': [(d[0].tolist(), d[1].tolist(), d[2], d[3]) for d in self.calculated_b_points],
+                'calculated_b_points': [(safe_tolist(d[0]), safe_tolist(d[1]), d[2], d[3]) for d in self.calculated_b_points],
                 
                 # Save A Points in base History
                 'stored_a_points_in_base': self.a_points_in_base_list,
