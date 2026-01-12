@@ -5,10 +5,12 @@
 2. 打开 "Teach Mode On"按钮, 开启示教模式， 此举同时会先行切到 TCP_E, 然后打开示教
 3. 点击 "Get A Point Position", 此举会换算出当前 Tip 在Base系下的位置，记作A 点，并添加至下拉列表变量 a_points_in_base_list 中, 在下拉列表中可以选择改变输入框 a_vars 的值
 4. 点击 "Get O Point Position", 此举会换算出当前 Tip 在Base系下的位置，记作O 点，同时改变输入框 o_vars 的值
-5. 点击 "Fine tune probe", 此举会切到 TCP_E (注意每次切换都会强制关闭示教模式), 然后记录当前点 TCP_E 在Base系下的位置，记作E 点，同时改变输入框 e_vars 的值。更新输入框 o_vars 的值以及 "TCP_O"的定义(注意此时会再次切换到TCP_E)
-   
-   
-5. 点击 "Rotate the ultrasound plane to pass through the puncture point", 
+5. 点击 "Fine tune probe", 此举会切到 TCP_E (注意每次切换都会强制关闭示教模式), 然后记录当前点 TCP_E 在Base系下的位置，记作E 点，同时改变输入框 e_vars 的值。更新输入框 o_vars 的值以及 "TCP_O"的定义(注意此时会再次切换到TCP_E)， 然后再切到 TCP_O
+6. 微调后，再次点击 "Fine tune probe", 此举会切到 TCP_E
+7. 点击 "Rotate the ultrasound plane to pass through the puncture point", 此举相当于再次关闭"Fine tune probe", 并会切到 TCP_E, 发送 WayPoint 开始转至 tcp_e_in_ultrasound_zero_deg 姿态，将标志位 is_waiting_for_puncture_reset 置为 True, 并检查状态机，
+当运动完成后，再次更新输入框 o_vars 的值以及 "TCP_O"的定义(注意此时会再次切换到TCP_E)，同时更新输入框 e_vars 的值. 然后使用当前AOE输入框的值，发送 MoveRelJ 命令转到 a 点, 开启状态机，等待运动结束后记录 self.tcp_e_in_puncture_position.
+8. 点击 "Read B Points (Volume) form Replan File" 的时候会把 biopsy_target_replan.txt(这个文件记录着 Volume 系下的 B点) 分割成 biopsy_target_replan_for_ax.txt，并根据当前的 ax 以及 self.volume_in_base, self.tcp_e_in_puncture_position 来计算 base 系下的 B点以及计算绕OA多少角度至该B点
+9. 点击 "Rotate the ultrasound plane to pass through the biopsy point" 的时候
 
 点击左转x度时, 记录tcp_e_in_ultrasound_zero_deg 和 计算 volume_in_base, 然后点击 rotate_and_capture_2x, 采集完图像后, 点击 Rotate the ultrasound plane to pass through the puncture point,
 这一步会更新 e 点, 转弯后, 更新 tcp_e_in_puncture_position. 然后点击 Read B Points in TCP_U from TXT File, 这一步会根据 tcp_e_in_ultrasound_zero_deg 来计算
@@ -22,5 +24,5 @@ Base 系下的 B 点, 更新完后, 会根据 tcp_e_in_puncture_position 以及 
 倍福连接后开始轮询，穿刺机构的位置更新会同时 update_needle_pose_in_volume，
 格式化并发送 针尖位姿(Volume系) 到导航服务器。发送格式示例: "UpdateNeedlePoseInVol,Nx,Ny,Nz,Nrx,Nry,Nrz;"
 
-点击 "Read B Points (Volume) form Replan File" 的时候会把 biopsy_target_replan.txt 分割成 biopsy_target_replan_for_ax.txt
+
 
