@@ -743,17 +743,21 @@ class BeckhoffTab(QWidget):
         self.rotate_probe(0, 1) 
         
         # 2. 1秒后触发带自定义名称的扫描
-        QTimer.singleShot(1000, lambda: self._step2_start_scan_local(folder_name))
+        QTimer.singleShot(4000, lambda: self._step2_start_scan_local(folder_name))
         
     def generate_local_us_folder_name(self):
         """构建复杂的局部重建文件夹名"""
         lp = self.main_window.left_panel
         
-        # 1. 转换 A、B 点到 Volume 坐标系
-        # 假设 A_idx, B_idx, a_vol, b_vol 已通过 left_panel 转换函数获得
-        # 这里演示逻辑，需确保 left_panel 有对应转换方法
-        a_id = lp.a_points_combo.currentText() # 例如 "A1"
-        b_id = lp.b_points_combo.currentText() # 例如 "B1"
+        # 1.1 转换 A、B 点到 Volume 坐标系
+        raw_a_text = lp.a_point_dropdown.currentText()  # 例如 "A1: (-254.91, ...)"
+        raw_b_text = lp.b_point_dropdown.currentText()  # 例如 "B1, 3.95deg"
+
+        # 1.2 精确提取 ID
+        # A 通过冒号分割获取 A1
+        a_id = raw_a_text.split(':')[0].strip() if ':' in raw_a_text else "A"
+        # B 通过逗号分割获取 B1
+        b_id = raw_b_text.split(',')[0].strip() if ',' in raw_b_text else "B"
         
         a_vol = lp.get_current_a_in_volume() # 需在 left_panel 实现此转换
         b_vol = lp.get_current_b_in_volume() 
@@ -793,7 +797,7 @@ class BeckhoffTab(QWidget):
                 QTimer.singleShot(1000, self._step4_reset_probe)
 
     def _step4_reset_probe(self):
-        self.rotate_probe(0, 1) # Reset back
+        # self.rotate_probe(0, 1) # Reset back
         QTimer.singleShot(1000, self._step5_increase_j0)
 
     def _step5_increase_j0(self):
