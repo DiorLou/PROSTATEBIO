@@ -950,10 +950,10 @@ class LeftPanel(QWidget):
             
             # 计算旋转矩阵列表 deltas (这里会使用默认或你传入的 step_size_deg)
             deltas = calculate_new_rpy_for_b_point(a, o, b, init_pose[3:])
-            
-            if not deltas or (len(deltas)==1 and np.allclose(deltas[0], np.identity(4))):
-                QMessageBox.information(self, "Info", "No rotation needed.")
-                return
+                   
+            # if not deltas or (len(deltas)==1 and np.allclose(deltas[0], np.identity(4))):
+            #     QMessageBox.information(self, "Info", "No rotation needed.")
+            #     return
             
             self.b_point_rotation_steps = deltas
             self.initial_tcp_pose_for_b_rot = init_pose
@@ -1022,6 +1022,8 @@ class LeftPanel(QWidget):
             pos_rpy_str = ",".join([f"{v:.2f}" for v in np.concatenate((P_final, final_rpy_deg))])
             dJ_zero = ",".join(["0.00"] * 6)
             cmd = f"WayPoint,0,{pos_rpy_str},{dJ_zero},TCP,Base,50,250,0,1,0,0,0,0,ID1;"
+            if self.main_window and self.main_window.right_panel:
+                self.main_window.right_panel.log_message(cmd)
             
             QTimer.singleShot(400, lambda: self.tcp_manager.send_command(cmd))
             
