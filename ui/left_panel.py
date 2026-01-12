@@ -1148,11 +1148,18 @@ class LeftPanel(QWidget):
                   f"{rcm_vol_xyz[0]:.3f},{rcm_vol_xyz[1]:.3f},{rcm_vol_xyz[2]:.3f};"
 
             if self.main_window and hasattr(self.main_window, 'navigation_tab'):
-                self.main_window.navigation_tab.nav_manager.send_command(msg)
-                self.main_window.navigation_tab.log_message(f"Sent Nav Data (Post-Rotate): {msg}")
-                # 也在 RightPanel 打印以便确认
-                if hasattr(self.main_window, 'right_panel'):
-                    self.main_window.right_panel.log_message(f"System: Sent Nav Data: {msg}")
+                nav_tab = self.main_window.navigation_tab
+    
+                # [在这里添加检查]
+                if not nav_tab.nav_manager.is_connected:
+                    # 只在 RightPanel 的日志里提示一下，不触发任何 Error 信号
+                    if hasattr(self.main_window, 'right_panel'):
+                        self.main_window.right_panel.log_message("System: Navigation not connected, data sync skipped.")
+                    return # 直接跳出，不再调用 send_command
+
+                # 只有连接了才会执行这里
+                nav_tab.nav_manager.send_command(msg)
+                nav_tab.log_message(f"Sent Nav Data (Post-Rotate): {msg}")
 
         except Exception as e:
             print(f"Error calculating/sending RCM & TCP_U to Nav: {e}")
