@@ -7,6 +7,7 @@ from datetime import datetime
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QMessageBox, QSlider, QFileDialog, QLineEdit
 from PyQt5.QtCore import Qt, QTimer 
 from PyQt5.QtGui import QImage, QPixmap # 已修正：QImage 和 QPixmap 应该从 QtGui 导入
+from PyQt5.QtCore import pyqtSignal
 import threading  # [新增] 引入线程模块
 import shutil
 try:
@@ -21,6 +22,8 @@ FORWARD = 1
 BACKWARD = 0
 
 class UltrasoundTab(QWidget):
+    # 信号增加一个 bool 参数，True 表示是局部重建/需要后续动作
+    scan_finished = pyqtSignal(bool)
     # 默认裁剪常量
     DEFAULT_LEFT_CROP   = 158
     DEFAULT_RIGHT_CROP  = 564
@@ -688,7 +691,7 @@ class UltrasoundTab(QWidget):
             
             # 1. 调用 RecUS 
             rotation_x = float(self.rotation_range_input.text())
-            if RecUS:
+            if RecUS and rotation_x > 30:
                 # 在项目目录下运行 pipeline
                 RecUS.run_pipeline(self.project_save_folder, rotation_x)
                 
@@ -705,9 +708,13 @@ class UltrasoundTab(QWidget):
                         if os.path.exists(preview): shutil.copy(preview, self.save_folder)
                     except Exception as e:
                         print(f"Conversion error: {e}")
-
-            QMessageBox.information(self, "Completed", f"Reconstruction files saved to Desktop and Project folder.")
-
+                QMessageBox.information(self, "Completed", f"Reconstruction files saved to Desktop and Project folder.")
+            else:
+                QMessageBox.information(self, "Completed", f"Reconstruction skipped.")
+            
+            # 如果 is_global_reconstruction 为 False，说明是局部重建
+            is_local = not self.is_global_reconstruction
+            self.scan_finished.emit(is_local)
         
     def continue_rotation(self):
         """
