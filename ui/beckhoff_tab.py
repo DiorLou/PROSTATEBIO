@@ -292,8 +292,6 @@ class BeckhoffTab(QWidget):
         # [NEW] Steering Logic Variables
         self.current_yaw = 0.0
         self.current_pitch = 0.0
-        self.scan_polling_timer = QTimer(self)
-        self.scan_polling_timer.timeout.connect(self._check_scan_status)
         
         self.vector_inputs = [None] * 3  
         self.result_labels = {}
@@ -620,6 +618,9 @@ class BeckhoffTab(QWidget):
         self.manager.position_update.connect(self.update_current_yaw_pitch)
         self.inc_j1_input.textChanged.connect(self.update_target_yaw_pitch_from_inputs)
         self.inc_j2_input.textChanged.connect(self.update_target_yaw_pitch_from_inputs)
+        if hasattr(self.main_window, 'ultrasound_tab'):
+            # [修改] 连接到带参数的槽函数
+            self.main_window.ultrasound_tab.scan_finished.connect(self._on_scan_completed_logic)
 
     # =========================================================================
     # Steering & Angle Logic
@@ -788,16 +789,18 @@ class BeckhoffTab(QWidget):
             us_tab.rotation_range_input.setText(self.rot_range_input.text())
             # 传入自定义文件名
             us_tab.rotate_and_capture_2x(custom_folder_name=folder_name)
-            self.scan_polling_timer.start(500)
 
-    def _check_scan_status(self):
-        if self.main_window and hasattr(self.main_window, 'ultrasound_tab'):
-            if not self.main_window.ultrasound_tab.is_rotating:
-                self.scan_polling_timer.stop()
-                QTimer.singleShot(1000, self._step4_reset_probe)
+    def _on_scan_completed_logic(self, is_local_task):
+        if is_local_task:
+            # 只有局部重建才执行重置探头和增加 J0 的逻辑
+            print("System: Local scan finished. Proceeding to reset sequence.")
+            QTimer.singleShot(1000, self._step4_reset_probe)
+        else:
+            # 如果是全局扫描，什么都不做，或者只打个日志
+            print("System: Global scan finished. No reset required.")
 
     def _step4_reset_probe(self):
-        # self.rotate_probe(0, 1) # Reset back
+        self.rotate_probe(0, 1) # Reset back
         QTimer.singleShot(1000, self._step5_increase_j0)
 
     def _step5_increase_j0(self):
