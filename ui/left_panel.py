@@ -522,7 +522,7 @@ class LeftPanel(QWidget):
         self.tcp_manager.send_command(command)
 
     def send_init_joint_position_command(self):
-        J_STR = "-212.91,-57.72,60.74,94.30,-91.14,-41.23"
+        J_STR = "-237.7,-53.88,57.53,94.2,-90.18,-45.6"
         POS_ZERO = "0.00,0.00,0.00,0.00,0.00,0.00"
         cmd = f"WayPoint,0,{POS_ZERO},{J_STR},TCP,Base,50,360,0,0,1,0,0,0,ID1;"
         self.tcp_manager.send_command(cmd)
