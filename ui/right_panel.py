@@ -231,14 +231,7 @@ class RightPanel(QWidget):
 
     def toggle_teach_mode(self, state):
         if state == Qt.Checked:
-            # [修改] 开启示教模式时：
-            # 1. 首先切换到 TCP_E
-            self.switch_tcp("TCP_E")
-            self.log_message("System: Auto-switched to TCP_E for Teach Mode. Waiting 300ms to open driver...")
-            
-            # 2. 延迟 300ms 后再发送开启自由驱动的指令
-            # 这样确保 TCP 切换指令先被处理，且中间有间隔
-            QTimer.singleShot(300, lambda: self.tcp_manager.send_command("GrpOpenFreeDriver,0;"))
+            self.tcp_manager.send_command("GrpOpenFreeDriver,0;")
         else:
             # 关闭示教模式时，直接发送关闭指令
             self.tcp_manager.send_command("GrpCloseFreeDriver,0;")
@@ -337,7 +330,7 @@ class RightPanel(QWidget):
         if not connected: self.stop_btn.setEnabled(False)
 
     def handle_incoming_message(self, msg):
-        high_freq_msgs = ("ReadActPos", "ReadOverride", "ReadEmergencyInfo", "ReadRobotState", "ReadCurFSM")
+        high_freq_msgs = ("ReadActPos", "ReadOverride", "ReadEmergencyInfo", "ReadRobotState", "ReadCurFSM", "ReadBoxDI")
         
         if not msg.startswith(high_freq_msgs): 
              self.log_message(msg) 
@@ -354,6 +347,8 @@ class RightPanel(QWidget):
             self._update_state(msg)
         elif msg.startswith("ReadEmergencyInfo"):
             self._handle_emergency(msg)
+        elif msg.startswith("ReadBoxDI"):
+            self._handle_box_io_msg(msg)
 
     def log_message(self, msg):
         self.recv_text.append(msg)
@@ -389,6 +384,29 @@ class RightPanel(QWidget):
                 self.stop_btn.setEnabled(int(parts[3]) == 0)
             except Exception as e:
                 print(f"Error _handle_emergency: {e}")
+
+    def _handle_box_io_msg(self, msg):
+        """
+        解析格式: ReadBoxDL,OK,x0,x1,x2,x3,x4,x5,x6,x7;
+        """
+        parts = msg.strip(';').strip(',').split(',')
+        if len(parts) == 10 and parts[1] == 'OK':
+            try:
+                # 提取 8 个 IO 的电平值 (parts[2] 到 parts[9])
+                io_states = [int(parts[i]) for i in range(2, 10)]
+
+                # 检查 teach_chk 控件是否存在
+                if hasattr(self, 'teach_chk'):
+                    # 情况 1: 如果 x2 (索引为2) 为 1，且当前未勾选，则打开示教模式
+                    if io_states[2] == 1:
+                        self.teach_chk.setChecked(True)
+                    
+                    # 情况 2: 如果 x2 (索引为2) 为 0，且当前已勾选，则关闭示教模式
+                    elif io_states[2] == 0:
+                        self.teach_chk.setChecked(False)
+                
+            except Exception as e:
+                print(f"Error parsing Box DL: {e}")
 
     def _handle_tcp_u_def(self, msg):
         self.temp_expected_response = None
