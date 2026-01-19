@@ -26,6 +26,10 @@ class TCPManager(QObject):
         # QTimer 用于定时请求机器人状态数据（ReadRobotState），频率：300ms。
         self.robotstate_update_timer = QTimer(self)
         self.robotstate_update_timer.timeout.connect(self.request_robot_state_data)
+
+        # QTimer 用于定时请求 IO 状态数据（ReadRobotState），频率：300ms。
+        self.box_io_update_timer = QTimer(self)
+        self.box_io_update_timer.timeout.connect(self.request_box_io_data)
         
         # QTimer用于定时请求急停信息
         self.emergency_update_timer = QTimer(self)
@@ -64,6 +68,10 @@ class TCPManager(QObject):
             # 启动机器人状态定时器 (ReadRobotState)，300ms。
             self.robotstate_update_timer.start(300)
             self.request_robot_state_data() # 立即请求一次数据。
+
+            # 启动机器人状态定时器 (ReadRobotState)，300ms。
+            self.box_io_update_timer.start(300)  # 300ms 发送一次
+            self.request_box_io_data()
             
             # 启动紧急状态更新定时器。
             self.emergency_update_timer.start(200)
@@ -94,6 +102,7 @@ class TCPManager(QObject):
         self.robotstate_update_timer.stop() 
         self.emergency_update_timer.stop()
         self.override_update_timer.stop()
+        self.box_io_update_timer.stop()
         
         # 优先关闭套接字，这会强制 recv() 抛出异常，让线程快速退出
         try:
@@ -138,3 +147,7 @@ class TCPManager(QObject):
     def request_override_info(self):
         """定时向机器人发送指令，请求获取当前运动速率。"""
         self.send_command("ReadOverride,0;")
+
+    def request_box_io_data(self):
+        """定时请求 Box 数字输入 IO 电平 (ReadBoxDI)"""
+        self.send_command("ReadBoxDI,0,1,2,3,4,5,6,7;")
