@@ -144,6 +144,8 @@ class FlexibleNeedleTab(BeckhoffTab):
         
         # Error Correction Variables
         self.last_commanded_pitch = None # 上一次 adjust needle dir 计算出的理论 Pitch
+        # [新增] 用于缓存计算出的总距离 d4
+        self.cached_d4 = None
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -824,50 +826,69 @@ class FlexibleNeedleTab(BeckhoffTab):
     # =========================================================================
     # Kinematics Logic
     # =========================================================================
-    def _calculate_current_d4(self):
+    def _calculate_target_distance_d4(self):
+        """
+        计算从当前 Needle Tip 到目标点 B 的欧式距离，并缓存。
+        通常在 Adjust Needle Dir 之后或 Phase 1 开始前调用一次。
+        """
         try:
+            # 获取当前的增量设定（对应此时的姿态）
             delta_j0 = float(self.inc_j0_input.text())
             delta_j1 = float(self.inc_j1_input.text()) if self.inc_j1_input.text() else 0.0
             delta_j2 = float(self.inc_j2_input.text()) if self.inc_j2_input.text() else 0.0
+            
             theoretical_j1 = delta_j1
             theoretical_j2 = delta_j2 - delta_j1
             
             parent = self.main_window
-            if not hasattr(parent, 'left_panel'): return None
+            if not hasattr(parent, 'left_panel'): return
             b_point_p = parent.left_panel.b_point_in_tcp_p
+            
             if b_point_p is None:
                 QMessageBox.warning(self, "Error", "B point in TCP_P is missing.")
-                return None
+                return
 
+            # 计算当前的针尖位置 (J3=0)
             tip_pos = self.robot.get_tip_of_needle([delta_j0, theoretical_j1, theoretical_j2, 0])
             b_point_vec = np.array(b_point_p)
-            d4 = np.linalg.norm(b_point_vec - tip_pos)
-            return d4
+            
+            # 缓存结果
+            self.cached_d4 = np.linalg.norm(b_point_vec - tip_pos)
+            
+            if self.main_window:
+                self.main_window.status_bar.showMessage(f"Total insertion distance d4 calculated: {self.cached_d4:.2f} mm")
+                
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to calc d4: {e}")
-            return None
+            self.cached_d4 = None
 
     def run_needle_insertion_phase_1(self):
-        d4 = self._calculate_current_d4()
-        if d4 is not None:
-            # Phase 1: 走 1/3
-            val = d4 / 3.0
+        if self.cached_d4 is None:
+            self._calculate_target_distance_d4()
+        
+        if self.cached_d4 is not None:
+            # Phase 1: 走总距离的 1/3
+            val = self.cached_d4 / 3.0
             self.inc_j3_input.setText(f"{val:.4f}")
             self.apply_joint_increment()
 
     def run_needle_insertion_phase_2(self):
-        d4 = self._calculate_current_d4()
-        if d4 is not None:
-            # Phase 2: 走当前剩余的 1/2
-            val = d4 * 2.0 / 3.0
+        if self.cached_d4 is None:
+            self._calculate_target_distance_d4()
+            
+        if self.cached_d4 is not None:
+            # Phase 2: 走总距离的 2/3
+            val = self.cached_d4 * 2.0 / 3.0
             self.inc_j3_input.setText(f"{val:.4f}")
             self.apply_joint_increment()
 
     def run_needle_insertion_phase_3(self):
-        d4 = self._calculate_current_d4()
-        if d4 is not None:
+        if self.cached_d4 is None:
+            self._calculate_target_distance_d4()
+        
+        if self.cached_d4 is not None:
             # Phase 3: 走完剩余全部
-            val = d4 + self.NEEDLE_TIP_OFFSET
+            val = self.cached_d4 + self.NEEDLE_TIP_OFFSET
             self.inc_j3_input.setText(f"{val:.4f}")
             self.apply_joint_increment()
 
