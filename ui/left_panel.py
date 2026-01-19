@@ -1145,7 +1145,7 @@ class LeftPanel(QWidget):
             # 格式: b_index, tcp_u_x, tcp_u_y, tcp_u_z, tcp_u_rx, tcp_u_ry, tcp_u_rz, rcm_x, rcm_y, rcm_z
             msg = f"{b_index},{tcp_u_vol_xyz[0]:.3f},{tcp_u_vol_xyz[1]:.3f},{tcp_u_vol_xyz[2]:.3f}," \
                   f"{tcp_u_vol_rpy[0]:.3f},{tcp_u_vol_rpy[1]:.3f},{tcp_u_vol_rpy[2]:.3f}," \
-                  f"{rcm_vol_xyz[0]:.3f},{rcm_vol_xyz[1]:.3f},{rcm_vol_xyz[2]:.3f};"
+                  f"{rcm_vol_xyz[0]:.3f},{rcm_vol_xyz[1]:.3f},{rcm_vol_xyz[2]:.3f}"
 
             if self.main_window and hasattr(self.main_window, 'navigation_tab'):
                 nav_tab = self.main_window.navigation_tab

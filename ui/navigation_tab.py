@@ -30,8 +30,8 @@ class NavigationTab(QWidget):
         # 1. IP 和 端口设置
         h_ip = QHBoxLayout()
         # 假设导航上位机的默认 IP，您可以根据实际情况修改
-        self.ip_entry = QLineEdit("192.168.1.100") 
-        self.port_entry = QLineEdit("8000")
+        self.ip_entry = QLineEdit("127.0.0.1") 
+        self.port_entry = QLineEdit("9000")
         self.ip_entry.setFixedWidth(200)
         self.port_entry.setFixedWidth(80)
         
@@ -161,13 +161,14 @@ class NavigationTab(QWidget):
         # 4. 计算关节差值 (Joint Values)
         # 根据用户定义的输入顺序: [Current J1 - RESET_J1, Current J2 - RESET_J2, Current J3 - RESET_J3, Current J0 - RESET_J0]
         try:
-            val_x0 = curr_j1 - bt.RESET_J1
-            val_x1 = curr_j2 - bt.RESET_J2
-            val_x2 = curr_j3 - bt.RESET_J3
-            val_x3 = curr_j0 - bt.RESET_J0
+            val_x0 = curr_j0 - bt.manager.RESET_J0
+            val_x1 = curr_j1 - bt.manager.RESET_J1
+            val_x2 = curr_j2 - bt.manager.RESET_J2
+            val_x3 = curr_j3 - bt.manager.RESET_J3
             
             joint_values = [val_x0, val_x1, val_x2 - val_x1, val_x3]
-        except Exception:
+        except Exception as e:
+            print(f"joint_values error: {e}")
             return # 数据异常
 
         # 5. 计算针尖在 TCP_P 下的位姿 (T_TCP_P_Needle)
@@ -216,7 +217,7 @@ class NavigationTab(QWidget):
             格式化并发送 针尖位姿(Volume系) 到导航服务器。
             发送格式示例: "UpdateNeedlePoseInVol,Nx,Ny,Nz,Nrx,Nry,Nrz;"
             """
-            msg = f"UpdateNeedlePoseInVol,{pos[0]:.3f},{pos[1]:.3f},{pos[2]:.3f},{rpy[0]:.3f},{rpy[1]:.3f},{rpy[2]:.3f};"
+            msg = f"{pos[0]:.3f},{pos[1]:.3f},{pos[2]:.3f},{rpy[0]:.3f},{rpy[1]:.3f},{rpy[2]:.3f}"
             self.nav_manager.send_command(msg)
             
         except Exception as e:
