@@ -12,136 +12,136 @@ class NavigationTab(QWidget):
         super().__init__(parent)
         self.main_window = parent # Explicitly store reference to Main Window
         self.nav_manager = NavigationTCPManager()
+        self.nav_manager_2 = NavigationTCPManager()
         self.init_ui()
         self.setup_connections()
 
     def init_ui(self):
         layout = QVBoxLayout(self)
         
-        # 创建 TCP 通信组，风格模仿 Robot Control
-        self.create_tcp_group(layout)
+        # 模块 1：默认端口 9000
+        self.group1 = self.create_tcp_group(layout, "TCP Communication Module 1", "9000")
+        # 模块 2：增加第二个模块，默认端口 8100
+        self.group2 = self.create_tcp_group(layout, "TCP Communication Module 2", "8100")
         
         layout.addStretch()
 
-    def create_tcp_group(self, layout):
-        group = QGroupBox("TCP Communication Module (Navigation)")
+    def create_tcp_group(self, layout, title, default_port):
+        """重构为通用方法，返回控件字典以供绑定"""
+        group = QGroupBox(title)
         v = QVBoxLayout(group)
         
-        # 1. IP 和 端口设置
         h_ip = QHBoxLayout()
-        # 假设导航上位机的默认 IP，您可以根据实际情况修改
-        self.ip_entry = QLineEdit("127.0.0.1") 
-        self.port_entry = QLineEdit("9000")
-        self.ip_entry.setFixedWidth(200)
-        self.port_entry.setFixedWidth(80)
-        
+        ip_entry = QLineEdit("127.0.0.1") 
+        port_entry = QLineEdit(default_port)
+        ip_entry.setFixedWidth(200)
+        port_entry.setFixedWidth(80)
         h_ip.addWidget(QLabel("Remote IP:"))
-        h_ip.addWidget(self.ip_entry)
+        h_ip.addWidget(ip_entry)
         h_ip.addWidget(QLabel("Port:"))
-        h_ip.addWidget(self.port_entry)
+        h_ip.addWidget(port_entry)
         h_ip.addStretch()
         v.addLayout(h_ip)
         
-        # 2. 连接/断开按钮
         h_conn = QHBoxLayout()
-        self.btn_conn = QPushButton("Connect")
-        self.btn_disconn = QPushButton("Disconnect")
-        self.btn_disconn.setEnabled(False)
-        
-        h_conn.addWidget(self.btn_conn)
-        h_conn.addWidget(self.btn_disconn)
+        btn_conn = QPushButton("Connect")
+        btn_disconn = QPushButton("Disconnect")
+        btn_disconn.setEnabled(False)
+        h_conn.addWidget(btn_conn)
+        h_conn.addWidget(btn_disconn)
         v.addLayout(h_conn)
         
-        # 3. 状态标签
-        self.status_label = QLabel("TCP Status: Disconnected")
-        self.status_label.setStyleSheet("color: blue; font-weight: bold;")
-        v.addWidget(self.status_label)
+        status_label = QLabel("TCP Status: Disconnected")
+        status_label.setStyleSheet("color: blue; font-weight: bold;")
+        v.addWidget(status_label)
         
-        # 4. 接收消息区域
         v.addWidget(QLabel("Received Messages:"))
-        self.recv_text = QTextEdit()
-        self.recv_text.setReadOnly(True)
-        self.recv_text.setStyleSheet("background-color: lightgrey;")
-        v.addWidget(self.recv_text)
+        recv_text = QTextEdit()
+        recv_text.setReadOnly(True)
+        recv_text.setStyleSheet("background-color: lightgrey;")
+        v.addWidget(recv_text)
         
-        # 5. 发送消息区域
         v.addWidget(QLabel("Send Message:"))
         h_send = QHBoxLayout()
-        self.send_entry = QLineEdit()
-        self.send_entry.setEnabled(False)
-        self.send_entry.setPlaceholderText("Enter command for navigation software...")
-        
-        self.btn_send = QPushButton("Send")
-        self.btn_send.setEnabled(False)
-        
-        h_send.addWidget(self.send_entry)
-        h_send.addWidget(self.btn_send)
+        send_entry = QLineEdit()
+        send_entry.setEnabled(False)
+        send_entry.setPlaceholderText("Enter command...")
+        btn_send = QPushButton("Send")
+        btn_send.setEnabled(False)
+        h_send.addWidget(send_entry)
+        h_send.addWidget(btn_send)
         v.addLayout(h_send)
         
         layout.addWidget(group)
+        return {
+            "ip": ip_entry, "port": port_entry, "btn_conn": btn_conn,
+            "btn_disconn": btn_disconn, "status": status_label,
+            "recv": recv_text, "send_entry": send_entry, "btn_send": btn_send
+        }
 
     def setup_connections(self):
-        # 按钮事件
-        self.btn_conn.clicked.connect(self.connect_tcp)
-        self.btn_disconn.clicked.connect(self.disconnect_tcp)
-        self.btn_send.clicked.connect(self.send_message)
-        self.send_entry.returnPressed.connect(self.send_message)
-        
-        # Manager 信号
-        self.nav_manager.connection_status_changed.connect(self.update_ui_on_connection)
-        self.nav_manager.message_received.connect(self.log_message)
 
-    def connect_tcp(self):
-        ip = self.ip_entry.text()
+        # 绑定模块 1 逻辑
+        self.group1["btn_conn"].clicked.connect(lambda: self.connect_tcp(self.nav_manager, self.group1))
+        self.group1["btn_disconn"].clicked.connect(self.nav_manager.disconnect)
+        self.group1["btn_send"].clicked.connect(lambda: self.send_message(self.nav_manager, self.group1))
+        self.nav_manager.connection_status_changed.connect(lambda c: self.update_ui_on_connection(self.group1, c))
+        self.nav_manager.message_received.connect(lambda m: self.log_message(self.group1["recv"], m))
+
+        # 绑定模块 2 逻辑
+        self.group2["btn_conn"].clicked.connect(lambda: self.connect_tcp(self.nav_manager_2, self.group2))
+        self.group2["btn_disconn"].clicked.connect(self.nav_manager_2.disconnect)
+        self.group2["btn_send"].clicked.connect(lambda: self.send_message(self.nav_manager_2, self.group2))
+        self.nav_manager_2.connection_status_changed.connect(lambda c: self.update_ui_on_connection(self.group2, c))
+        self.nav_manager_2.message_received.connect(lambda m: self.log_message(self.group2["recv"], m))
+
+    def connect_tcp(self, manager, widgets):
+        ip = widgets["ip"].text()
         try:
-            port = int(self.port_entry.text())
-            msg = self.nav_manager.connect(ip, port)
-            
+            port = int(widgets["port"].text())
+            msg = manager.connect(ip, port)
             if "Successful" not in msg and "Connected" not in msg:
                  QMessageBox.warning(self, "Connection Error", msg)
             else:
-                 self.log_message(msg)
-                 
+                 self.log_message(widgets["recv"], msg)
         except ValueError:
             QMessageBox.critical(self, "Input Error", "Port must be a number.")
 
     def disconnect_tcp(self):
         self.nav_manager.disconnect()
 
-    def send_message(self):
-        msg = self.send_entry.text()
+    def send_message(self, manager, widgets):
+        msg = widgets["send_entry"].text()
         if msg:
-            self.log_message(f"[Sent]: {msg}")
-            self.nav_manager.send_command(msg)
-            # 是否清空输入框取决于个人习惯，这里清空
-            self.send_entry.clear() 
+            self.log_message(widgets["recv"], f"[Sent]: {msg}")
+            manager.send_command(msg)
+            widgets["send_entry"].clear()
 
-    def update_ui_on_connection(self, connected):
-        self.btn_conn.setEnabled(not connected)
-        self.btn_disconn.setEnabled(connected)
-        self.send_entry.setEnabled(connected)
-        self.btn_send.setEnabled(connected)
-        self.ip_entry.setEnabled(not connected)
-        self.port_entry.setEnabled(not connected)
+    def update_ui_on_connection(self, widgets, connected):
+        widgets["btn_conn"].setEnabled(not connected)
+        widgets["btn_disconn"].setEnabled(connected)
+        widgets["send_entry"].setEnabled(connected)
+        widgets["btn_send"].setEnabled(connected)
+        widgets["ip"].setEnabled(not connected)
+        widgets["port"].setEnabled(not connected)
         
-        self.status_label.setText("TCP Status: Connected" if connected else "TCP Status: Disconnected")
-        self.status_label.setStyleSheet("color: green; font-weight: bold;" if connected else "color: red; font-weight: bold;")
+        widgets["status"].setText("TCP Status: Connected" if connected else "TCP Status: Disconnected")
+        widgets["status"].setStyleSheet("color: green; font-weight: bold;" if connected else "color: red; font-weight: bold;")
 
-    def log_message(self, msg):
-        self.recv_text.append(msg)
-        # 自动滚动到底部
-        self.recv_text.verticalScrollBar().setValue(self.recv_text.verticalScrollBar().maximum())
+    def log_message(self, text_edit, msg):
+        text_edit.append(msg)
+        text_edit.verticalScrollBar().setValue(text_edit.verticalScrollBar().maximum())
 
     def cleanup(self):
-        """窗口关闭时调用，确保断开连接"""
         self.nav_manager.disconnect()
+        self.nav_manager_2.disconnect()
         
     def update_needle_pose_in_volume(self, curr_j0, curr_j1, curr_j2, curr_j3):
         """
         槽函数：接收 Beckhoff Tab 发来的当前位置更新。
         计算针尖在 Volume 坐标系下的位姿并发送。
         """
-        if not self.nav_manager.is_connected:
+        if not self.nav_manager_2.is_connected:
             return
             
         # 1. 获取主窗口引用
@@ -215,10 +215,10 @@ class NavigationTab(QWidget):
             
             """
             格式化并发送 针尖位姿(Volume系) 到导航服务器。
-            发送格式示例: "UpdateNeedlePoseInVol,Nx,Ny,Nz,Nrx,Nry,Nrz;"
+            发送格式示例: "Nx,Ny,Nz,Nrx,Nry,Nrz;"
             """
             msg = f"{pos[0]:.3f},{pos[1]:.3f},{pos[2]:.3f},{rpy[0]:.3f},{rpy[1]:.3f},{rpy[2]:.3f}"
-            self.nav_manager.send_command(msg)
+            self.nav_manager_2.send_command(msg)
             
         except Exception as e:
             print(f"Transform chain error: {e}")
