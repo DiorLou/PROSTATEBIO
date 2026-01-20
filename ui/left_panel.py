@@ -137,7 +137,7 @@ class LeftPanel(QWidget):
         self.b_point_in_base = np.zeros(3)
         self.calculated_b_points = []
         
-        # [NEW] A Point List for Dropdown
+        # A Point List for Dropdown
         self.a_points_in_base_list = [] 
         
         # 点击左转x度的时候记录的 E 点位置
@@ -1455,8 +1455,7 @@ class LeftPanel(QWidget):
 
     def read_b_points_volume_from_file_according_to_selected_a(self):
         """
-        处理 biopsy_target_replan.txt。
-        逻辑：如果尚未拆分则执行拆分，然后根据当前选中的 A 点加载对应的子文件。
+        处理 biopsy_target_replan.txt 并生成包含 A点信息和 Volume姿态的详细记录文件。
         """
         # 1. 前置检查
         if self.volume_in_base is None:
@@ -1469,12 +1468,12 @@ class LeftPanel(QWidget):
             return
         
         try:
+            # 获取当前的 A 点编号
             current_a_idx = int(current_a_text.split(':')[0].replace("A", ""))
         except:
             current_a_idx = 1
 
         ORIGIN_FILE = "biopsy_target_replan.txt"
-        # [优化点]：使用类属性状态位判断，不再依赖磁盘文件是否存在
         if not os.path.exists(ORIGIN_FILE):
             QMessageBox.critical(self, "Error", f"File {ORIGIN_FILE} not found.")
             return
@@ -1484,38 +1483,29 @@ class LeftPanel(QWidget):
             try: os.remove(old_file)
             except Exception as e:
                 print(f"Error read_b_points_volume_from_file_according_to_selected_a: {e}")
-
+        # 2. 拆分逻辑 (保持原样)
         split_data = {} 
         try:
             with open(ORIGIN_FILE, 'r') as f:
-                # 这里的逻辑保持不变，处理 B1~B16 隐形编号
                 for line_idx, line in enumerate(f):
                     line = line.strip()
                     if not line or line.startswith("["): continue 
-                    
                     parts = line.split()
                     if len(parts) < 4: continue
-                    
                     b_id = line_idx + 1
                     bx, by, bz = parts[0], parts[1], parts[2]
                     a_ref = int(parts[3])
-                    
                     if a_ref not in split_data: split_data[a_ref] = []
                     split_data[a_ref].append(f"{b_id} {bx} {by} {bz}")
             
-            # 写入子文件
             for a_key, lines in split_data.items():
                 with open(f"biopsy_target_replan_for_a{a_key}.txt", 'w') as tf:
                     tf.write("\n".join(lines))
-            
-            if self.main_window and hasattr(self.main_window, 'right_panel'):
-                self.main_window.right_panel.log_message("System: Replan file split completed for this session.")
-                
         except Exception as e:
             QMessageBox.critical(self, "File Process Error", str(e))
             return
 
-        # 3. 加载当前 A 对应的文件 (此时文件一定是最新的)
+        # 3. 加载当前 A 对应的 B 点并计算坐标
         target_file = f"biopsy_target_replan_for_a{current_a_idx}.txt"
         if not os.path.exists(target_file):
             QMessageBox.information(self, "Info", f"No B points associated with A{current_a_idx}.")
@@ -1529,13 +1519,51 @@ class LeftPanel(QWidget):
                     if len(parts) != 4: continue
                     b_idx = int(parts[0])
                     p_b_vol = [float(parts[1]), float(parts[2]), float(parts[3])]
-                    
-                    # 调用修改后的计算函数
                     p_base_pose, angle = self._calculate_b_point_data_from_volume(p_b_vol)
                     b_point_data_list.append((p_b_vol, p_base_pose, angle, b_idx))
         except Exception as e:
             QMessageBox.critical(self, "读取失败", str(e))
             return
+
+        # ================= [新增：增强版记录文件生成逻辑] =================
+        try:
+            # 获取当前 A 点的坐标信息
+            a_base = self.a_points_in_base_list[current_a_idx - 1] # A点在 Base 系
+            a_vol = self.transform_point_base_to_volume(np.array(a_base)) # A点在 Volume 系
+            
+            record_filename = f"B points in Volume for A{current_a_idx}.txt"
+            with open(record_filename, 'w', encoding='utf-8') as rf:
+                # 写入顶部摘要信息
+                rf.write(f"=== Biopsy Target Report for A{current_a_idx} ===\n")
+                rf.write(f"Volume in Base [x,y,z,rx,ry,rz]: {['%.3f' % x for x in self.volume_in_base]}\n")
+                rf.write(f"A Point (Base)   [x,y,z]: {['%.3f' % x for x in a_base]}\n")
+                rf.write(f"A Point (Volume) [x,y,z]: {['%.3f' % x for x in a_vol]}\n")
+                rf.write("-" * 130 + "\n")
+                
+                # 写入表头，增加 A 点相关列
+                header = (f"{'B ID':<6} | {'B point (Vol)':<30} | {'B point (Base)':<30} | "
+                          f"{'A point (Vol)':<30} | {'A point (Base)':<30} | {'OA Angle':<10}\n")
+                rf.write(header)
+                rf.write("-" * 130 + "\n")
+                
+                # 格式化字符串准备
+                fmt_coord = "(%.3f, %.3f, %.3f)"
+                
+                for p_vol, p_base, angle, b_idx in b_point_data_list:
+                    line = (f"B{b_idx:<5} | "
+                            f"{fmt_coord % tuple(p_vol):<30} | "
+                            f"{fmt_coord % tuple(p_base[:3]):<30} | "
+                            f"{fmt_coord % tuple(a_vol):<30} | "
+                            f"{fmt_coord % tuple(a_base):<30} | "
+                            f"{angle:.3f}\n")
+                    rf.write(line)
+            
+            if self.main_window and hasattr(self.main_window, 'right_panel'):
+                self.main_window.right_panel.log_message(f"System: Detailed record saved to {record_filename}")
+                
+        except Exception as e:
+            print(f"Error saving enhanced B point record: {e}")
+        # ===============================================================
 
         # 4. 显示对话框
         dialog = BPointSelectionDialog(b_point_data_list, current_a_idx, self)
