@@ -10,6 +10,7 @@ from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from core.ultrasound_plane import calculate_rotation_for_plane_alignment, calculate_new_rpy_for_b_point, get_final_tcp_e_position_after_delta_rotation
 import pytransform3d.rotations as pyrot
 import glob
+import shutil
 
 # 常量
 FORWARD = 1
@@ -1558,11 +1559,25 @@ class LeftPanel(QWidget):
                             f"{angle:.3f}\n")
                     rf.write(line)
             
+            # 步骤 2: [新增] 拷贝文件到 session_folder
+            # 由于 session_folder 定义在 ultrasound_tab 中，通过 main_window 访问
+            if self.main_window and hasattr(self.main_window, 'ultrasound_tab'):
+                ut = self.main_window.ultrasound_tab
+                # 检查 ultrasound_tab 中是否有定义好的 session_folder
+                if hasattr(ut, 'session_folder') and ut.session_folder:
+                    if os.path.exists(ut.session_folder):
+                        dest_path = os.path.join(ut.session_folder, record_filename)
+                        shutil.copy2(record_filename, dest_path) # 使用 copy2 保留元数据
+                        
+                        # 在右侧面板打印同步成功的日志
+                        if hasattr(self.main_window, 'right_panel'):
+                            self.main_window.right_panel.log_message(f"System: File synced to session folder: {record_filename}")
+            
             if self.main_window and hasattr(self.main_window, 'right_panel'):
                 self.main_window.right_panel.log_message(f"System: Detailed record saved to {record_filename}")
                 
         except Exception as e:
-            print(f"Error saving enhanced B point record: {e}")
+            print(f"Error saving/copying B point record: {e}")
         # ===============================================================
 
         # 4. 显示对话框
