@@ -77,6 +77,7 @@ class UltrasoundTab(QWidget):
         self.current_rotation_step = 0
         self.total_rotation_steps = 0 # 新增：总旋转步数
         self.save_folder = "" # 旋转保存的文件夹
+        self.session_folder = None  # [新增] 用于存储 "时间戳_experimental results" 根目录
 
         # 新增: 旋转范围输入框和按钮
         self.rotation_range_input = QLineEdit("50") # 默认值 50
@@ -628,27 +629,37 @@ class UltrasoundTab(QWidget):
         
         total_rotation = 2 * x
         desktop_path = r"C:\Users\hkclr_user\Desktop"
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        # 判断是全局还是局部重建
+        # --- [修改逻辑开始] ---
+        # 1. 如果是第一次点击（主文件夹尚未建立），建立实验主文件夹
+        if self.session_folder is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            main_folder_name = f"{timestamp}_experimental results"
+            self.session_folder = os.path.join(desktop_path, main_folder_name)
+            os.makedirs(self.session_folder, exist_ok=True)
+
+        # 2. 确定子文件夹名称
         if custom_folder_name:
-            # 局部重建：由外部传入复杂的命名
-            folder_name = custom_folder_name
+            # 局部重建：使用传入的 generate_local_us_folder_name() 的结果
+            sub_folder_name = custom_folder_name
             self.is_global_reconstruction = False
         else:
-            # 全局重建：时间戳 + GlobalUS
-            folder_name = f"{timestamp}_GlobalUS"
+            # 全局重建：固定为 GlobalUS
+            sub_folder_name = "GlobalUS"
             self.is_global_reconstruction = True
 
-        self.save_folder = os.path.join(desktop_path, folder_name)
+        # 3. 设置本次扫描的完整路径（在实验主文件夹内）
+        self.save_folder = os.path.join(self.session_folder, sub_folder_name)
         os.makedirs(self.save_folder, exist_ok=True)
         
-        # 同时在项目目录建立副本文件夹（用于 RecUS 处理）
-        self.project_save_folder = os.path.join(os.getcwd(), "image", folder_name)
+        # 4. 同时在项目目录建立副本文件夹（用于 RecUS 算法处理）
+        # 保持原逻辑，但在子目录下建立
+        self.project_save_folder = os.path.join(os.getcwd(), "image", os.path.basename(self.session_folder), sub_folder_name)
         os.makedirs(self.project_save_folder, exist_ok=True)
+        # --- [修改逻辑结束] ---
 
         # 初始化步数变量
-        self.total_rotation_steps = int(total_rotation) # 存储总步数 (2x)
+        self.total_rotation_steps = int(total_rotation)
         self.current_rotation_step = 0
         self.is_rotating = True
         
