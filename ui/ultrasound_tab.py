@@ -714,6 +714,12 @@ class UltrasoundTab(QWidget):
                         # 3. 将生成的文件复制到桌面文件夹
                         shutil.copy(vtk_file, self.save_folder)
                         shutil.copy(nii_path, self.save_folder)
+                        # 仅在全局扫描 (is_global_reconstruction 为 True) 时执行
+                        if self.is_global_reconstruction:
+                            project_root_nii = os.path.join(os.getcwd(), os.path.basename(nii_path))
+                            shutil.copy2(nii_path, project_root_nii)
+                            if hasattr(self.main_window, 'right_panel'):
+                                self.main_window.right_panel.log_message(f"System: Global NII file copied to project root: {os.path.basename(nii_path)}")
                         # 如果有预览图也拷贝
                         preview = os.path.join(self.project_save_folder, "US_3D_LPS_Axial_Preview.png")
                         if os.path.exists(preview): shutil.copy(preview, self.save_folder)
