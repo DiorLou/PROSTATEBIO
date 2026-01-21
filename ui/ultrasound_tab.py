@@ -595,7 +595,7 @@ class UltrasoundTab(QWidget):
                 with open(file_path, "w") as f:
                     for pt in all_a_in_vol:
                         # 格式: x, y, z (无括号，无编号，换行)
-                        line = f"{pt[0]:.3f}, {pt[1]:.3f}, {pt[2]:.3f}\n"
+                        line = f"{pt[0]:.3f} {pt[1]:.3f} {pt[2]:.3f}\n"
                         f.write(line)
                 print(f"Successfully saved {len(all_a_in_vol)} points to {file_path}")
                 robot_control_window.status_bar.showMessage(f"Status: Saved {len(all_a_in_vol)} A points to TXT.")
