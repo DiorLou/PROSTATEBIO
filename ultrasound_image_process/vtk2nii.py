@@ -61,8 +61,8 @@ def vtk_lps_to_nii_lps(vtk_file_path, output_nii_path=None):
         affine[2, 2] = spacing[2]  # Z方向正确，保持原符号
 
         # 修正原点：方向反转后，原点需偏移对应轴的总长度（dims-1)*spacing
-        affine[0, 3] = origin[0] + (dims[0] - 1) * spacing[0]  # x轴原点偏移
-        affine[1, 3] = origin[1] + (dims[1] - 1) * spacing[1]  # y轴原点偏移
+        affine[0, 3] = -origin[0] #+ (dims[0] - 1) * spacing[0]  # x轴原点偏移
+        affine[1, 3] = -origin[1] #+ (dims[1] - 1) * spacing[1]  # y轴原点偏移
         affine[2, 3] = origin[2]  # z轴原点不变
 
         # 4. 保存nii.gz
