@@ -20,7 +20,7 @@ Base 系下的 B 点, 更新完后, 会根据 tcp_e_in_puncture_position 以及 
 
 点击 ultrasound probe rotate left x Deg 的时候，所有选取的 a_points_in_base 会转化为 a_points_in_volume 然后导出到 A_points_in_volume.txt
 超声平面旋转至B点时，会调用 _calculate_and_send_rcm_and_tcp_u_to_nav,
-发送组合数据: "index(B点索引), x, y, z(RCM_in_Volume系), rx, ry, rz, rcm_x, rcm_y, rcm_z(TCP_U_in_Volume)"
+发送组合数据: "index(B点索引), x, y, z, rx, ry, rz(TCP_U_in_Volume), rcm_x, rcm_y, rcm_z (RCM_in_Volume系)"
 倍福连接后开始轮询，穿刺机构的位置更新会同时 update_needle_pose_in_volume，
 格式化并发送 针尖位姿(Volume系) 到导航服务器。发送格式示例: "Nx,Ny,Nz,Nrx,Nry,Nrz;"
 
