@@ -582,99 +582,99 @@ class FlexibleNeedleTab(BeckhoffTab):
     
 
     # [修改] 重写 adjust_needle_direction 以加入误差补偿逻辑
-    def adjust_needle_direction(self):
-        parent = self.main_window
-        if not parent or not hasattr(parent, 'left_panel'): return
-        b_point_p = parent.left_panel.b_point_in_tcp_p
-        if b_point_p is None:
-            QMessageBox.warning(self, "Data Missing", "Biopsy Point B in TCP_P is not defined.")
-            return
+    # def adjust_needle_direction(self):
+    #     parent = self.main_window
+    #     if not parent or not hasattr(parent, 'left_panel'): return
+    #     b_point_p = parent.left_panel.b_point_in_tcp_p
+    #     if b_point_p is None:
+    #         QMessageBox.warning(self, "Data Missing", "Biopsy Point B in TCP_P is not defined.")
+    #         return
         
-        try:
-            # 1. 计算理论上的基础向量 (Raw Target Vector)
-            # RCM点会随着 Trocar insertion 改变 (delta_j1)
-            delta_j1 = float(self.inc_j1_input.text())
-            rcm_point = self.robot.get_rcm_point([delta_j1, 0, 0, 0])
-            raw_vector = np.array(b_point_p) - rcm_point
+    #     try:
+    #         # 1. 计算理论上的基础向量 (Raw Target Vector)
+    #         # RCM点会随着 Trocar insertion 改变 (delta_j1)
+    #         delta_j0 = float(self.inc_j0_input.text())
+    #         rcm_point = self.robot.get_rcm_point([delta_j0, 0, 0, 0])
+    #         raw_vector = np.array(b_point_p) - rcm_point
             
-            # 归一化
-            norm = np.linalg.norm(raw_vector)
-            if norm < 1e-6:
-                QMessageBox.critical(self, "Error", "Vector magnitude zero.")
-                return
-            raw_unit_vec = raw_vector / norm
+    #         # 归一化
+    #         norm = np.linalg.norm(raw_vector)
+    #         if norm < 1e-6:
+    #             QMessageBox.critical(self, "Error", "Vector magnitude zero.")
+    #             return
+    #         raw_unit_vec = raw_vector / norm
             
-            # 2. 将 Raw Vector 转换为 Pitch 和 Yaw
-            # 根据 change_needle_angle 中的公式:
-            # vx = -sin(y)*cos(p), vy = cos(y)*cos(p), vz = sin(p)
-            # 所以 p = arcsin(vz)
-            raw_pitch_rad = np.arcsin(raw_unit_vec[2])
-            raw_pitch_deg = np.rad2deg(raw_pitch_rad)
+    #         # 2. 将 Raw Vector 转换为 Pitch 和 Yaw
+    #         # 根据 change_needle_angle 中的公式:
+    #         # vx = -sin(y)*cos(p), vy = cos(y)*cos(p), vz = sin(p)
+    #         # 所以 p = arcsin(vz)
+    #         raw_pitch_rad = np.arcsin(raw_unit_vec[2])
+    #         raw_pitch_deg = np.rad2deg(raw_pitch_rad)
             
-            # y = arctan2(-vx, vy)
-            raw_yaw_rad = np.arctan2(-raw_unit_vec[0], raw_unit_vec[1])
-            raw_yaw_deg = np.rad2deg(raw_yaw_rad)
+    #         # y = arctan2(-vx, vy)
+    #         raw_yaw_rad = np.arctan2(-raw_unit_vec[0], raw_unit_vec[1])
+    #         raw_yaw_deg = np.rad2deg(raw_yaw_rad)
             
-            # 3. 检查是否有图像标记以及上一次的指令，以计算误差
-            measured_angle = self.needle_viewer.get_angle()
+    #         # 3. 检查是否有图像标记以及上一次的指令，以计算误差
+    #         measured_angle = self.needle_viewer.get_angle()
             
-            target_pitch_deg = raw_pitch_deg # 默认目标为几何计算值
+    #         target_pitch_deg = raw_pitch_deg # 默认目标为几何计算值
             
-            # 读取用户输入的系数 K
-            try:
-                k_val = float(self.k_input.text())
-            except ValueError:
-                k_val = 0.4
-                self.k_input.setText("0.4")
+    #         # 读取用户输入的系数 K
+    #         try:
+    #             k_val = float(self.k_input.text())
+    #         except ValueError:
+    #             k_val = 0.4
+    #             self.k_input.setText("0.4")
             
-            if (measured_angle is not None and self.last_commanded_pitch is not None):
-                # 误差 = 上次理论 - 实际测量 (代表我们少了多少度)
-                # 例如：目标30，实际25，误差+5。我们需要补偿让下次更高。
-                # 您的公式：角度调整为 (k * 误差) + 原本Target
-                error_deg = self.last_commanded_pitch - measured_angle
+    #         if (measured_angle is not None and self.last_commanded_pitch is not None):
+    #             # 误差 = 上次理论 - 实际测量 (代表我们少了多少度)
+    #             # 例如：目标30，实际25，误差+5。我们需要补偿让下次更高。
+    #             # 您的公式：角度调整为 (k * 误差) + 原本Target
+    #             error_deg = self.last_commanded_pitch - measured_angle
                 
-                correction = k_val * error_deg
-                target_pitch_deg = raw_pitch_deg + correction
+    #             correction = k_val * error_deg
+    #             target_pitch_deg = raw_pitch_deg + correction
                 
-                # 更新显示
-                self.error_angle_lbl.setText(f"Error: {error_deg:.2f}°")
-                if self.main_window:
-                    self.main_window.status_bar.showMessage(f"Applied Correction: {raw_pitch_deg:.1f} + {k_val}*{error_deg:.1f} = {target_pitch_deg:.1f}°")
-            else:
-                 self.error_angle_lbl.setText("Error Angle: --°")
+    #             # 更新显示
+    #             self.error_angle_lbl.setText(f"Error: {error_deg:.2f}°")
+    #             if self.main_window:
+    #                 self.main_window.status_bar.showMessage(f"Applied Correction: {raw_pitch_deg:.1f} + {k_val}*{error_deg:.1f} = {target_pitch_deg:.1f}°")
+    #         else:
+    #              self.error_angle_lbl.setText("Error Angle: --°")
             
-            # 4. 根据修正后的 Pitch 和 原本的 Yaw 重建向量
-            # 我们假设误差主要发生在 Pitch (超声切面内)
-            final_pitch_rad = np.deg2rad(target_pitch_deg)
-            final_yaw_rad = np.deg2rad(raw_yaw_deg)
+    #         # 4. 根据修正后的 Pitch 和 原本的 Yaw 重建向量
+    #         # 我们假设误差主要发生在 Pitch (超声切面内)
+    #         final_pitch_rad = np.deg2rad(target_pitch_deg)
+    #         final_yaw_rad = np.deg2rad(raw_yaw_deg)
             
-            new_vx = -np.sin(final_yaw_rad) * np.cos(final_pitch_rad)
-            new_vy = np.cos(final_yaw_rad) * np.cos(final_pitch_rad)
-            new_vz = np.sin(final_pitch_rad)
+    #         new_vx = -np.sin(final_yaw_rad) * np.cos(final_pitch_rad)
+    #         new_vy = np.cos(final_yaw_rad) * np.cos(final_pitch_rad)
+    #         new_vz = np.sin(final_pitch_rad)
             
-            # 5. 更新 UI 和 内部状态
-            self.vector_inputs[0].setText(f"{new_vx:.4f}")
-            self.vector_inputs[1].setText(f"{new_vy:.4f}")
-            self.vector_inputs[2].setText(f"{new_vz:.4f}")
+    #         # 5. 更新 UI 和 内部状态
+    #         self.vector_inputs[0].setText(f"{new_vx:.4f}")
+    #         self.vector_inputs[1].setText(f"{new_vy:.4f}")
+    #         self.vector_inputs[2].setText(f"{new_vz:.4f}")
             
-            self.current_yaw = raw_yaw_deg
-            self.current_pitch = target_pitch_deg
-            # 注意：这里不需要再手动 set Text Yaw/Pitch，因为 calculate_joint_values 更新 J2/J3 输入框后，
-            # textChanged 信号会自动触发 update_target_yaw_pitch_from_inputs 更新显示。
+    #         self.current_yaw = raw_yaw_deg
+    #         self.current_pitch = target_pitch_deg
+    #         # 注意：这里不需要再手动 set Text Yaw/Pitch，因为 calculate_joint_values 更新 J2/J3 输入框后，
+    #         # textChanged 信号会自动触发 update_target_yaw_pitch_from_inputs 更新显示。
             
-            # 6. 保存本次的 Target Pitch
-            self.last_commanded_pitch = target_pitch_deg
-            self.theo_angle_lbl.setText(f"Theo Angle: {self.last_commanded_pitch:.2f}°")
-            self.next_angle_lbl.setText(f"Next Target: {self.last_commanded_pitch:.2f}°")
+    #         # 6. 保存本次的 Target Pitch
+    #         self.last_commanded_pitch = target_pitch_deg
+    #         self.theo_angle_lbl.setText(f"Theo Angle: {self.last_commanded_pitch:.2f}°")
+    #         self.next_angle_lbl.setText(f"Next Target: {self.last_commanded_pitch:.2f}°")
             
-            # 7. 触发逆运动学计算
-            self.calculate_joint_values()
+    #         # 7. 触发逆运动学计算
+    #         self.calculate_joint_values()
             
-            # 自动应用增量 (可选，根据流程是否需要自动执行)
-            self.apply_joint_increment()
+    #         # 自动应用增量 (可选，根据流程是否需要自动执行)
+    #         self.apply_joint_increment()
             
-        except Exception as e:
-             QMessageBox.critical(self, "Error", f"Failed: {e}")
+    #     except Exception as e:
+    #          QMessageBox.critical(self, "Error", f"Failed: {e}")
 
 
     # =========================================================================
