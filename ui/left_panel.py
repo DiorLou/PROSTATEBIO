@@ -422,6 +422,9 @@ class LeftPanel(QWidget):
         group_layout.addWidget(b_point_base_subgroup)
 
         button_layout = QHBoxLayout()
+        self.load_a_points_in_volume_txt_btn = QPushButton("Read A Points (Volume) from Replan File")
+        self.load_a_points_in_volume_txt_btn.clicked.connect(self.read_a_points_volume_and_update_base)
+        button_layout.addWidget(self.load_a_points_in_volume_txt_btn) 
         self.load_b_points_in_volume_txt_btn = QPushButton("Read B Points (Volume) from Replan File")
         self.load_b_points_in_volume_txt_btn.clicked.connect(self.read_b_points_volume_from_file_according_to_selected_a)
         button_layout.addWidget(self.load_b_points_in_volume_txt_btn) 
@@ -1453,6 +1456,73 @@ class LeftPanel(QWidget):
         T[:3, :3] = pyrot.matrix_from_euler(np.deg2rad([rx, ry, rz]), 0, 1, 2, extrinsic=True)
         T[:3, 3] = [x, y, z]
         return T
+
+    def read_a_points_volume_and_update_base(self, trigger_b_read=False):
+        """
+        从项目根目录读取 biopsy_entry_replan.txt，转换坐标系并更新 A 点下拉框。
+        """
+
+        file_path = "biopsy_entry_replan.txt"
+        if not os.path.exists(file_path):
+            QMessageBox.warning(self, "Error", f"File not found: {file_path}")
+            return
+
+        # 检查坐标转换矩阵 T_Base_Vol 是否就绪
+        if self.volume_in_base is None:
+            QMessageBox.warning(self, "Error", "Volume to Base transformation (T_Base_Vol) is not defined.")
+            return
+
+        try:
+            # 位姿转 4x4 矩阵辅助函数
+            def to_matrix(pose):
+                x, y, z, rx, ry, rz = [float(val) for val in pose]
+                T = np.identity(4)
+                R = pyrot.matrix_from_euler(np.deg2rad([rx, ry, rz]), 0, 1, 2, extrinsic=True)
+                T[:3, :3] = R
+                T[:3, 3] = [x, y, z]
+                return T
+
+            T_Base_Vol = to_matrix(self.volume_in_base)
+            
+            new_a_base_list = []
+            with open(file_path, 'r') as f:
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) >= 3:
+                        # 转换 Volume 系坐标到 Base 系
+                        p_vol = np.array([float(parts[0]), float(parts[1]), float(parts[2]), 1.0])
+                        p_base = T_Base_Vol @ p_vol
+                        new_a_base_list.append(p_base[:3].tolist())
+
+            if not new_a_base_list:
+                return
+
+            # 1. 更新内存数据
+            self.a_points_in_base_list = new_a_base_list
+            
+            # 2. 刷新 A 点下拉框，保持指定格式
+            # 注意：此处使用 self.a_point_dropdown 对应你要求的变量名
+            self.a_point_dropdown.blockSignals(True)
+            self.a_point_dropdown.clear()
+            for i, pt in enumerate(self.a_points_in_base_list):
+                coord_str = f"({pt[0]:.2f}, {pt[1]:.2f}, {pt[2]:.2f})"
+                self.a_point_dropdown.addItem(f"A{i+1}: {coord_str}")
+            self.a_point_dropdown.blockSignals(False)
+            
+            # 3. 选中第一项并更新 a_vars
+            self.a_point_dropdown.setCurrentIndex(0)
+            if hasattr(self, 'on_a_point_selected'):
+                self.on_a_point_selected(0)
+
+            # 4. 如果是 Read B 触发的，继续执行后续逻辑
+            if trigger_b_read:
+                # 执行你原有的 B 点读取逻辑
+                self.read_b_points_volume_from_file_according_to_selected_a()
+            else:
+                QMessageBox.information(self, "Success", f"Updated {len(new_a_base_list)} A points (Base frame).")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to process replan file: {e}")
 
     def read_b_points_volume_from_file_according_to_selected_a(self):
         """

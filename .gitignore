@@ -9,3 +9,4 @@ biopsy.ply
 Prostate_TRUS_Mask.nii.gz
 Prostate_US_3D_XYZ_to_LPS.nii.gz
 .nninteractive_weights/
+biopsy_entry_replan.txt
