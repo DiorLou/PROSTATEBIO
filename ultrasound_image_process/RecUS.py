@@ -14,7 +14,7 @@ ORIGIN_OFFSET = 10       # 物理原点偏移
 ROTATION_START = None    # 将在运行时更新为 -x
 ROTATION_END = None      # 将在运行时更新为 x
 NUM_IMAGES = None        # 将在运行时更新为 2x + 1
-INTERPOLATION_STEPS = 3  # 插值步数
+INTERPOLATION_STEPS = 8  # 插值步数
 VTK_FILENAME = "Prostate_US_3D_XYZ_to_LPS.vtk"
 AXIAL_PREVIEW_FILENAME = "US_3D_LPS_Axial_Preview.png"
 
@@ -140,7 +140,7 @@ def reconstruct_3d_volume(images, angles, pixel_spacing, origin_offset, img_heig
     Z_min = 0 * pixel_spacing  # 原Z_min → 现Z_max
 
     # 边界计算（不变）
-    pad_ratio = 0.1
+    pad_ratio = 0
     X_range = (X_min - (X_max - X_min) * pad_ratio, X_max + (X_max - X_min) * pad_ratio)
     Y_range = (Y_min - (Y_max - Y_min) * pad_ratio, Y_max + (Y_max - Y_min) * pad_ratio)
     Z_range = (Z_min - (Z_max - Z_min) * pad_ratio, Z_max + (Z_max - Z_min) * pad_ratio)
@@ -184,7 +184,7 @@ def fill_volume(volume, images, angles, pixel_spacing, origin_offset, ranges, im
             for Xp in range(img_width):
                 Z_phys = (img_width - Xp) * pixel_spacing  # Z轴与原Xp相反（核心修改）
                 Z_voxel = int(round((Z_phys - Z_range[0]) / x_spacing))
-                if 0 <= Z_voxel < volume.shape[2] and img[Yp, Xp] > volume[X_voxel, Y_voxel, Z_voxel]:
+                if 0 <= Z_voxel < volume.shape[2]:# and img[Yp, Xp] > volume[X_voxel, Y_voxel, Z_voxel]:
                     volume[X_voxel, Y_voxel, Z_voxel] = img[Yp, Xp]
 
     print(f"体积填充完成，空洞率：{np.mean(volume == 0) * 100:.2f}%")
