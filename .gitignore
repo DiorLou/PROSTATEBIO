@@ -7,6 +7,9 @@ biopsy_target_replan.txt
 saved_robot_data.json
 biopsy.ply
 Prostate_TRUS_Mask.nii.gz
+Prostate_TRUS_Mask-pre.nii.gz
+Prostate_TRUS_Mask.nii
 Prostate_US_3D_XYZ_to_LPS.nii.gz
+Prostate_US_3D_XYZ_to_LPS-pre.nii.gz
 .nninteractive_weights/
 biopsy_entry_replan.txt

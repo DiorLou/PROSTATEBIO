@@ -197,9 +197,9 @@ class BeckhoffManager(QObject):
     enable_status_update = pyqtSignal(bool)
     target_update = pyqtSignal(float, float, float, float, float)
     
-    RESET_J0 = -9.849
-    RESET_J1 = 293.565
-    RESET_J2 = 304.639
+    RESET_J0 = -9.891
+    RESET_J1 = 293.489
+    RESET_J2 = 304.709
     RESET_J3 = 153.415
 
     def __init__(self, parent=None):
