@@ -353,26 +353,28 @@ class LeftPanel(QWidget):
             sub = QGroupBox(title)
             gl = QGridLayout(sub)
             
-            # [MODIFIED] Determine row span based on prefix to center inputs vertically
             is_a_point = (prefix == "A")
-            row_span = 2 if is_a_point else 1
+            # [修改] 统一设为 1，确保所有组件在同一水平线上
+            row_span = 1 
             
             labels = [f"{prefix}_x:", f"{prefix}_y:", f"{prefix}_z:"]
             for i, lt in enumerate(labels):
-                # [MODIFIED] Add alignment and row span
                 lbl = QLabel(lt)
+                # [修改] 保持在第 0 行
                 gl.addWidget(lbl, 0, i*2, row_span, 1, Qt.AlignVCenter | Qt.AlignRight)
                 
                 le = QLineEdit("0.00")
                 le.setStyleSheet("background-color: white;")
                 vars_list[i] = le
-                # [MODIFIED] Add alignment and row span
+                # [修改] 保持在第 0 行
                 gl.addWidget(le, 0, i*2+1, row_span, 1, Qt.AlignVCenter)
                 
-            btn = QPushButton(btn_text)
-            btn.setFixedWidth(BUTTON_WIDTH)
-            btn.clicked.connect(slot)
-            gl.addWidget(btn, 0, 6)
+            if not is_a_point:
+                btn = QPushButton(btn_text)
+                btn.setFixedWidth(BUTTON_WIDTH)
+                btn.clicked.connect(slot)
+                # 按钮在第 0 行
+                gl.addWidget(btn, 0, 6)
             
             # [NEW] Add Dropdown for A Point
             if is_a_point:
@@ -380,8 +382,8 @@ class LeftPanel(QWidget):
                 self.a_point_dropdown.setPlaceholderText("History (Empty)")
                 self.a_point_dropdown.setFixedWidth(BUTTON_WIDTH)
                 self.a_point_dropdown.currentIndexChanged.connect(self._on_a_point_selected)
-                # Add to grid at row 1, column 6
-                gl.addWidget(self.a_point_dropdown, 1, 6)
+                # [修改] 将 row 从 1 改为 0，使其与左侧文本框在同一水平行
+                gl.addWidget(self.a_point_dropdown, 0, 6, 1, 1, Qt.AlignVCenter)
                 
             return sub
         
@@ -624,21 +626,23 @@ class LeftPanel(QWidget):
                 targets[i].setText(f"{tip_position_base[i]:.2f}")
             
             # [NEW] Add to History if A Point
-            if name == "A":
-                new_point = tip_position_base.tolist()
-                self.a_points_in_base_list.append(new_point)
-                
-                # Update Dropdown
-                new_index = len(self.a_points_in_base_list)
-                # [修改] 增加坐标信息显示
-                coord_str = f"({new_point[0]:.2f}, {new_point[1]:.2f}, {new_point[2]:.2f})"
-                self.a_point_dropdown.addItem(f"A{new_index}: {coord_str}")
-                
-                # Automatically select the new point
-                self.a_point_dropdown.setCurrentIndex(new_index - 1)
+            if name == "O":
+                # 2. 计算 A1 和 A2 (相对于 TCP_Tip 坐标系)
+                # A1: X=+25, Y=-25, Z=0
+                # A2: X=+25, Y=+25, Z=0
+                p_a1_in_tip = np.array([25.0, -25.0, 0.0, 1.0])
+                p_a2_in_tip = np.array([25.0, 25.0, 0.0, 1.0])
+
+                # 转换到 Base 系
+                p_a1_base = np.dot(T_Base_Tip, p_a1_in_tip)[:3]
+                p_a2_base = np.dot(T_Base_Tip, p_a2_in_tip)[:3]
+
+                # 3. 存储到历史记录 self.a_points_in_base_list
+                # 清空旧的 A 点记录（根据需求“Get A Point”已停用，这里由 O 点驱动生成最新的 A1, A2）
+                self.a_points_in_base_list = [p_a1_base.tolist(), p_a2_base.tolist()]
             
             # 7. 状态栏反馈
-            self.main_window.right_panel.log_message(f"Status: {name} point position calculated (Derived from TCP_E).")
+            self.main_window.right_panel.log_message(f"Status: {name} point position calculated (Derived from TCP_E). A1 & A2 calculated via TCP_Tip.")
 
         except Exception as e:
             QMessageBox.critical(self, "Calculation Error", f"Failed to calculate point: {e}")
