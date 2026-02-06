@@ -469,8 +469,9 @@ class BeckhoffTab(QWidget):
         self.yaw_minus_btn = QPushButton("-"); self.yaw_plus_btn = QPushButton("+"); self.yaw_display = QLineEdit("0.0")
         self.yaw_minus_btn.setFixedWidth(30)
         self.yaw_plus_btn.setFixedWidth(30)
-        self.yaw_display.setReadOnly(True); self.yaw_display.setFixedWidth(60)
-        self.yaw_display.setStyleSheet("background-color: #f0f0f0;")
+        self.yaw_display.setReadOnly(False); self.yaw_display.setFixedWidth(60)
+        self.yaw_display.setStyleSheet("background-color: #ffffff; border: 1px solid #ced4da;") # [修改] 白色背景
+        self.yaw_display.editingFinished.connect(self.update_inputs_from_yaw_pitch) # [新增] 输入完成触发计算
         yaw_l.addWidget(self.yaw_minus_btn); yaw_l.addWidget(self.yaw_display); yaw_l.addWidget(self.yaw_plus_btn); yaw_l.addStretch()
         result_layout.addLayout(yaw_l, 4, 1, 1, 2)
         
@@ -483,8 +484,9 @@ class BeckhoffTab(QWidget):
         self.pitch_minus_btn = QPushButton("-"); self.pitch_plus_btn = QPushButton("+"); self.pitch_display = QLineEdit("0.0")
         self.pitch_minus_btn.setFixedWidth(30)
         self.pitch_plus_btn.setFixedWidth(30)
-        self.pitch_display.setReadOnly(True); self.pitch_display.setFixedWidth(60)
-        self.pitch_display.setStyleSheet("background-color: #f0f0f0;")
+        self.pitch_display.setReadOnly(False); self.pitch_display.setFixedWidth(60)
+        self.pitch_display.setStyleSheet("background-color: #ffffff; border: 1px solid #ced4da;") # [修改] 白色背景
+        self.pitch_display.editingFinished.connect(self.update_inputs_from_yaw_pitch) # [新增] 输入完成触发计算
         pitch_l.addWidget(self.pitch_minus_btn); pitch_l.addWidget(self.pitch_display); pitch_l.addWidget(self.pitch_plus_btn); pitch_l.addStretch()
         result_layout.addLayout(pitch_l, 5, 1, 1, 2)
         
@@ -609,15 +611,13 @@ class BeckhoffTab(QWidget):
         self.manager.position_update.connect(self.beckhoff_position_update.emit)
         
         # [NEW] Additional Steering/Automation Connections
-        self.yaw_minus_btn.clicked.connect(lambda: self.change_needle_angle(-1, 0))
-        self.yaw_plus_btn.clicked.connect(lambda: self.change_needle_angle(1, 0))
-        self.pitch_minus_btn.clicked.connect(lambda: self.change_needle_angle(0, -1))
-        self.pitch_plus_btn.clicked.connect(lambda: self.change_needle_angle(0, 1))
+        self.yaw_minus_btn.clicked.connect(lambda: self.adjust_yaw_pitch_step("yaw", -1.0))
+        self.yaw_plus_btn.clicked.connect(lambda: self.adjust_yaw_pitch_step("yaw", 1.0))
+        self.pitch_minus_btn.clicked.connect(lambda: self.adjust_yaw_pitch_step("pitch", -1.0))
+        self.pitch_plus_btn.clicked.connect(lambda: self.adjust_yaw_pitch_step("pitch", 1.0))
         self.btn_j0_decrease.clicked.connect(self.on_j0_decrease_clicked)
         self.btn_rotate_reset.clicked.connect(self.on_rotate_probe_reset_clicked)
         self.manager.position_update.connect(self.update_current_yaw_pitch)
-        self.inc_j1_input.textChanged.connect(self.update_target_yaw_pitch_from_inputs)
-        self.inc_j2_input.textChanged.connect(self.update_target_yaw_pitch_from_inputs)
         if hasattr(self.main_window, 'ultrasound_tab'):
             # [修改] 连接到带参数的槽函数
             self.main_window.ultrasound_tab.scan_finished.connect(self._on_scan_completed_logic)
@@ -651,61 +651,35 @@ class BeckhoffTab(QWidget):
         
         return np.rad2deg(yaw_rad), np.rad2deg(pitch_rad), np.rad2deg(roll_rad)
 
-    def change_needle_angle(self, yaw_delta, pitch_delta):
+    def update_inputs_from_yaw_pitch(self):
         """
-        调整 Yaw 或 Pitch。
-        注意：此处不直接修改 self.current_yaw/pitch，
-        而是计算出临时目标值 target_yaw/pitch，用于推算向量和关节角。
-        最终 self.current_yaw/pitch 的更新由输入框的 textChanged 信号触发 update_target_yaw_pitch_from_inputs 完成。
-        这样保证了“单点真实原则”(Single Source of Truth)，即内部状态永远与界面输入框数值保持一致。
+        [核心逻辑] 
+        1. 根据 Yaw/Pitch 填写框计算目标方向向量。
+        2. 更新 UI 上的向量显示框。
+        3. 计算并应用电机增量。
         """
-        # 1. 使用局部变量计算目标角度 (基于当前状态 + 增量)
-        target_yaw = self.current_yaw + yaw_delta
-        target_pitch = self.current_pitch + pitch_delta
-        
-        # 2. 根据目标角度计算新的方向向量
-        # Base vector (0, 1, 0)
-        # x = -sin(Yaw) * cos(Pitch)
-        # y = cos(Yaw) * cos(Pitch)
-        # z = sin(Pitch)
-        
-        yaw_rad = np.deg2rad(target_yaw)
-        pitch_rad = np.deg2rad(target_pitch)
-        
-        vx = -np.sin(yaw_rad) * np.cos(pitch_rad)
-        vy = np.cos(yaw_rad) * np.cos(pitch_rad)
-        vz = np.sin(pitch_rad)
-        
-        # 3. 更新向量输入框 (UI)
-        # 父类的 calculate_joint_values() 依赖界面上的 Vector 输入框数值进行计算
-        self.vector_inputs[0].setText(f"{vx:.4f}")
-        self.vector_inputs[1].setText(f"{vy:.4f}")
-        self.vector_inputs[2].setText(f"{vz:.4f}")
-        
-        # 4. 逆运动学解算 & 更新关节角输入框
-        # 流程：
-        #   a. 读取 self.vector_inputs
-        #   b. 计算 IK 得到 J1, J2
-        #   c. self.inc_j1_input.setText(...) / self.inc_j2_input.setText(...)
-        #   d. setText 触发 textChanged 信号
-        #   e. 信号调用 update_target_yaw_pitch_from_inputs()
-        #   f. 该函数通过正运动学反算 Yaw/Pitch，并最终更新 self.current_yaw 和 self.current_pitch
-        self.calculate_joint_values()
-
-        # 5. 自动应用增量
-        self.apply_joint_increment()
-
-    def update_target_yaw_pitch_from_inputs(self):
         try:
-            val1 = self.inc_j1_input.text(); val2 = self.inc_j2_input.text()
-            if not val1 or not val2: return
-            tj1 = float(val1); tj2 = float(val2) - float(val1)
-            vector = self.robot.get_needle_vector([0, tj1, tj2, 0])
-            yaw, pitch, _ = self.calculate_angles_from_vector(vector)
-            self.yaw_display.setText(f"{yaw:.1f}"); self.pitch_display.setText(f"{pitch:.1f}")
-            self.current_yaw = yaw; self.current_pitch = pitch
+            # 获取角度并转换为弧度
+            yaw_rad = np.radians(float(self.yaw_display.text()))
+            pitch_rad = np.radians(float(self.pitch_display.text()))
+            
+            # 1. 根据参考逻辑构造目标方向向量
+            vx = -np.sin(yaw_rad) * np.cos(pitch_rad)
+            vy =  np.cos(yaw_rad) * np.cos(pitch_rad)
+            vz =  np.sin(pitch_rad)
+            
+            # 2. 更新 vector_inputs 显示框 (vx, vy, vz)
+            # 假设 self.vector_inputs 对应界面上的方向向量输入框
+            self.vector_inputs[0].setText(f"{vx:.4f}")
+            self.vector_inputs[1].setText(f"{vy:.4f}")
+            self.vector_inputs[2].setText(f"{vz:.4f}")
+            
+            # 3. 计算电机增量 (j1, j2)
+            # 内部调用 calculate_joint_values，它会读取 vector_inputs 并计算结果填入 inc_j1_input 等
+            self.calculate_joint_values()
+                
         except Exception as e:
-            print(f"Error updating target yaw/pitch: {e}")
+            print(f"update_inputs_from_yaw_pitch error: {e}")
 
     def update_current_yaw_pitch(self, j0, j1, j2, j3):
         try:
@@ -716,6 +690,18 @@ class BeckhoffTab(QWidget):
             self.cur_yaw_display.setText(f"{yaw:.1f}"); self.cur_pitch_display.setText(f"{pitch:.1f}")
         except Exception as e:
             print(f"Error updating current yaw/pitch: {e}")
+            
+    def adjust_yaw_pitch_step(self, axis, delta):
+        """点击按钮增减填写框中的数值"""
+        try:
+            display = self.yaw_display if axis == "yaw" else self.pitch_display
+            current_val = float(display.text())
+            display.setText(f"{current_val + delta:.1f}")
+            # 修改数值后，立即更新 Joint 电机输入框
+            self.update_inputs_from_yaw_pitch()
+            self.apply_joint_increment()
+        except ValueError:
+            pass
 
     # =========================================================================
     # Automation / Manual Controls
@@ -857,10 +843,14 @@ class BeckhoffTab(QWidget):
         self.movement_status_label.setText(f"Movement Status: {msg}")
         if self.trocar_phase_1_state == 1 and "Movement Completed" in msg:
             self.trocar_phase_1_state = 2 
-            self.vector_inputs[0].setText("0")
-            self.vector_inputs[1].setText("1")
-            self.vector_inputs[2].setText("0")
-            self.calculate_joint_values() 
+            vector = [0, 1, 0]
+            target_yaw, target_pitch, _ = self.calculate_angles_from_vector(vector)
+            self.yaw_display.setText(f"{target_yaw:.1f}")
+            self.pitch_display.setText(f"{target_pitch:.1f}")
+            
+            # 执行统一的更新逻辑
+            self.update_inputs_from_yaw_pitch()
+            # 应用计算出的增量到电机目标位置
             self.apply_joint_increment()
             self.trocar_phase_1_state = 3 
         elif self.trocar_phase_1_state == 3 and "Movement Completed" in msg:
@@ -982,10 +972,14 @@ class BeckhoffTab(QWidget):
             delta_j0 = float(self.inc_j0_input.text())
             rcm_point = self.robot.get_rcm_point([delta_j0, 0, 0, 0])
             vector = np.array(b_point_p) - rcm_point
-            self.vector_inputs[0].setText(f"{vector[0]:.4f}")
-            self.vector_inputs[1].setText(f"{vector[1]:.4f}")
-            self.vector_inputs[2].setText(f"{vector[2]:.4f}")
-            self.calculate_joint_values()
+            
+            target_yaw, target_pitch, _ = self.calculate_angles_from_vector(vector)
+            self.yaw_display.setText(f"{target_yaw:.1f}")
+            self.pitch_display.setText(f"{target_pitch:.1f}")
+            
+            # 执行统一的更新逻辑
+            self.update_inputs_from_yaw_pitch()
+            # 应用计算出的增量到电机目标位置
             self.apply_joint_increment()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed: {e}")
