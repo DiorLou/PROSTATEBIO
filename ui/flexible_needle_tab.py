@@ -249,9 +249,9 @@ class FlexibleNeedleTab(BeckhoffTab):
         # Row 4: Needle Yaw (Target) & Current Yaw (Current)
         yaw_label = QLabel("Needle Yaw (°):")
         self.yaw_display = QLineEdit("0.0")
-        self.yaw_display.setReadOnly(True)
-        self.yaw_display.setFixedWidth(60)
-        self.yaw_display.setStyleSheet("background-color: #f0f0f0;")
+        self.yaw_display.setReadOnly(False); self.yaw_display.setFixedWidth(60)
+        self.yaw_display.setStyleSheet("background-color: #ffffff; border: 1px solid #ced4da;") # [修改] 白色背景
+        self.yaw_display.editingFinished.connect(self.update_inputs_from_yaw_pitch) # [新增] 输入完成触发计算
         
         yaw_btn_layout = QHBoxLayout()
         self.yaw_minus_btn = QPushButton("-")
@@ -281,9 +281,9 @@ class FlexibleNeedleTab(BeckhoffTab):
         # Row 5: Needle Pitch (Target) & Current Pitch (Current)
         pitch_label = QLabel("Needle Pitch (°):")
         self.pitch_display = QLineEdit("0.0")
-        self.pitch_display.setReadOnly(True)
-        self.pitch_display.setFixedWidth(60)
-        self.pitch_display.setStyleSheet("background-color: #f0f0f0;")
+        self.pitch_display.setReadOnly(False); self.pitch_display.setFixedWidth(60)
+        self.pitch_display.setStyleSheet("background-color: #ffffff; border: 1px solid #ced4da;") # [修改] 白色背景
+        self.pitch_display.editingFinished.connect(self.update_inputs_from_yaw_pitch) # [新增] 输入完成触发计算
         
         pitch_btn_layout = QHBoxLayout()
         self.pitch_minus_btn = QPushButton("-")
@@ -556,10 +556,10 @@ class FlexibleNeedleTab(BeckhoffTab):
         self.flow_needle_out_btn.clicked.connect(self.run_needle_retraction)
 
         # [NEW] Yaw/Pitch Connections (+/- Buttons)
-        self.yaw_minus_btn.clicked.connect(lambda: self.change_needle_angle(-1, 0))
-        self.yaw_plus_btn.clicked.connect(lambda: self.change_needle_angle(1, 0))
-        self.pitch_minus_btn.clicked.connect(lambda: self.change_needle_angle(0, -1))
-        self.pitch_plus_btn.clicked.connect(lambda: self.change_needle_angle(0, 1))
+        self.yaw_minus_btn.clicked.connect(lambda: self.adjust_yaw_pitch_step("yaw", -1.0))
+        self.yaw_plus_btn.clicked.connect(lambda: self.adjust_yaw_pitch_step("yaw", 1.0))
+        self.pitch_minus_btn.clicked.connect(lambda: self.adjust_yaw_pitch_step("pitch", -1.0))
+        self.pitch_plus_btn.clicked.connect(lambda: self.adjust_yaw_pitch_step("pitch", 1.0))
 
         # Manager Signals
         self.manager.connection_state_changed.connect(self.on_connection_changed)
@@ -571,10 +571,6 @@ class FlexibleNeedleTab(BeckhoffTab):
         
         # [NEW] Real-time Current Yaw/Pitch Update
         self.manager.position_update.connect(self.update_current_yaw_pitch)
-
-        # [NEW] Link J1/J2 Inputs to Needle Yaw/Pitch Target Display
-        self.inc_j1_input.textChanged.connect(self.update_target_yaw_pitch_from_inputs)
-        self.inc_j2_input.textChanged.connect(self.update_target_yaw_pitch_from_inputs)
 
         # Image Connections
         self.capture_img_btn.clicked.connect(self.capture_image_from_ultrasound)
