@@ -901,16 +901,38 @@ class BeckhoffTab(QWidget):
             QMessageBox.critical(self, "Input Error", "Time must be > 0")
             return
 
+        # 1. 获取复位基准值
         r0 = self.manager.RESET_J0
         r1 = self.manager.RESET_J1
         r2 = self.manager.RESET_J2
         r3 = self.manager.RESET_J3 + self.D4_RESET_OFFSET
 
+        # 2. 清空所有增量输入框 (Δ J0 - J3) 为 0.00
+        self.inc_j0_input.setText("0.0000")
+        self.inc_j1_input.setText("0.0000")
+        self.inc_j2_input.setText("0.0000")
+        self.inc_j3_input.setText("0.0000")
+
+        # 3. 更新目标关节位置显示框 (J0 - J3)
         self.result_labels["J0"].setText(f"{r0:.4f}")
         self.result_labels["J1"].setText(f"{r1:.4f}")
         self.result_labels["J2"].setText(f"{r2:.4f}")
         self.result_labels["J3"].setText(f"{r3:.4f}")
 
+        # 4. 计算并覆盖当前的 Yaw 和 Pitch 填写框
+        # 在复位状态下（增量均为0），对应的向量通常为参考向量 [0, 1, 0]
+        try:
+            # 使用增量均为0的关节状态（[0, 0, 0, 0]）计算针头向量
+            vector = self.robot.get_needle_vector([0, 0, 0, 0])
+            target_yaw, target_pitch, _ = self.calculate_angles_from_vector(vector)
+            
+            # 更新 UI 上的 Yaw/Pitch 设定框
+            self.yaw_display.setText(f"{target_yaw:.1f}")
+            self.pitch_display.setText(f"{target_pitch:.1f}")
+        except Exception as e:
+            print(f"Reset: Failed to update yaw/pitch: {e}")
+
+        # 5. 执行机器人移动指令
         self.manager.move_robot(r0, r1, r2, r3, target_time)
 
     def apply_joint_increment(self):
