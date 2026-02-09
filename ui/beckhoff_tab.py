@@ -972,7 +972,7 @@ class BeckhoffTab(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Calculation Error", f"Failed to calculate J1 delta: {e}")
             return
-        self.inc_j0_input.setText(f"{delta_j0:.4f}")
+        self.inc_j0_input.setText(f"{delta_j0 - 2:.4f}")
         self.trocar_phase_1_state = 1
         self.apply_joint_increment()
 
@@ -997,7 +997,7 @@ class BeckhoffTab(QWidget):
             
             target_yaw, target_pitch, _ = self.calculate_angles_from_vector(vector)
             self.yaw_display.setText(f"{target_yaw:.1f}")
-            self.pitch_display.setText(f"{target_pitch:.1f}")
+            self.pitch_display.setText(f"{target_pitch -4:.1f}")
             
             # 执行统一的更新逻辑
             self.update_inputs_from_yaw_pitch()
