@@ -994,15 +994,47 @@ class BeckhoffTab(QWidget):
             delta_j0 = float(self.inc_j0_input.text())
             rcm_point = self.robot.get_rcm_point([delta_j0, 0, 0, 0])
             vector = np.array(b_point_p) - rcm_point
+
+            # 切换发送逻辑：断开实时更新，发送目标位姿 ---
+            # 假设 main_window 维护了一个控制位姿发送模式的 manager
+            if hasattr(parent, 'navigation_manager'):
+                # 停止实时 update_needle_pose_in_volume 的发送
+                parent.navigation_manager.set_realtime_send_enabled(False) 
+                # 发送计算后的目标位姿 target_needle_pose_in_volume
+                QTimer.singleShot(100, lambda: parent.navigation_tab.send_target_pose_once(vector, rcm_point))
+
+            # 弹出确认框 ---
+            msg_box = QMessageBox(self)
+            msg_box.setIcon(QMessageBox.Question)
+            msg_box.setWindowTitle("确认目标位姿")
+            msg_box.setText("已发送 target_needle_pose_in_volume\n是否应用该增量并移动机器人？")
+            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            msg_box.setDefaultButton(QMessageBox.Yes)
             
-            target_yaw, target_pitch, _ = self.calculate_angles_from_vector(vector)
-            self.yaw_display.setText(f"{target_yaw:.1f}")
-            self.pitch_display.setText(f"{target_pitch -4:.1f}")
+            reply = msg_box.exec_()
+
+            if reply == QMessageBox.Yes:
+                # --- 4. 点击“是”：恢复实时发送，停止目标发送，更新UI并移动 ---
+                if hasattr(parent, 'navigation_manager'):
+                    parent.navigation_manager.set_realtime_send_enabled(True)
+                
+                # 更新 UI 显示
+                target_yaw, target_pitch, _ = self.calculate_angles_from_vector(vector)
+                self.yaw_display.setText(f"{target_yaw:.1f}")
+                self.pitch_display.setText(f"{target_pitch - 4:.1f}")
+                
+                # 执行统一的更新逻辑（更新 vector_inputs 和电机增量框）
+                self.update_inputs_from_yaw_pitch()
+                
+                # 继续执行后续的电机移动指令
+                self.apply_joint_increment()
+                
+            else:
+                # --- 5. 点击“否”：不执行移动，维持当前状态，等待再次点击 ---
+                print("User cancelled: Increment not applied.")
+                # 注意：这里可以选择是否在此处恢复实时发送，或者保持断开直到用户满意
+                pass
             
-            # 执行统一的更新逻辑
-            self.update_inputs_from_yaw_pitch()
-            # 应用计算出的增量到电机目标位置
-            self.apply_joint_increment()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed: {e}")
 

@@ -13,6 +13,7 @@ class NavigationTab(QWidget):
         self.main_window = parent # Explicitly store reference to Main Window
         self.nav_manager = NavigationTCPManager()
         self.nav_manager_2 = NavigationTCPManager()
+        self.realtime_send_enabled = True
         self.init_ui()
         self.setup_connections()
 
@@ -135,12 +136,19 @@ class NavigationTab(QWidget):
     def cleanup(self):
         self.nav_manager.disconnect()
         self.nav_manager_2.disconnect()
+
+    def set_realtime_send_enabled(self, enabled: bool):
+        """控制是否允许实时发送针尖位姿"""
+        self.realtime_send_enabled = enabled
         
     def update_needle_pose_in_volume(self, curr_j0, curr_j1, curr_j2, curr_j3):
         """
         槽函数：接收 Beckhoff Tab 发来的当前位置更新。
         计算针尖在 Volume 坐标系下的位姿并发送。
         """
+        if not self.realtime_send_enabled:
+            return
+
         if not self.nav_manager_2.is_connected:
             return
             
@@ -222,3 +230,70 @@ class NavigationTab(QWidget):
             
         except Exception as e:
             print(f"Transform chain error: {e}")
+
+    def send_target_pose_once(self, vector, rcm_point):
+        """
+        计算目标方向向量在 Volume 系下的位姿并发送一次。
+        vector: 目标方向向量 (np.array)
+        rcm_point: 旋转中心点坐标 (np.array)
+        """
+        if not self.nav_manager_2.is_connected:
+            return
+
+        mw = self.main_window
+        lp = mw.left_panel
+        if lp.tcp_p_definition_pose is None or lp.volume_in_base is None or not lp.latest_tool_pose:
+            return
+
+        try:
+            # 1. 构造 T_P_Target (在 TCP_P 系下的目标位姿)
+            # 目标位置就是 RCM 点
+            # 目标姿态：Z轴指向 vector，由此构造旋转矩阵
+            def vector_to_matrix(vec, pos):
+                z = vec / np.linalg.norm(vec)
+                # 寻找一个不平行的参考向量构造正交基
+                ref = np.array([1, 0, 0]) if abs(z[0]) < 0.9 else np.array([0, 1, 0])
+                x = np.cross(ref, z)
+                x /= np.linalg.norm(x)
+                y = np.cross(z, x)
+                
+                T = np.identity(4)
+                T[:3, 0] = x
+                T[:3, 1] = y
+                T[:3, 2] = z
+                T[:3, 3] = pos
+                return T
+
+            T_P_Target = vector_to_matrix(vector, rcm_point)
+
+            # 2. 坐标系变换链 (同实时发送逻辑)
+            def to_matrix(pose):
+                x, y, z, rx, ry, rz = [float(val) for val in pose]
+                T = np.identity(4)
+                R = pyrot.matrix_from_euler(np.deg2rad([rx, ry, rz]), 0, 1, 2, extrinsic=True)
+                T[:3, :3] = R.astype(np.float64)
+                T[:3, 3] = [x, y, z]
+                return T
+
+            T_Base_E = to_matrix(lp.latest_tool_pose)
+            T_E_P = to_matrix(lp.tcp_p_definition_pose)
+            T_Base_P = T_Base_E @ T_E_P
+            
+            T_Base_Vol = to_matrix(lp.volume_in_base)
+            T_Vol_Base = np.linalg.inv(T_Base_Vol)
+            
+            # 计算 Volume 系下的目标位姿
+            T_Vol_Target = T_Vol_Base @ T_Base_P @ T_P_Target
+            
+            # 3. 提取并发送
+            pos = T_Vol_Target[:3, 3]
+            rot_mat = T_Vol_Target[:3, :3]
+            rpy = np.rad2deg(pyrot.euler_from_matrix(rot_mat, 0, 1, 2, extrinsic=True))
+            
+            # 发送格式增加前缀以便服务器区分（可选），或者保持原格式
+            msg = f"{pos[0]:.3f},{pos[1]:.3f},{pos[2]:.3f},{rpy[0]:.3f},{rpy[1]:.3f},{rpy[2]:.3f}"
+            self.nav_manager_2.send_command(msg)
+            print(f"Navigation: Target pose sent to volume: {msg}")
+
+        except Exception as e:
+            print(f"Error sending target pose: {e}")
