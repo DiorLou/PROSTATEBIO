@@ -61,7 +61,7 @@ class RobotKinematics:
         self.OA = z2
         self.OB = z3
         self.OB00 = z3
-        self.angle_BOA = np.acos(np.dot(z2,z3)/np.linalg.norm(z2)/ np.linalg.norm(z2))
+        self.angle_BOA = np.arccos(np.dot(z2,z3)/np.linalg.norm(z2)/ np.linalg.norm(z2))
         self.angle_AOC = angle_AOC 
 
         n_ODB = np.cross(z3, z4)
