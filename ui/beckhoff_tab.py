@@ -994,6 +994,7 @@ class BeckhoffTab(QWidget):
             delta_j0 = float(self.inc_j0_input.text())
             rcm_point = self.robot.get_rcm_point([delta_j0, 0, 0, 0])
             vector = np.array(b_point_p) - rcm_point
+            vector[0] = 0.0  # 将 X 分量设为 0
 
             # 切换发送逻辑：断开实时更新，发送目标位姿 ---
             # 假设 main_window 维护了一个控制位姿发送模式的 manager
@@ -1020,7 +1021,7 @@ class BeckhoffTab(QWidget):
                 
                 # 更新 UI 显示
                 target_yaw, target_pitch, _ = self.calculate_angles_from_vector(vector)
-                self.yaw_display.setText(f"{target_yaw:.1f}")
+                self.yaw_display.setText(f"{target_yaw - 0.1 * target_pitch:.1f}")
                 self.pitch_display.setText(f"{target_pitch:.1f}")
                 
                 # 执行统一的更新逻辑（更新 vector_inputs 和电机增量框）
