@@ -8,7 +8,7 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QTimer
 import pyads 
 import threading
 import time
-
+import pytransform3d.rotations as pyrot
 # ====== ADS Configuration ======
 AMS_NET_ID = "192.168.10.100.1.1"
 PLC_IP     = "192.168.10.100"
@@ -998,12 +998,92 @@ class BeckhoffTab(QWidget):
 
             # 切换发送逻辑：断开实时更新，发送目标位姿 ---
             # 假设 main_window 维护了一个控制位姿发送模式的 manager
-            if hasattr(parent, 'navigation_manager'):
+            if hasattr(parent, 'navigation_tab'):
                 # 停止实时 update_needle_pose_in_volume 的发送
-                parent.navigation_manager.set_realtime_send_enabled(False) 
-                # 发送计算后的目标位姿 target_needle_pose_in_volume
-                QTimer.singleShot(100, lambda: parent.navigation_tab.send_target_pose_once(vector, rcm_point))
+                parent.navigation_tab.set_realtime_send_enabled(False)
+                
+            target_yaw, target_pitch, _ = self.calculate_angles_from_vector(vector)
 
+            # 获取角度并转换为弧度
+            yaw_rad = np.radians(float(target_yaw))
+            pitch_rad = np.radians(float(target_pitch))
+            
+            # 1. 根据参考逻辑构造目标方向向量
+            vx = -np.sin(yaw_rad) * np.cos(pitch_rad)
+            vy =  np.cos(yaw_rad) * np.cos(pitch_rad)
+            vz =  np.sin(pitch_rad)
+            
+            needle_vector = np.array([vx, vy, vz])
+            norm = np.linalg.norm(needle_vector)
+            if not np.isclose(norm, 1.0) and norm > 1e-6:
+                 needle_vector = needle_vector / norm
+            elif norm < 1e-6:
+                 QMessageBox.critical(self, "Input Error", "Vector magnitude is close to zero.")
+                 return
+            joint_values = self.robot.get_joint23_value(needle_vector)
+            delta_j0 = float(self.inc_j0_input.text())
+            delta_j1 = joint_values[0]
+            delta_j2 = joint_values[1]
+            delta_j3 = float(self.inc_j3_input.text())
+            
+            joint_values = [delta_j0, delta_j1, delta_j2, delta_j3]
+            
+            # 1. 获取主窗口引用
+            mw = self.main_window
+            if not mw: return
+            
+            # 2. 检查 LeftPanel 数据是否就绪
+            lp = mw.left_panel
+            if lp.tcp_p_definition_pose is None or lp.volume_in_base is None or not lp.latest_tool_pose:
+                # 数据未准备好，跳过
+                return
+            
+            # 强制将 SymPy 结果转换为标准 Python float 列表再转 NumPy
+            res_sympy = mw.robot_kinematics._forward(joint_values)
+            # 使用 res_sympy.tolist() 确保提取的是数值内容
+            T_P_Needle = np.array(res_sympy.tolist(), dtype=np.float64) 
+            
+            # 目标: T_Vol_Needle = T_Vol_Base * T_Base_P * T_P_Needle
+            # 辅助函数：Pose (x,y,z,rx,ry,rz) 转 4x4 矩阵
+            def to_matrix(pose):
+                # 确保 pose 是 flat 的 float 列表
+                x, y, z, rx, ry, rz = [float(val) for val in pose]
+                T = np.identity(4)
+                # 确保旋转矩阵计算结果也是 float64
+                R = pyrot.matrix_from_euler(np.deg2rad([rx, ry, rz]), 0, 1, 2, extrinsic=True)
+                T[:3, :3] = R.astype(np.float64)
+                T[:3, 3] = [x, y, z]
+                return T
+            
+            # 获取基础变换矩阵
+            T_Base_E = to_matrix(lp.latest_tool_pose)
+            T_E_P = to_matrix(lp.tcp_p_definition_pose)
+            T_Base_P = np.matmul(T_Base_E, T_E_P) # 建议使用 @ 或 np.matmul
+            
+            T_Base_Vol = to_matrix(lp.volume_in_base)
+            T_Vol_Base = np.linalg.inv(T_Base_Vol)
+            
+            # 最终乘法：确保所有项都是 (4, 4) 维度
+            T_Vol_Needle = T_Vol_Base @ T_Base_P @ T_P_Needle
+            
+            # 7. 提取位姿并发送
+            pos = T_Vol_Needle[:3, 3]
+            rot_mat = T_Vol_Needle[:3, :3]
+            # 转换为 Euler 角 (rx, ry, rz)
+            rpy = np.rad2deg(pyrot.euler_from_matrix(rot_mat, 0, 1, 2, extrinsic=True))
+            
+            """
+            格式化并发送 针尖位姿(Volume系) 到导航服务器。
+            发送格式示例: "Nx,Ny,Nz,Nrx,Nry,Nrz;"
+            """
+            msg = f"{pos[0]:.3f},{pos[1]:.3f},{pos[2]:.3f},{rpy[0]:.3f},{rpy[1]:.3f},{rpy[2]:.3f}"
+            self.nav_manager_2.send_command(msg)
+            
+        except Exception as e:
+            print(f"send_target_pose_once: {e}")
+            return # 数据异常        
+
+        try:
             # 弹出确认框 ---
             msg_box = QMessageBox(self)
             msg_box.setIcon(QMessageBox.Question)
@@ -1016,8 +1096,8 @@ class BeckhoffTab(QWidget):
 
             if reply == QMessageBox.Yes:
                 # --- 4. 点击“是”：恢复实时发送，停止目标发送，更新UI并移动 ---
-                if hasattr(parent, 'navigation_manager'):
-                    parent.navigation_manager.set_realtime_send_enabled(True)
+                if hasattr(parent, 'navigation_tab'):
+                    parent.navigation_tab.set_realtime_send_enabled(True)
                 
                 # 更新 UI 显示
                 target_yaw, target_pitch, _ = self.calculate_angles_from_vector(vector)
@@ -1032,6 +1112,8 @@ class BeckhoffTab(QWidget):
                 
             else:
                 # --- 5. 点击“否”：不执行移动，维持当前状态，等待再次点击 ---
+                if hasattr(parent, 'navigation_tab'):
+                    parent.navigation_tab.set_realtime_send_enabled(True)
                 print("User cancelled: Increment not applied.")
                 # 注意：这里可以选择是否在此处恢复实时发送，或者保持断开直到用户满意
                 pass
