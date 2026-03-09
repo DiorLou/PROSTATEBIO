@@ -626,20 +626,27 @@ class LeftPanel(QWidget):
                 targets[i].setText(f"{tip_position_base[i]:.2f}")
             
             # [NEW] Add to History if A Point
+            # [NEW] 当获取 O 点时，自动计算 4 个 A 点（相对于 TCP_Tip 坐标系）
             if name == "O":
-                # 2. 计算 A1 和 A2 (相对于 TCP_Tip 坐标系)
-                # A1: X=+25, Y=-25, Z=0
-                # A2: X=+25, Y=+25, Z=0
-                p_a1_in_tip = np.array([25.0, -25.0, 0.0, 1.0])
-                p_a2_in_tip = np.array([25.0, 25.0, 0.0, 1.0])
+                # 1. 定义 4 个 A 点在 TCP_Tip 坐标系下的相对位置
+                p_a1_in_tip = np.array([25.0, -20.0, 0.0, 1.0])
+                p_a2_in_tip = np.array([25.0, 20.0, 0.0, 1.0])
+                p_a3_in_tip = np.array([18.0, -18.0, 0.0, 1.0])
+                p_a4_in_tip = np.array([18.0, 18.0, 0.0, 1.0])
 
-                # 转换到 Base 系
+                # 2. 将 4 个点全部转换到机器人 Base 基座坐标系
                 p_a1_base = np.dot(T_Base_Tip, p_a1_in_tip)[:3]
                 p_a2_base = np.dot(T_Base_Tip, p_a2_in_tip)[:3]
+                p_a3_base = np.dot(T_Base_Tip, p_a3_in_tip)[:3]
+                p_a4_base = np.dot(T_Base_Tip, p_a4_in_tip)[:3]
 
-                # 3. 存储到历史记录 self.a_points_in_base_list
-                # 清空旧的 A 点记录（根据需求“Get A Point”已停用，这里由 O 点驱动生成最新的 A1, A2）
-                self.a_points_in_base_list = [p_a1_base.tolist(), p_a2_base.tolist()]
+                # 3. 存储到历史记录列表 self.a_points_in_base_list (包含全部 4 个点)
+                self.a_points_in_base_list = [
+                    p_a1_base.tolist(), 
+                    p_a2_base.tolist(),
+                    p_a3_base.tolist(),
+                    p_a4_base.tolist()
+                ]
             
             # 7. 状态栏反馈
             self.main_window.right_panel.log_message(f"Status: {name} point position calculated (Derived from TCP_E). A1 & A2 calculated via TCP_Tip.")
