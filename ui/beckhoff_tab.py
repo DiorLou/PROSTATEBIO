@@ -1101,7 +1101,7 @@ class BeckhoffTab(QWidget):
                 
                 # 更新 UI 显示
                 target_yaw, target_pitch, _ = self.calculate_angles_from_vector(vector)
-                self.yaw_display.setText(f"{target_yaw - 0.1 * target_pitch:.1f}")
+                self.yaw_display.setText("1.0")
                 self.pitch_display.setText(f"{target_pitch:.1f}")
                 
                 # 执行统一的更新逻辑（更新 vector_inputs 和电机增量框）
