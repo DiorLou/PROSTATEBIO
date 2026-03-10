@@ -1077,7 +1077,7 @@ class BeckhoffTab(QWidget):
             发送格式示例: "Nx,Ny,Nz,Nrx,Nry,Nrz;"
             """
             msg = f"{pos[0]:.3f},{pos[1]:.3f},{pos[2]:.3f},{rpy[0]:.3f},{rpy[1]:.3f},{rpy[2]:.3f}"
-            self.nav_manager_2.send_command(msg)
+            parent.navigation_tab.nav_manager_2.send_command(msg)
             
         except Exception as e:
             print(f"send_target_pose_once: {e}")
