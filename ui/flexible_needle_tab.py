@@ -339,12 +339,13 @@ class FlexibleNeedleTab(BeckhoffTab):
 
         self.flow_calc_1_btn = QPushButton("Adjust\nNeedle Dir")
         self.flow_needle_in_p1_btn = QPushButton("Needle Insertion\nPhase 1")
-        
-        self.flow_calc_2_btn = QPushButton("Adjust\nNeedle Dir")
-        self.flow_needle_in_p2_btn = QPushButton("Needle Insertion\nPhase 2")
-        
+        # 新增：Phase 1 专用的参数输入框
+        self.phase1_input = QLineEdit("0.0")
+        self.phase1_input.setFixedWidth(50)  # 设置合适宽度
+        self.phase1_input.setPlaceholderText("mm")
+                
         self.flow_calc_3_btn = QPushButton("Adjust\nNeedle Dir")
-        self.flow_needle_in_p3_btn = QPushButton("Needle Insertion\nPhase 3")
+        self.flow_needle_in_p3_btn = QPushButton("Needle Insertion\nPhase 2")
         
         self.flow_needle_out_btn = QPushButton("Needle\nRetraction")
 
@@ -354,7 +355,6 @@ class FlexibleNeedleTab(BeckhoffTab):
         
         for btn in [self.flow_trocar_in_p1_btn, self.flow_trocar_in_p2_btn, self.flow_trocar_out_btn,
                     self.flow_calc_1_btn, self.flow_needle_in_p1_btn,
-                    self.flow_calc_2_btn, self.flow_needle_in_p2_btn,
                     self.flow_calc_3_btn, self.flow_needle_in_p3_btn,
                     self.flow_needle_out_btn]:
             btn.setFixedWidth(BTN_WIDTH)
@@ -401,43 +401,48 @@ class FlexibleNeedleTab(BeckhoffTab):
         biopsy_layout.addWidget(self._create_entry_arrow_widget(), 5, 0)
         biopsy_layout.addWidget(self.flow_calc_1_btn, 5, 1, alignment=Qt.AlignCenter)
         biopsy_layout.addWidget(self._create_h_arrow_widget(), 5, 2)
-        biopsy_layout.addWidget(self.flow_needle_in_p1_btn, 5, 3, alignment=Qt.AlignCenter)
+
+        # --- 修改部分开始 ---
+        # 创建一个水平布局容器，将按钮和输入框放进去
+        p1_container = QWidget()
+        p1_hbox = QHBoxLayout(p1_container)
+        p1_hbox.setContentsMargins(0, 0, 0, 0)
+        p1_hbox.setSpacing(5)
+
+        p1_hbox.addWidget(self.flow_needle_in_p1_btn) # 原有的按钮
+        p1_hbox.addWidget(self.phase1_input)         # 新增的输入框
+
+        biopsy_layout.addWidget(p1_container, 5, 3, alignment=Qt.AlignCenter)
+        # --- 修改部分结束 ---
         
-        # Row 6: Down Arrows
+        # Row 6: Down Arrows (连接 Phase 1 和 Phase 3)
         biopsy_layout.addWidget(self._create_v_line_widget(), 6, 0) 
-        biopsy_layout.addWidget(self._create_v_arrow_widget(), 6, 3, alignment=Qt.AlignCenter)
+        biopsy_layout.addWidget(self._create_v_arrow_widget(), 6, 3, alignment=Qt.AlignCenter) # 这里现在直接指向下一行的 Phase 3
 
-        # Row 7: Adjust 2 -> Phase 2
+        # --- 移除原本的 Row 7 (Phase 2 按钮) 和 Row 8 (指向 Phase 3 的箭头) ---
+        # 将原本 Row 9 的内容移动到 Row 7
+        # Row 7: Adjust 3 -> Phase 3 -> Needle Retraction
         biopsy_layout.addWidget(self._create_v_line_widget(), 7, 0) 
-        biopsy_layout.addWidget(self.flow_calc_2_btn, 7, 1, alignment=Qt.AlignCenter)
+        biopsy_layout.addWidget(self.flow_calc_3_btn, 7, 1, alignment=Qt.AlignCenter)
         biopsy_layout.addWidget(self._create_h_arrow_widget(), 7, 2)
-        biopsy_layout.addWidget(self.flow_needle_in_p2_btn, 7, 3, alignment=Qt.AlignCenter)
+        biopsy_layout.addWidget(self.flow_needle_in_p3_btn, 7, 3, alignment=Qt.AlignCenter)
+        biopsy_layout.addWidget(self._create_h_arrow_widget(), 7, 4)
+        biopsy_layout.addWidget(self.flow_needle_out_btn, 7, 5, alignment=Qt.AlignCenter)
 
-        # Row 8: Down Arrows
-        biopsy_layout.addWidget(self._create_v_line_widget(), 8, 0) 
-        biopsy_layout.addWidget(self._create_v_arrow_widget(), 8, 3, alignment=Qt.AlignCenter)
+        # --- 后续行号对应向上移动 ---
+        # Row 8: Loop Path (原本是 Row 10)
+        biopsy_layout.addWidget(self._create_corner_LL_widget(), 8, 0)
+        biopsy_layout.addWidget(self._create_h_line_widget(), 8, 1)
+        biopsy_layout.addWidget(self._create_h_line_widget(), 8, 2)
+        biopsy_layout.addWidget(self._create_h_line_widget(), 8, 3)
+        biopsy_layout.addWidget(self._create_h_line_widget(), 8, 4)
+        biopsy_layout.addWidget(self._create_t_junction_widget(), 8, 5)
 
-        # Row 9: Adjust 3 -> Phase 3 -> Needle Retraction
-        biopsy_layout.addWidget(self._create_v_line_widget(), 9, 0) 
-        biopsy_layout.addWidget(self.flow_calc_3_btn, 9, 1, alignment=Qt.AlignCenter)
-        biopsy_layout.addWidget(self._create_h_arrow_widget(), 9, 2)
-        biopsy_layout.addWidget(self.flow_needle_in_p3_btn, 9, 3, alignment=Qt.AlignCenter)
-        biopsy_layout.addWidget(self._create_h_arrow_widget(), 9, 4)
-        biopsy_layout.addWidget(self.flow_needle_out_btn, 9, 5, alignment=Qt.AlignCenter)
-
-        # Row 10: Loop Path
-        biopsy_layout.addWidget(self._create_corner_LL_widget(), 10, 0)
-        biopsy_layout.addWidget(self._create_h_line_widget(), 10, 1)
-        biopsy_layout.addWidget(self._create_h_line_widget(), 10, 2)
-        biopsy_layout.addWidget(self._create_h_line_widget(), 10, 3)
-        biopsy_layout.addWidget(self._create_h_line_widget(), 10, 4)
-        biopsy_layout.addWidget(self._create_t_junction_widget(), 10, 5)
-
-        # Row 11+: Trocar Retraction Flow
+        # Row 9+: Trocar Retraction Flow (原本是 Row 11+)
+        biopsy_layout.addWidget(self._create_v_arrow_widget(), 9, 5, alignment=Qt.AlignCenter)
+        biopsy_layout.addWidget(self.flow_trocar_out_btn, 10, 5, alignment=Qt.AlignCenter)
         biopsy_layout.addWidget(self._create_v_arrow_widget(), 11, 5, alignment=Qt.AlignCenter)
-        biopsy_layout.addWidget(self.flow_trocar_out_btn, 12, 5, alignment=Qt.AlignCenter)
-        biopsy_layout.addWidget(self._create_v_arrow_widget(), 13, 5, alignment=Qt.AlignCenter)
-        biopsy_layout.addWidget(self.flow_end_lbl, 14, 5, alignment=Qt.AlignCenter)
+        biopsy_layout.addWidget(self.flow_end_lbl, 12, 5, alignment=Qt.AlignCenter)
 
         biopsy_layout.setColumnStretch(6, 1) 
         middle_layout.addWidget(biopsy_group, 60) # 60% Width
@@ -543,7 +548,7 @@ class FlexibleNeedleTab(BeckhoffTab):
         
         # Specific Connections
         self.flow_calc_1_btn.clicked.connect(self.adjust_needle_direction)
-        self.flow_calc_2_btn.clicked.connect(self.adjust_needle_direction)
+        # self.flow_calc_2_btn.clicked.connect(self.adjust_needle_direction)
         self.flow_calc_3_btn.clicked.connect(self.adjust_needle_direction)
         
         self.flow_trocar_in_p1_btn.clicked.connect(self.run_trocar_insertion_phase_1)
@@ -551,7 +556,7 @@ class FlexibleNeedleTab(BeckhoffTab):
         self.flow_trocar_out_btn.clicked.connect(self.run_trocar_retraction)
         
         self.flow_needle_in_p1_btn.clicked.connect(self.run_needle_insertion_phase_1)
-        self.flow_needle_in_p2_btn.clicked.connect(self.run_needle_insertion_phase_2)
+        # self.flow_needle_in_p2_btn.clicked.connect(self.run_needle_insertion_phase_2)
         self.flow_needle_in_p3_btn.clicked.connect(self.run_needle_insertion_phase_3)
         self.flow_needle_out_btn.clicked.connect(self.run_needle_retraction)
 
@@ -859,24 +864,21 @@ class FlexibleNeedleTab(BeckhoffTab):
             self.cached_d4 = None
 
     def run_needle_insertion_phase_1(self):
-        if self.cached_d4 is None:
-            self._calculate_target_distance_d4()
-        
-        if self.cached_d4 is not None:
-            # Phase 1: 走总距离的 1/3
-            val = self.cached_d4 / 3.0
-            self.inc_j3_input.setText(f"{val:.4f}")
-            self.apply_joint_increment()
-
-    def run_needle_insertion_phase_2(self):
-        if self.cached_d4 is None:
-            self._calculate_target_distance_d4()
+        try:
+            # 1. 获取编辑框中的字符串并转换为浮点数
+            # 如果编辑框为空，则默认为 0.0
+            input_text = self.phase1_input.text().strip()
+            val = float(input_text) if input_text else 0.0
             
-        if self.cached_d4 is not None:
-            # Phase 2: 走总距离的 2/3
-            val = self.cached_d4 * 2.0 / 3.0
-            self.inc_j3_input.setText(f"{val:.4f}")
+            # 2. 计算结果并设置到 inc_j3_input 中
+            # 假设 self.D4_TROCAR 已经在类中定义
+            result = self.D4_TROCAR + val
+            self.inc_j3_input.setText(f"{result:.4f}")
             self.apply_joint_increment()
+            
+        except ValueError:
+            # 如果用户输入了非数字（例如字母），进行错误提示
+            QMessageBox.warning(self, "输入错误", "Phase 1 输入框必须为数字")
 
     def run_needle_insertion_phase_3(self):
         if self.cached_d4 is None:
