@@ -160,8 +160,8 @@ class RightPanel(QWidget):
         v = QVBoxLayout(group)
         
         h_ip = QHBoxLayout()
-        self.ip_entry = QLineEdit("192.168.10.10")
-        self.port_entry = QLineEdit("10003")
+        self.ip_entry = QLineEdit("192.168.23.25")
+        self.port_entry = QLineEdit("3333")
         self.ip_entry.setFixedWidth(200)
         self.port_entry.setFixedWidth(80)
         h_ip.addWidget(QLabel("Remote IP:"))
