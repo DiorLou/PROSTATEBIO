@@ -195,12 +195,19 @@ class RightPanel(QWidget):
         h_send = QHBoxLayout()
         self.send_entry = QLineEdit()
         self.send_entry.setEnabled(False)
+        
         self.btn_send = QPushButton("Send")
         self.btn_send.setEnabled(False)
+        
+        self.modbus_mode_cb = QCheckBox("Modbus TCP")
+        self.modbus_mode_cb.setToolTip("勾选后将输入视为16进制发送 (Modbus TCP)")
+
         self.btn_send.clicked.connect(self.send_message)
         self.send_entry.returnPressed.connect(self.send_message)
+        
         h_send.addWidget(self.send_entry)
         h_send.addWidget(self.btn_send)
+        h_send.addWidget(self.modbus_mode_cb)  # 添加到 Send 按钮右侧
         v.addLayout(h_send)
         
         layout.addWidget(group)
@@ -315,10 +322,17 @@ class RightPanel(QWidget):
         self.tcp_manager.disconnect()
 
     def send_message(self):
-        msg = self.send_entry.text()
-        if msg: 
-            self.log_message(msg)
-            self.tcp_manager.send_command(msg)
+        msg = self.send_entry.text().strip()
+        if msg:
+            # 获取 CheckBox 是否被勾选
+            is_modbus = self.modbus_mode_cb.isChecked()
+            
+            self.log_message(f"Sending: {msg} {'(Modbus)' if is_modbus else ''}")
+            
+            # 将模式信息传给 tcp_manager
+            # 假设你的 tcp_manager.send_command 支持传递第二个参数
+            self.tcp_manager.send_command(msg, is_modbus=is_modbus)
+            
             self.send_entry.clear()
 
     def update_ui_on_connection(self, connected):

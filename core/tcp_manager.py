@@ -118,18 +118,38 @@ class TCPManager(QObject):
         self.connection_status_changed.emit(False)
         self.message_received.emit("系统: 连接已断开。")
 
-    def send_command(self, command):
-        """一个通用的方法，用于发送UR控制指令，并处理连接和错误。"""
+    def send_command(self, command, is_modbus=False):
+        """
+        通用发送方法：
+        - is_modbus=False (默认): 发送 UTF-8 字符串，并自动补全分号。
+        - is_modbus=True: 将输入解析为 16 进制数据发送。
+        """
         if not self.is_connected:
-            self.message_received.emit("UR控制失败: 未建立TCP连接。")
+            self.message_received.emit("控制失败: 未建立TCP连接。")
             return
+            
         try:
-            if not command.endswith(';'):
-                command += ';'  # 确保命令以分号结尾，符合协议。
-            self.client_socket.sendall(command.encode('utf-8'))
-            # self.message_received.emit(f"发送 UR 指令: {command}")
+            if is_modbus:
+                # --- Modbus TCP / Hex 模式 ---
+                # 1. 移除空格 (例如 "01 03" -> "0103")
+                # 2. 将十六进制字符串转为字节流
+                bytes_to_send = bytes.fromhex(command.replace(' ', ''))
+            else:
+                # --- 字符串模式 (UR 控制指令) ---
+                if not command.endswith(';'):
+                    command += ';'  # 确保符合 ASCII 协议
+                bytes_to_send = command.encode('utf-8')
+
+            # 统一通过 socket 发送字节流
+            self.client_socket.sendall(bytes_to_send)
+            
+            # 可选：打印实际发送的十六进制流进行调试
+            # print(f"Actual Sent: {bytes_to_send.hex(' ')}")
+
+        except ValueError:
+            self.message_received.emit("错误：16进制格式不正确，请检查输入。")
         except Exception as e:
-            self.message_received.emit(f"UR指令发送失败: {e}")
+            self.message_received.emit(f"指令发送失败: {e}")
             self.disconnect()
 
     def request_actpos_data(self):
