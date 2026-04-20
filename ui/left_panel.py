@@ -1609,15 +1609,27 @@ class LeftPanel(QWidget):
 
         # ================= [新增：增强版记录文件生成逻辑] =================
         try:
-            # 获取当前 A 点的坐标信息
+            # 1. 获取当前 A 点的坐标信息
             a_base = self.a_points_in_base_list[current_a_idx - 1] # A点在 Base 系
             a_vol = self.transform_point_base_to_volume(np.array(a_base)) # A点在 Volume 系
             
+            # 2. 获取 O Point 在 Base 系的信息（通过 UI 变量获取）
+            # 使用你定义的 _get_ui_values 函数
+            o_base = self._get_ui_values(self.o_vars) 
+
             record_filename = f"B points in Volume for A{current_a_idx}.txt"
             with open(record_filename, 'w', encoding='utf-8') as rf:
                 # 写入顶部摘要信息
                 rf.write(f"=== Biopsy Target Report for A{current_a_idx} ===\n")
                 rf.write(f"Volume in Base [x,y,z,rx,ry,rz]: {['%.3f' % x for x in self.volume_in_base]}\n")
+                
+                # --- 写入 O Point 信息 ---
+                if o_base is not None:
+                    rf.write(f"O Point (Base)   [x,y,z]: {['%.3f' % x for x in o_base]}\n")
+                else:
+                    rf.write(f"O Point (Base)   [x,y,z]: Invalid or None\n")
+                    
+                # 写入 A Point 信息
                 rf.write(f"A Point (Base)   [x,y,z]: {['%.3f' % x for x in a_base]}\n")
                 rf.write(f"A Point (Volume) [x,y,z]: {['%.3f' % x for x in a_vol]}\n")
                 rf.write("-" * 130 + "\n")
