@@ -1,8 +1,12 @@
 A_points_in_volume.txt
 B points in Volume for A1.txt
 B points in Volume for A2.txt
+B points in Volume for A3.txt
+B points in Volume for A4.txt
 biopsy_target_replan_for_a1.txt
 biopsy_target_replan_for_a2.txt
+biopsy_target_replan_for_a3.txt
+biopsy_target_replan_for_a4.txt
 biopsy_target_replan.txt
 saved_robot_data.json
 biopsy.ply

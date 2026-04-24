@@ -580,8 +580,112 @@ class FlexibleNeedleTab(BeckhoffTab):
         # Image Connections
         self.capture_img_btn.clicked.connect(self.capture_image_from_ultrasound)
         self.clear_marks_btn.clicked.connect(self.clear_marks)
-    
 
+        if hasattr(self.main_window, 'ultrasound_tab'):
+            # [修改] 连接到带参数的槽函数
+            self.main_window.ultrasound_tab.scan_finished.connect(self._on_scan_completed_logic)
+    
+    # =========================================================================
+    # Automation / Manual Controls
+    # =========================================================================
+    def on_j0_decrease_clicked(self):
+        try:
+            val = float(self.inc_j0_input.text()) - float(self.descent_dist_input.text())
+            self.inc_j0_input.setText(f"{val:.4f}"); self.apply_joint_increment()
+        except Exception as e:
+            print(f"Error on_j0_decrease_clicked: {e}")
+            
+    def on_rotate_probe_reset_clicked(self):
+        """局部图像重建入口"""
+        folder_name = self.generate_local_us_folder_name()
+        
+        """
+        自动化序列：
+        1. Probe Left x
+        2. (1s后) Probe Right 2X (Scan)
+        3. (等待扫描完成)
+        4. (1s后) Probe Left x (Reset)
+        5. (1s后) J0 Increase (Descent Dist) & Apply
+        """
+        
+        # 1. 探头左转
+        self.rotate_probe(0, 1) 
+        
+        # 2. 1秒后触发带自定义名称的扫描
+        QTimer.singleShot(4000, lambda: self._step2_start_scan_local(folder_name))
+        
+    def generate_local_us_folder_name(self):
+        """构建复杂的局部重建文件夹名"""
+        lp = self.main_window.left_panel
+        
+        # 1.1 转换 A、B 点到 Volume 坐标系
+        raw_a_text = lp.a_point_dropdown.currentText()  # 例如 "A1: (-254.91, ...)"
+        raw_b_text = lp.b_point_dropdown.currentText()  # 例如 "B1, 3.95deg"
+
+        # 1.2 精确提取 ID
+        # A 通过冒号分割获取 A1
+        a_id = raw_a_text.split(':')[0].strip() if ':' in raw_a_text else "A"
+        # B 通过逗号分割获取 B1
+        b_id = raw_b_text.split(',')[0].strip() if ',' in raw_b_text else "B"
+        
+        a_vol = lp.get_current_a_in_volume() # 需在 left_panel 实现此转换
+        b_vol = lp.get_current_b_in_volume() 
+        
+        a_str = f"{a_id}({a_vol[0]:.1f},{a_vol[1]:.1f},{a_vol[2]:.1f})"
+        b_str = f"{b_id}({b_vol[0]:.1f},{b_vol[1]:.1f},{b_vol[2]:.1f})"
+
+        # 2. 计算 RCM in Volume
+        delta_j0 = float(self.inc_j0_input.text())
+        rcm_in_p = self.robot.get_rcm_point([delta_j0, 0, 0, 0])
+        rcm_vol = lp.transform_point_p_to_volume(rcm_in_p) # 需在 left_panel 实现
+        rcm_str = f"RCM({rcm_vol[0]:.1f},{rcm_vol[1]:.1f},{rcm_vol[2]:.1f})"
+
+        # 3. 获取 deg(x) 和 U 姿态
+        # deg_x 来自点击过旋转对准后的内部变量
+        deg_x = getattr(lp, 'last_calculated_rotation_to_b', 0) 
+        
+        # 计算 TCP_U 在 Volume 系下的姿态
+        # T_Vol_U = T_Vol_Base * T_Base_E * T_E_U
+        u_pose_vol = lp.get_current_tcp_u_in_volume() # 需在 left_panel 实现
+        u_str = f"U({','.join([f'{p:.1f}' for p in u_pose_vol])})"
+
+        return f"{a_str}{b_str}{rcm_str}deg({deg_x}){u_str}LocalUS"
+
+    def _step2_start_scan_local(self, folder_name):
+        if self.main_window and hasattr(self.main_window, 'ultrasound_tab'):
+            us_tab = self.main_window.ultrasound_tab
+            us_tab.rotation_range_input.setText(self.rot_range_input.text())
+            # 传入自定义文件名
+            us_tab.rotate_and_capture_2x(custom_folder_name=folder_name)
+
+    def _on_scan_completed_logic(self, is_local_task):
+        if is_local_task:
+            # 只有局部重建才执行重置探头和增加 J0 的逻辑
+            print("System: Local scan finished. Proceeding to reset sequence.")
+            QTimer.singleShot(1000, self._step4_reset_probe)
+        else:
+            # 如果是全局扫描，什么都不做，或者只打个日志
+            print("System: Global scan finished. No reset required.")
+
+    def _step4_reset_probe(self):
+        self.rotate_probe(0, 1) # Reset back
+        QTimer.singleShot(1000, self._step5_increase_j0)
+
+    def _step5_increase_j0(self):
+        try:
+            val = float(self.inc_j0_input.text()) + float(self.descent_dist_input.text())
+            self.inc_j0_input.setText(f"{val:.4f}"); self.apply_joint_increment()
+        except Exception as e:
+            print(f"Error _step5_increase_j0: {e}")
+            
+    def rotate_probe(self, d, m):
+        if self.main_window and hasattr(self.main_window, 'tcp_manager'):
+            try:
+                angle = float(self.rot_range_input.text()) * m
+                self.main_window.tcp_manager.send_command(f"MoveRelJ,0,5,{d},{angle};")
+            except Exception as e:
+                print(f"Error rotate_probe: {e}")
+                
     # [修改] 重写 adjust_needle_direction 以加入误差补偿逻辑
     # def adjust_needle_direction(self):
     #     parent = self.main_window
@@ -851,10 +955,16 @@ class FlexibleNeedleTab(BeckhoffTab):
 
             # 计算当前的针尖位置 (J3=0)
             tip_pos = self.robot.get_tip_of_needle([delta_j0, theoretical_j1, theoretical_j2, 0])
+            print("tip_pos:",end='')
+            print(tip_pos)
             b_point_vec = np.array(b_point_p)
+            print("b_point_vec:",end='')
+            print(b_point_vec)
             
             # 缓存结果
             self.cached_d4 = np.linalg.norm(b_point_vec - tip_pos)
+            print("self.cached_d4:",end='')
+            print(self.cached_d4)
             
             if self.main_window:
                 self.main_window.status_bar.showMessage(f"Total insertion distance d4 calculated: {self.cached_d4:.2f} mm")
@@ -881,8 +991,8 @@ class FlexibleNeedleTab(BeckhoffTab):
             QMessageBox.warning(self, "输入错误", "Phase 1 输入框必须为数字")
 
     def run_needle_insertion_phase_3(self):
-        if self.cached_d4 is None:
-            self._calculate_target_distance_d4()
+        # if self.cached_d4 is None:
+        self._calculate_target_distance_d4()
         
         if self.cached_d4 is not None:
             # Phase 3: 走完剩余全部
