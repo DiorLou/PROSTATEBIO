@@ -618,39 +618,48 @@ class FlexibleNeedleTab(BeckhoffTab):
         """构建复杂的局部重建文件夹名"""
         lp = self.main_window.left_panel
         
-        # 1.1 转换 A、B 点到 Volume 坐标系
-        raw_a_text = lp.a_point_dropdown.currentText()  # 例如 "A1: (-254.91, ...)"
-        raw_b_text = lp.b_point_dropdown.currentText()  # 例如 "B1, 3.95deg"
+        # 1. 获取 A、B 点标识
+        raw_a_text = lp.a_point_dropdown.currentText()
+        raw_b_text = lp.b_point_dropdown.currentText()
 
-        # 1.2 精确提取 ID
-        # A 通过冒号分割获取 A1
-        a_id = raw_a_text.split(':')[0].strip() if ':' in raw_a_text else "A"
-        # B 通过逗号分割获取 B1
-        b_id = raw_b_text.split(',')[0].strip() if ',' in raw_b_text else "B"
-        
-        a_vol = lp.get_current_a_in_volume() # 需在 left_panel 实现此转换
+        # 提取 ID
+        a_id_str = raw_a_text.split(':')[0].strip() if ':' in raw_a_text else "A1"
+        # 提取 B 的数字编号，例如从 "B5, 12.30deg" 中提取出 5
+        try:
+            b_id_num = int(raw_b_text.split(',')[0].replace("B", "").strip())
+        except:
+            b_id_num = None
+
+        # 获取坐标
+        a_vol = lp.get_current_a_in_volume() 
         b_vol = lp.get_current_b_in_volume() 
         
-        a_str = f"{a_id}({a_vol[0]:.1f},{a_vol[1]:.1f},{a_vol[2]:.1f})"
-        b_str = f"{b_id}({b_vol[0]:.1f},{b_vol[1]:.1f},{b_vol[2]:.1f})"
+        a_str = f"{a_id_str}({a_vol[0]:.1f},{a_vol[1]:.1f},{a_vol[2]:.1f})"
+        b_str = f"B{b_id_num}({b_vol[0]:.1f},{b_vol[1]:.1f},{b_vol[2]:.1f})" if b_id_num else "B"
 
-        # 2. 计算 RCM in Volume
-        delta_j0 = float(self.inc_j0_input.text())
-        rcm_in_p = self.robot.get_rcm_point([delta_j0, 0, 0, 0])
-        rcm_vol = lp.transform_point_p_to_volume(rcm_in_p) # 需在 left_panel 实现
-        rcm_str = f"RCM({rcm_vol[0]:.1f},{rcm_vol[1]:.1f},{rcm_vol[2]:.1f})"
+        # 2. 直接使用记录在 lp 里的数值型 RCM 坐标 (之前修改好的部分)
+        if hasattr(lp, 'rcm_vol_for_b') and lp.rcm_vol_for_b is not None:
+            rv = lp.rcm_vol_for_b
+            rcm_str = f"RCM({rv[0]:.1f},{rv[1]:.1f},{rv[2]:.1f})"
+        else:
+            rcm_str = "RCM(Unknown)"
 
-        # 3. 获取 deg(x) 和 U 姿态
-        # deg_x 来自点击过旋转对准后的内部变量
-        deg_x = getattr(lp, 'last_calculated_rotation_to_b', 0) 
-        
-        # 计算 TCP_U 在 Volume 系下的姿态
-        # T_Vol_U = T_Vol_Base * T_Base_E * T_E_U
-        u_pose_vol = lp.get_current_tcp_u_in_volume() # 需在 left_panel 实现
+        # 3. 【核心修改】：从 calculated_b_points 中通过 b_id 查找对应的 deg_x
+        deg_x = 0.0
+        # 数据结构参考：b_point_data_list.append((p_b_vol, p_base_pose, angle, b_idx))
+        # 对应 handle 后的 self.calculated_b_points 里的元素 data[3] 是 b_idx, data[2] 是 angle
+        if hasattr(lp, 'calculated_b_points') and lp.calculated_b_points:
+            for data in lp.calculated_b_points:
+                if data[3] == b_id_num: # 匹配 B 点编号
+                    deg_x = data[2]    # 获取计算好的 angle
+                    break
+
+        # 4. 获取 U 姿态
+        u_pose_vol = lp.get_current_tcp_u_in_volume() 
         u_str = f"U({','.join([f'{p:.1f}' for p in u_pose_vol])})"
 
-        return f"{a_str}{b_str}{rcm_str}deg({deg_x}){u_str}LocalUS"
-
+        return f"{a_str}{b_str}{rcm_str}deg({deg_x:.1f}){u_str}LocalUS"
+    
     def _step2_start_scan_local(self, folder_name):
         if self.main_window and hasattr(self.main_window, 'ultrasound_tab'):
             us_tab = self.main_window.ultrasound_tab
@@ -955,16 +964,10 @@ class FlexibleNeedleTab(BeckhoffTab):
 
             # 计算当前的针尖位置 (J3=0)
             tip_pos = self.robot.get_tip_of_needle([delta_j0, theoretical_j1, theoretical_j2, 0])
-            print("tip_pos:",end='')
-            print(tip_pos)
             b_point_vec = np.array(b_point_p)
-            print("b_point_vec:",end='')
-            print(b_point_vec)
             
             # 缓存结果
             self.cached_d4 = np.linalg.norm(b_point_vec - tip_pos)
-            print("self.cached_d4:",end='')
-            print(self.cached_d4)
             
             if self.main_window:
                 self.main_window.status_bar.showMessage(f"Total insertion distance d4 calculated: {self.cached_d4:.2f} mm")

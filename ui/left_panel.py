@@ -137,6 +137,7 @@ class LeftPanel(QWidget):
         self.b_vars_in_base = [None] * 3
         self.b_point_in_base = np.zeros(3)
         self.calculated_b_points = []
+        self.rcm_vol_for_b = []
         
         # A Point List for Dropdown
         self.a_points_in_base_list = [] 

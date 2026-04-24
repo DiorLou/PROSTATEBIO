@@ -859,17 +859,35 @@ class BeckhoffTab(QWidget):
         if not parent or not hasattr(parent, 'left_panel'):
             QMessageBox.warning(self, "Error", "Cannot access Left Panel data.")
             return
-        if not parent.left_panel.a_point_in_tcp_p:
-             QMessageBox.warning(self, "Data Missing", "A point in TCP_P is not defined.")
-             return
+        
+        lp = parent.left_panel
+        if not lp.a_point_in_tcp_p:
+            QMessageBox.warning(self, "Data Missing", "A point in TCP_P is not defined.")
+            return
+
         try:
-            a_z = parent.left_panel.a_point_in_tcp_p[2]
+            # 1. 计算 J0 增量
+            a_z = lp.a_point_in_tcp_p[2]
             rcm_z = self.robot.get_rcm_point([0,0,0,0])[2]
             delta_j0 = a_z - rcm_z
+            
+            # 2. 更新 UI
+            self.inc_j0_input.setText(f"{delta_j0:.4f}")
+
+            # 3. [新增] 更新 rcm_vol_for_b (数值类型)
+            # 获取 P 系下的 RCM 点
+            rcm_in_p = self.robot.get_rcm_point([delta_j0, 0, 0, 0])
+            
+            # 将 RCM 从 P 系转换到 Volume 系
+            # 注意：此处直接调用 left_panel 封装好的转换函数
+            if hasattr(lp, 'transform_point_p_to_volume'):
+                lp.rcm_vol_for_b = lp.transform_point_p_to_volume(rcm_in_p)
+                print(f"System: rcm_vol_for_b updated: {lp.rcm_vol_for_b}")
+
         except Exception as e:
-            QMessageBox.critical(self, "Calculation Error", f"Failed to calculate J1 delta: {e}")
+            QMessageBox.critical(self, "Calculation Error", f"Failed to calculate J1 delta or update RCM: {e}")
             return
-        self.inc_j0_input.setText(f"{delta_j0:.4f}")
+
         self.trocar_phase_1_state = 1
         self.apply_joint_increment()
 
