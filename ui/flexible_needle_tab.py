@@ -640,12 +640,12 @@ class FlexibleNeedleTab(BeckhoffTab):
         # 2. 直接使用记录在 lp 里的数值型 RCM 坐标 (之前修改好的部分)
         if hasattr(lp, 'rcm_vol_for_b') and lp.rcm_vol_for_b is not None:
             rv = lp.rcm_vol_for_b
-            rcm_str = f"RCM({rv[0]:.1f},{rv[1]:.1f},{rv[2]:.1f})"
+            rcm_str = f"RCM_VOL({rv[0]:.1f},{rv[1]:.1f},{rv[2]:.1f})"
         else:
-            rcm_str = "RCM(Unknown)"
+            rcm_str = "RCM_VOL(Unknown)"
 
         # 3. 【核心修改】：从 calculated_b_points 中通过 b_id 查找对应的 deg_x
-        deg_x = 0.0
+        deg_x = 0.00
         # 数据结构参考：b_point_data_list.append((p_b_vol, p_base_pose, angle, b_idx))
         # 对应 handle 后的 self.calculated_b_points 里的元素 data[3] 是 b_idx, data[2] 是 angle
         if hasattr(lp, 'calculated_b_points') and lp.calculated_b_points:
@@ -658,7 +658,7 @@ class FlexibleNeedleTab(BeckhoffTab):
         u_pose_vol = lp.get_current_tcp_u_in_volume() 
         u_str = f"U({','.join([f'{p:.1f}' for p in u_pose_vol])})"
 
-        return f"{a_str}{b_str}{rcm_str}deg({deg_x:.1f}){u_str}LocalUS"
+        return f"{a_str}{b_str}{rcm_str}deg({deg_x:.2f}){u_str}LocalUS"
     
     def _step2_start_scan_local(self, folder_name):
         if self.main_window and hasattr(self.main_window, 'ultrasound_tab'):
