@@ -872,7 +872,7 @@ class BeckhoffTab(QWidget):
             delta_j0 = a_z - rcm_z
             
             # 2. 更新 UI
-            self.inc_j0_input.setText(f"{delta_j0:.4f}")
+            self.inc_j0_input.setText(f"{delta_j0 - 2:.4f}")
 
             # 3. [新增] 更新 rcm_vol_for_b (数值类型)
             # 获取 P 系下的 RCM 点
@@ -907,7 +907,7 @@ class BeckhoffTab(QWidget):
             return
         try:
             delta_j0 = float(self.inc_j0_input.text())
-            rcm_point = self.robot.get_rcm_point([delta_j0, 0, 0, 0])
+            rcm_point = self.robot.get_rcm_point([delta_j0 + 2, 0, 0, 0])
             vector = np.array(b_point_p) - rcm_point
             vector[0] = 0.0  # 将 X 分量设为 0
 
@@ -941,7 +941,7 @@ class BeckhoffTab(QWidget):
             delta_j2 = joint_values[1]
             delta_j3 = float(self.inc_j3_input.text())
             
-            joint_values = [delta_j0, delta_j1, delta_j2, delta_j3]
+            joint_values = [delta_j0 + 2, delta_j1, delta_j2, delta_j3]
             # print(joint_values)
             
             # 1. 获取主窗口引用
