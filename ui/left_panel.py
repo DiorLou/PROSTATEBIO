@@ -1074,6 +1074,88 @@ class LeftPanel(QWidget):
             QTimer.singleShot(300, lambda: self._calculate_b_point_in_tcp_p())
             self._calculate_a_point_in_tcp_p()
 
+            # ================= [新增：RCM 计算逻辑] =================
+            try:
+                if self.a_point_in_tcp_p:
+                    # 1. 计算 J0 增量 (参考 run_trocar_insertion_phase_1)
+                    a_z = self.a_point_in_tcp_p[2]
+                    # 获取初始 RCM 点 (J=0,0,0,0) 的 Z 坐标
+                    rcm0_z = self.robot_kinematics.get_rcm_point([0, 0, 0, 0])[2]
+                    delta_j0 = a_z - rcm0_z
+
+                    # 2. 获取该增量下，P 系中的 RCM 点
+                    rcm_in_p = self.robot_kinematics.get_rcm_point([delta_j0, 0, 0, 0])
+                    
+                    # 3. 转换到 Volume 系并存储
+                    self.rcm_vol_for_b = self.transform_point_p_to_volume(rcm_in_p)
+                    print(f"read_b_points_volume_from_file_according_to_selected_a: rcm_vol_for_b updated: {self.rcm_vol_for_b}")
+                else:
+                    self.rcm_vol_for_b = None
+            except Exception as e:
+                print(f"Error calculating RCM for report: {e}")
+                self.rcm_vol_for_b = None
+            # =======================================================
+
+            # ================= [新增：精准更新文件中的 RCM 列] =================
+            try:
+                lp = self.main_window.left_panel
+                
+                # 1. 动态获取当前的 A ID 和 B ID (参考你提供的逻辑)
+                raw_a_text = lp.a_point_dropdown.currentText()
+                raw_b_text = lp.b_point_dropdown.currentText()
+                
+                a_id_str = raw_a_text.split(':')[0].strip() if ':' in raw_a_text else "A1"
+                try:
+                    b_id_target = int(raw_b_text.split(',')[0].replace("B", "").strip())
+                except:
+                    b_id_target = None
+
+                if b_id_target is not None:
+                    record_filename = f"B points in Volume for {a_id_str}.txt"
+                    
+                    # 格式化 RCM 坐标字符串
+                    fmt_coord = "(%.3f, %.3f, %.3f)"
+                    rcm_str = fmt_coord % tuple(self.rcm_vol_for_b) if self.rcm_vol_for_b else "None"
+
+                    # 2. 读取文件并修改对应行
+                    if os.path.exists(record_filename):
+                        with open(record_filename, 'r', encoding='utf-8') as f:
+                            lines = f.readlines()
+
+                        new_lines = []
+                        updated = False
+                        
+                        # 预先定义好目标 B ID 的标准开头，防止误匹配（例如 B1 匹配到 B10）
+                        target_id_label = f"B{b_id_target}"
+
+                        for line in lines:
+                            # 只有在包含 "|" 的数据行中寻找
+                            if "|" in line:
+                                parts = line.split('|')
+                                # 检查第一列去掉空格后是否完全等于目标 ID
+                                if parts[0].strip() == target_id_label:
+                                    if len(parts) >= 7: # 确保列数符合预期 (0-6共7列)
+                                        # 精准替换第 6 列 (索引 5)
+                                        # 保持与初始化时一致的 30 字符宽度
+                                        parts[5] = f" {rcm_str:<30} "
+                                        line = "|".join(parts)
+                                        updated = True
+                            
+                            new_lines.append(line)
+
+                        # 3. 写回文件
+                        if updated:
+                            with open(record_filename, 'w', encoding='utf-8') as f:
+                                f.writelines(new_lines)
+                            print(f"System: Updated RCM for B{b_id_target} in {record_filename}")
+                        else:
+                            print(f"System: Target B{b_id_target} not found or RCM column missing in {record_filename}")
+                
+            except Exception as e:
+                print(f"Error updating RCM in record file: {e}")
+            # =================================================================
+        
+
             # 3. [修改逻辑] 计算并发送 Volume 系下的 RCM 和 TCP_U 到 Navigation
             # 传入计算好的 T_Base_E 矩阵
             self._calculate_and_send_rcm_and_tcp_u_to_nav(t_base_e_override=T_Base_E_Final_Calc)
@@ -1554,7 +1636,7 @@ class LeftPanel(QWidget):
             # 获取当前的 A 点编号
             current_a_idx = int(current_a_text.split(':')[0].replace("A", ""))
         except:
-            current_a_idx = 1
+            QMessageBox.warning(self, "Warning", "获取 A 点编号失败。")
 
         ORIGIN_FILE = "biopsy_target_replan.txt"
         if not os.path.exists(ORIGIN_FILE):
@@ -1607,7 +1689,7 @@ class LeftPanel(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "读取失败", str(e))
             return
-
+        
         # ================= [新增：增强版记录文件生成逻辑] =================
         try:
             # 1. 获取当前 A 点的坐标信息
@@ -1620,36 +1702,34 @@ class LeftPanel(QWidget):
 
             record_filename = f"B points in Volume for A{current_a_idx}.txt"
             with open(record_filename, 'w', encoding='utf-8') as rf:
-                # 写入顶部摘要信息
                 rf.write(f"=== Biopsy Target Report for A{current_a_idx} ===\n")
                 rf.write(f"Volume in Base [x,y,z,rx,ry,rz]: {['%.3f' % x for x in self.volume_in_base]}\n")
                 
-                # --- 写入 O Point 信息 ---
-                if o_base is not None:
-                    rf.write(f"O Point (Base)   [x,y,z]: {['%.3f' % x for x in o_base]}\n")
-                else:
-                    rf.write(f"O Point (Base)   [x,y,z]: Invalid or None\n")
-                    
+                # 写入 O Point 信息
+                rf.write(f"O Point (Base)   [x,y,z]: {['%.3f' % x for x in o_base] if o_base else 'None'}\n")
+                
                 # 写入 A Point 信息
                 rf.write(f"A Point (Base)   [x,y,z]: {['%.3f' % x for x in a_base]}\n")
                 rf.write(f"A Point (Volume) [x,y,z]: {['%.3f' % x for x in a_vol]}\n")
-                rf.write("-" * 130 + "\n")
+                rf.write("-" * 165 + "\n") # 增加分割线长度
                 
-                # 写入表头，增加 A 点相关列
+                # 2. 修改表头：增加 RCM point (Vol) 到倒数第二列
                 header = (f"{'B ID':<6} | {'B point (Vol)':<30} | {'B point (Base)':<30} | "
-                          f"{'A point (Vol)':<30} | {'A point (Base)':<30} | {'OA Angle':<10}\n")
+                          f"{'A point (Vol)':<30} | {'A point (Base)':<30} | {'RCM point (Vol)':<30} | {'OA Angle':<10}\n")
                 rf.write(header)
-                rf.write("-" * 130 + "\n")
+                rf.write("-" * 165 + "\n")
                 
                 # 格式化字符串准备
                 fmt_coord = "(%.3f, %.3f, %.3f)"
                 
                 for p_vol, p_base, angle, b_idx in b_point_data_list:
+                    # 3. 写入行数据：在倒数第二列放入 "None" 占位符
                     line = (f"B{b_idx:<5} | "
                             f"{fmt_coord % tuple(p_vol):<30} | "
                             f"{fmt_coord % tuple(p_base[:3]):<30} | "
                             f"{fmt_coord % tuple(a_vol):<30} | "
                             f"{fmt_coord % tuple(a_base):<30} | "
+                            f"{'None':<30} | " # RCM 占位符
                             f"{angle:.3f}\n")
                     rf.write(line)
             

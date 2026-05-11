@@ -882,7 +882,7 @@ class BeckhoffTab(QWidget):
             # 注意：此处直接调用 left_panel 封装好的转换函数
             if hasattr(lp, 'transform_point_p_to_volume'):
                 lp.rcm_vol_for_b = lp.transform_point_p_to_volume(rcm_in_p)
-                print(f"System: rcm_vol_for_b updated: {lp.rcm_vol_for_b}")
+                print(f"run_trocar_insertion_phase_1: rcm_vol_for_b updated: {lp.rcm_vol_for_b}")
 
         except Exception as e:
             QMessageBox.critical(self, "Calculation Error", f"Failed to calculate J1 delta or update RCM: {e}")
