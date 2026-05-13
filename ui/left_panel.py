@@ -1099,60 +1099,54 @@ class LeftPanel(QWidget):
             # ================= [新增：精准更新文件中的 RCM 列] =================
             try:
                 lp = self.main_window.left_panel
-                
-                # 1. 动态获取当前的 A ID 和 B ID (参考你提供的逻辑)
+                # 获取当前 A ID, B ID 和 A_vol 坐标
                 raw_a_text = lp.a_point_dropdown.currentText()
                 raw_b_text = lp.b_point_dropdown.currentText()
-                
                 a_id_str = raw_a_text.split(':')[0].strip() if ':' in raw_a_text else "A1"
+                a_vol = np.array(lp.get_current_a_in_volume()) # 获取 A 点 Volume 坐标
+                
                 try:
                     b_id_target = int(raw_b_text.split(',')[0].replace("B", "").strip())
                 except:
                     b_id_target = None
 
-                if b_id_target is not None:
-                    record_filename = f"B points in Volume for {a_id_str}.txt"
+                if b_id_target is not None and self.rcm_vol_for_b is not None:
+                    # 计算差值向量 (rcm_vol - a_vol)
+                    diff_vec = np.array(self.rcm_vol_for_b) - a_vol
                     
-                    # 格式化 RCM 坐标字符串
+                    record_filename = f"B points in Volume for {a_id_str}.txt"
                     fmt_coord = "(%.3f, %.3f, %.3f)"
-                    rcm_str = fmt_coord % tuple(self.rcm_vol_for_b) if self.rcm_vol_for_b else "None"
+                    rcm_str = fmt_coord % tuple(self.rcm_vol_for_b)
+                    diff_str = fmt_coord % tuple(diff_vec)
 
-                    # 2. 读取文件并修改对应行
                     if os.path.exists(record_filename):
                         with open(record_filename, 'r', encoding='utf-8') as f:
                             lines = f.readlines()
 
                         new_lines = []
                         updated = False
-                        
-                        # 预先定义好目标 B ID 的标准开头，防止误匹配（例如 B1 匹配到 B10）
                         target_id_label = f"B{b_id_target}"
 
                         for line in lines:
-                            # 只有在包含 "|" 的数据行中寻找
                             if "|" in line:
                                 parts = line.split('|')
-                                # 检查第一列去掉空格后是否完全等于目标 ID
                                 if parts[0].strip() == target_id_label:
-                                    if len(parts) >= 7: # 确保列数符合预期 (0-6共7列)
-                                        # 精准替换第 6 列 (索引 5)
-                                        # 保持与初始化时一致的 30 字符宽度
+                                    if len(parts) >= 8: # 现在总共有 8 列
+                                        # 替换第 6 列 (索引 5): RCM point
                                         parts[5] = f" {rcm_str:<30} "
+                                        # 替换第 7 列 (索引 6): rcm_vol - a_vol
+                                        parts[6] = f" {diff_str:<30} "
                                         line = "|".join(parts)
                                         updated = True
-                            
                             new_lines.append(line)
 
-                        # 3. 写回文件
                         if updated:
                             with open(record_filename, 'w', encoding='utf-8') as f:
                                 f.writelines(new_lines)
-                            print(f"System: Updated RCM for B{b_id_target} in {record_filename}")
-                        else:
-                            print(f"System: Target B{b_id_target} not found or RCM column missing in {record_filename}")
-                
+                            print(f"System: Updated RCM and Diff for B{b_id_target}")
+
             except Exception as e:
-                print(f"Error updating RCM in record file: {e}")
+                print(f"Error in _continue_b_point_rotation update: {e}")
             # =================================================================
         
 
@@ -1713,23 +1707,24 @@ class LeftPanel(QWidget):
                 rf.write(f"A Point (Volume) [x,y,z]: {['%.3f' % x for x in a_vol]}\n")
                 rf.write("-" * 165 + "\n") # 增加分割线长度
                 
-                # 2. 修改表头：增加 RCM point (Vol) 到倒数第二列
+                # 1. 修改表头：增加 "rcm_vol - a_vol" 到倒数第二列，OA Angle 变为最后一列
                 header = (f"{'B ID':<6} | {'B point (Vol)':<30} | {'B point (Base)':<30} | "
-                          f"{'A point (Vol)':<30} | {'A point (Base)':<30} | {'RCM point (Vol)':<30} | {'OA Angle':<10}\n")
+                        f"{'A point (Vol)':<30} | {'A point (Base)':<30} | {'RCM point (Vol)':<30} | "
+                        f"{'rcm_vol - a_vol':<30} | {'OA Angle':<10}\n")
                 rf.write(header)
-                rf.write("-" * 165 + "\n")
+                rf.write("-" * 200 + "\n") # 进一步加长分割线
                 
-                # 格式化字符串准备
                 fmt_coord = "(%.3f, %.3f, %.3f)"
                 
                 for p_vol, p_base, angle, b_idx in b_point_data_list:
-                    # 3. 写入行数据：在倒数第二列放入 "None" 占位符
+                    # 2. 写入行数据：增加两个 "None" 占位符
                     line = (f"B{b_idx:<5} | "
                             f"{fmt_coord % tuple(p_vol):<30} | "
                             f"{fmt_coord % tuple(p_base[:3]):<30} | "
                             f"{fmt_coord % tuple(a_vol):<30} | "
                             f"{fmt_coord % tuple(a_base):<30} | "
-                            f"{'None':<30} | " # RCM 占位符
+                            f"{'None':<30} | "  # RCM point (Vol) 占位
+                            f"{'None':<30} | "  # rcm_vol - a_vol 占位
                             f"{angle:.3f}\n")
                     rf.write(line)
             
