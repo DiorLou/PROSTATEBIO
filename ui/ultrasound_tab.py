@@ -4,7 +4,7 @@ import os
 import numpy as np
 import time
 from datetime import datetime
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QMessageBox, QSlider, QFileDialog, QLineEdit
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QMessageBox, QSlider, QFileDialog, QLineEdit, QGridLayout
 from PyQt5.QtCore import Qt, QTimer 
 from PyQt5.QtGui import QImage, QPixmap # 已修正：QImage 和 QPixmap 应该从 QtGui 导入
 from PyQt5.QtCore import pyqtSignal
@@ -84,6 +84,12 @@ class UltrasoundTab(QWidget):
         self.left_x_btn = QPushButton("Ultrasound Probe Rotate Left x Deg")
         self.right_2x_btn = QPushButton("Ultrasound Probe Rotate Right 2x Deg")
 
+        # [新增] 穿刺针旋转范围输入框和按钮
+        self.needle_yaw_range_input = QLineEdit("5") # 默认值 5
+        self.needle_left_x_btn = QPushButton("Needle Rotate Left x Deg")
+        self.needle_right_2x_btn = QPushButton("Needle Rotate Right 2x Deg")
+        self.needle_save_sequence_number = 0  # [新增] 用于针旋转图片的编号计数器
+
         self.init_ui()
         self.setup_connections()
 
@@ -148,47 +154,40 @@ class UltrasoundTab(QWidget):
 
         # --- 按钮和旋转控制布局 ---
         btn_layout = QHBoxLayout()
-        self.start_btn.setFixedSize(160, 40)
-        self.stop_btn.setFixedSize(155, 40)
-        self.stop_btn.setEnabled(False)
-        self.save_btn.setFixedSize(120, 40)
-        self.save_btn.setEnabled(False)
         
-        # [新增] 单次保存按钮的设置
-        self.single_save_btn.setFixedSize(120, 40)
-        self.single_save_btn.setEnabled(False) 
-        
-        # 旋转范围输入布局
-        rotation_input_layout = QHBoxLayout()
-        rotation_input_layout.addWidget(QLabel("Rotation Range x Deg:"))
-        self.rotation_range_input.setFixedWidth(50) 
-        rotation_input_layout.addWidget(self.rotation_range_input)
-        
-        # 旋转按钮设置
-        self.left_x_btn.setFixedSize(250, 40)
-        self.right_2x_btn.setFixedSize(250, 40)
-        self.left_x_btn.setEnabled(True)
-        self.right_2x_btn.setEnabled(False)
+        # 设置所有旋转相关按钮的大小一致
+        btn_width, btn_height = 250, 40
+        self.left_x_btn.setFixedSize(btn_width, btn_height)
+        self.right_2x_btn.setFixedSize(btn_width, btn_height)
+        self.needle_left_x_btn.setFixedSize(btn_width, btn_height)
+        self.needle_right_2x_btn.setFixedSize(btn_width, btn_height)
 
+        # 创建网格布局用于精确对齐
+        grid_ctrl_layout = QGridLayout()
+
+        # 第一列：标签和输入框
+        grid_ctrl_layout.addWidget(QLabel("Probe Range x:"), 0, 0)
+        grid_ctrl_layout.addWidget(self.rotation_range_input, 0, 1)
+        grid_ctrl_layout.addWidget(QLabel("Needle Range x:"), 1, 0)
+        grid_ctrl_layout.addWidget(self.needle_yaw_range_input, 1, 1)
+
+        # 第二列：左转按钮 (Probe 在上，Needle 在下)
+        grid_ctrl_layout.addWidget(self.left_x_btn, 0, 2)
+        grid_ctrl_layout.addWidget(self.needle_left_x_btn, 1, 2)
+
+        # 第三列：右转按钮 (Probe 在上，Needle 在下)
+        grid_ctrl_layout.addWidget(self.right_2x_btn, 0, 3)
+        grid_ctrl_layout.addWidget(self.needle_right_2x_btn, 1, 3)
+
+        # 将网格布局加入主按钮行
         btn_layout.addStretch()
+        # (保留之前的 start/stop/save 等按钮)
         btn_layout.addWidget(self.start_btn)
-        btn_layout.addSpacing(10)
         btn_layout.addWidget(self.stop_btn)
-        btn_layout.addSpacing(10)
-        
-        # [新增] 添加保存单次图像按钮
-        btn_layout.addWidget(self.single_save_btn) 
-        btn_layout.addSpacing(10)
-        
+        btn_layout.addWidget(self.single_save_btn)
         btn_layout.addWidget(self.save_btn)
-        
-        # 添加旋转控制组
-        btn_layout.addSpacing(20) 
-        btn_layout.addLayout(rotation_input_layout) 
-        btn_layout.addSpacing(10)
-        btn_layout.addWidget(self.left_x_btn)
-        btn_layout.addSpacing(10)
-        btn_layout.addWidget(self.right_2x_btn)
+        btn_layout.addSpacing(20)
+        btn_layout.addLayout(grid_ctrl_layout) # 插入新设计的对齐网格
         btn_layout.addStretch()
         
         layout.addLayout(btn_layout)
@@ -213,6 +212,10 @@ class UltrasoundTab(QWidget):
         # 机器人旋转按钮的连接 (使用新的方法)
         self.left_x_btn.clicked.connect(self.rotate_left_x)
         self.right_2x_btn.clicked.connect(self.rotate_and_capture_2x)
+
+        # [新增] 穿刺针旋转按钮连接
+        self.needle_left_x_btn.clicked.connect(self.rotate_needle_left_x)
+        self.needle_right_2x_btn.clicked.connect(self.rotate_needle_right_2x)
         
         # 监听 TCP 消息，用于处理旋转反馈
         self.tcp_manager.message_received.connect(self.handle_incoming_message)
@@ -747,4 +750,122 @@ class UltrasoundTab(QWidget):
         # --- 引入非阻塞延时 (300ms)，等待最新的机器人姿态更新 ---
         delay_ms = 500
         QTimer.singleShot(delay_ms, self._continue_rotation_after_delay)
+
+    def _save_single_image_with_pose(self, base_folder_name="Needle_Rotation"):
+        """
+        保存图片：文件夹名加时间戳，文件名使用编号 + 针尖在 TCP_U 下的坐标
+        """
+        if self.current_frame is None:
+            return None
+
+        # 1. 文件夹管理：如果是本次任务的第一张图（编号为0），创建带时间戳的文件夹
+        if self.needle_save_sequence_number == 0:
+            timestamp_folder = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.needle_session_folder = os.path.join(os.getcwd(), "image", f"{base_folder_name}_{timestamp_folder}")
+            os.makedirs(self.needle_session_folder, exist_ok=True)
+
+        # 2. 调用 _get_needle_pose_str 获取针尖在超声系下的 [x, y, z] 坐标字符串
+        # 内部执行：关节值 -> robot.get_tip_of_needle -> transform_point_p_to_tcp_u
+        pose_str = self._get_needle_pose_str()
+        
+        # 3. 构造文件名：{4位编号}_{位姿字符串}.png
+        filename = f"{self.needle_save_sequence_number:04d}_{pose_str}.png"
+        filepath = os.path.join(self.needle_session_folder, filename)
+        
+        # 4. 执行写入并递增编号
+        if cv2.imwrite(filepath, self.current_frame):
+            self.needle_save_sequence_number += 1
+            return filepath
+        return None
+    
+    def _get_needle_pose_str(self):
+        """根据当前关节值计算针尖在 TCP_U 下的坐标字符串"""
+        try:
+            nt = self.main_window.flexible_needle_tab
+            lp = self.main_window.left_panel
+            
+            # 获取当前关节增量与理论值 (参考您的逻辑)
+            delta_j0 = float(nt.yaw_display.text())
+            delta_j1 = float(nt.inc_j1_input.text()) if nt.inc_j1_input.text() else 0.0
+            delta_j2 = float(nt.inc_j2_input.text()) if nt.inc_j2_input.text() else 0.0
+            delta_j3 = float(nt.j3_display.text())
+            
+            theoretical_j1 = delta_j1
+            theoretical_j2 = delta_j2 - delta_j1
+            
+            # 1. 计算针尖在针座系 (TCP_P) 下的点坐标 [x, y, z]
+            tip_pos_p = nt.robot.get_tip_of_needle([delta_j0, theoretical_j1, theoretical_j2, delta_j3])
+            
+            # 2. 调用 transform_point_p_to_tcp_u 将点转换到超声坐标系 (TCP_U)
+            tip_pos_u = lp.transform_point_p_to_tcp_u(tip_pos_p[:3])
+            
+            return "(" + ",".join([f"{p:.2f}" for p in tip_pos_u]) + ")"
+        except Exception as e:
+            print(f"Pose calculation error: {e}")
+            return "(0.00,0.00,0.00)"
+
+    def rotate_needle_left_x(self):
+        """针左转 x 度：保存图片 -> 修改 Yaw -> Apply All"""
+        x = self._get_needle_x_value()
+        if x is None: return
+        
+        # 重置计数器，确保每次新任务创建新文件夹
+        self.needle_save_sequence_number = 0
+        self._save_needle_step_image()
+
+        # 使用您指定的 flexible_needle_tab
+        needle_tab = self.main_window.flexible_needle_tab 
+        try:
+            # 获取当前显示的值
+            current_yaw = float(needle_tab.yaw_display.text())
+            new_yaw = current_yaw - x
+            
+            # 假设 flexible_needle_tab 有设置接口或直接修改输入框
+            # 如果是直接操作输入框，请确保对应控件名正确，这里以修改显示值并同步为例
+            needle_tab.yaw_input.setText(f"{new_yaw:.2f}") 
+            
+            # 执行 apply_joint_increment
+            needle_tab.apply_joint_increment() 
+            self.main_window.status_bar.showMessage(f"Status: Needle Left {x} deg Applied.")
+        except Exception as e:
+            print(f"Needle control error: {e}")
+
+    def rotate_needle_right_2x(self):
+        """针右转 2x 度：每 0.1 度步进，等待倍福 Ready"""
+        x = self._get_needle_x_value()
+        if x is None: return
+        
+        self.needle_save_sequence_number = 0
+        self._save_needle_step_image()
+        
+        self.target_total_rotation = 2 * x
+        self.current_rotated_amount = 0.0
+        self.needle_step = 0.1
+        
+        # 定时器循环
+        self.needle_timer = QTimer(self)
+        self.needle_timer.timeout.connect(self._needle_step_logic)
+        self.needle_timer.start(400) 
+
+    def _needle_step_logic(self):
+        needle_tab = self.main_window.flexible_needle_tab
+        beckhoff_tab = self.main_window.beckhoff_tab 
+
+        # 检查运动状态是否为 Ready
+        if beckhoff_tab.movement_status_label.text().strip().lower() != "ready":
+            return 
+
+        if self.current_rotated_amount < self.target_total_rotation:
+            # 从 yaw_display 获取当前值并增加 0.1
+            current_yaw = float(needle_tab.yaw_display.text())
+            new_yaw = current_yaw + self.needle_step
+            
+            # 更新输入框并应用
+            needle_tab.yaw_input.setText(f"{new_yaw:.2f}")
+            needle_tab.apply_joint_increment()
+            
+            self.current_rotated_amount += self.needle_step
+        else:
+            self.needle_timer.stop()
+            QMessageBox.information(self, "Finished", f"Needle right rotation {self.target_total_rotation} deg completed.")
         

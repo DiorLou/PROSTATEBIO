@@ -1523,6 +1523,23 @@ class LeftPanel(QWidget):
         p_homo = np.append(point_p, 1.0)
         p_vol = np.dot(T_vol_p, p_homo)
         return p_vol[:3].tolist()
+        
+    def transform_point_p_to_tcp_u(self, point_p):
+        """
+        将 TCP_P 下的点转换到 TCP_U 坐标系。
+        TCP_P 和 TCP_U 都是相对 TCP_E 定义的，因此：
+        P_u = inv(T_e_u) * T_e_p * P_p
+        """
+        if self.tcp_u_definition_pose is None or self.tcp_p_definition_pose is None:
+            return point_p
+
+        T_e_u = self.pose_to_matrix(self.tcp_u_definition_pose)
+        T_e_p = self.pose_to_matrix(self.tcp_p_definition_pose)
+        T_u_p = np.linalg.inv(T_e_u) @ T_e_p
+        
+        p_homo = np.append(point_p, 1.0)
+        p_u = np.dot(T_u_p, p_homo)
+        return p_u[:3].tolist()
 
     def get_current_tcp_u_in_volume(self):
         """
