@@ -1141,13 +1141,30 @@ class LeftPanel(QWidget):
                             new_lines.append(line)
 
                         if updated:
+                            # 1. 重新写回本地主目录文件
                             with open(record_filename, 'w', encoding='utf-8') as f:
                                 f.writelines(new_lines)
                             print(f"System: Updated RCM and Diff for B{b_id_target}")
 
+                            # 2. 【核心修改】将更新后的文件同步复制到上一份代码中的 session_folder 目录
+                            if self.main_window and hasattr(self.main_window, 'ultrasound_tab'):
+                                ut = self.main_window.ultrasound_tab
+                                # 检查 ultrasound_tab 中是否有定义好的 session_folder
+                                if hasattr(ut, 'session_folder') and ut.session_folder:
+                                    if os.path.exists(ut.session_folder):
+                                        dest_path = os.path.join(ut.session_folder, record_filename)
+                                        import shutil  # 确保头部引入了 shutil，或者在这里局部引入
+                                        shutil.copy2(record_filename, dest_path) # 使用 copy2 覆盖并保留元数据
+                                        
+                                        # 在右侧面板打印覆盖同步成功的日志
+                                        if hasattr(self.main_window, 'right_panel'):
+                                            self.main_window.right_panel.log_message(
+                                                f"System: Updated file synced to session folder: {record_filename} (B{b_id_target} RCM column updated)"
+                                            )
+
             except Exception as e:
-                print(f"Error in _continue_b_point_rotation update: {e}")
-            # =================================================================
+                print(f"Error updating RCM column or syncing to session folder: {e}")
+            # ===================================================================
         
 
             # 3. [修改逻辑] 计算并发送 Volume 系下的 RCM 和 TCP_U 到 Navigation
