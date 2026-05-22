@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButt
 from PyQt5.QtCore import Qt, QTimer 
 from PyQt5.QtGui import QImage, QPixmap # 已修正：QImage 和 QPixmap 应该从 QtGui 导入
 from PyQt5.QtCore import pyqtSignal
+import pytransform3d.rotations as pyrot
 import threading  # [新增] 引入线程模块
 import shutil
 try:
@@ -437,24 +438,73 @@ class UltrasoundTab(QWidget):
         robot_control_window = self.main_window
         # 确保获取主窗口实例，并且它有 latest_tool_pose 属性
         if not robot_control_window or not hasattr(robot_control_window, 'latest_tool_pose'):
-             pose = [0.0] * 6
-             print("Warning: Cannot get latest tool pose. Using default pose.")
+            pose_e = [0.0] * 6
+            print("Warning: Cannot get latest tool pose. Using default pose.")
         else:
-             pose = robot_control_window.latest_tool_pose
+            raw_pose = robot_control_window.latest_tool_pose
+            tcp_name = getattr(robot_control_window, 'current_tcp_name', 'UNKNOWN')
+            
+            # 初始化目标 TCP_E 位姿（作为默认降级保障）
+            pose_e = list(raw_pose) 
+            
+            try:
+                # 获取 left_panel 实例利用辅助矩阵函数
+                lp = getattr(robot_control_window, 'left_panel', None)
+                
+                if lp:
+                    import pytransform3d.rotations as pyrot
+                    
+                    if tcp_name == "TCP_E":
+                        # =========================================================
+                        # 情况 A: 当前本身就是 TCP_E，反馈数据已是法兰中心位姿
+                        # =========================================================
+                        pose_e = list(raw_pose)
+                        
+                    elif tcp_name == "TCP_O":
+                        # =========================================================
+                        # 情况 B: 当前为 TCP_O，通过已确定的 T_E_O 反推绝对系下的 TCP_E 位姿
+                        # 公式: T_Base_E = T_Base_Current(即T_Base_O) @ inv(T_E_O)
+                        # =========================================================
+                        T_Base_Current = lp.pose_to_matrix(raw_pose)
+                        
+                        # 提取系统内部已确定并生效的确定 z_offset
+                        z_offset_calibrated = float(robot_control_window.right_panel.tcp_input_entries[2].text()) if robot_control_window.right_panel else 0.0
+                        tcp_o_def_pose = [0.0, 0.0, z_offset_calibrated, 0.0, 0.0, 157.50]
+                        
+                        T_E_O = lp.pose_to_matrix(tcp_o_def_pose)
+                        T_O_E = np.linalg.inv(T_E_O)
+                        
+                        # 矩阵相乘，得到基座系下的 TCP_E 矩阵
+                        T_Base_E = T_Base_Current @ T_O_E
+                        
+                        # 从矩阵中重新解算绝对位置 [x, y, z] 和 绝对姿态 [Rx, Ry, Rz]
+                        pos_e = T_Base_E[:3, 3]
+                        rpy_e = np.rad2deg(pyrot.euler_from_matrix(T_Base_E[:3, :3], 0, 1, 2, extrinsic=True))
+                        
+                        # 拼接最终输出的统一 TCP_E 位姿
+                        pose_e = [pos_e[0], pos_e[1], pos_e[2], rpy_e[0], rpy_e[1], rpy_e[2]]
+                        
+                    else:
+                        print(f"Warning: Current TCP is {tcp_name}, expected TCP_E or TCP_O. No conversion applied.")
+                else:
+                    print("Warning: left_panel instance missing.")
+
+            except Exception as e:
+                print(f"Error transferring pose from {tcp_name} to TCP_E: {e}")
+                # 异常发生时安全降级使用原始反馈，防止定时器高频保存崩溃
+                pose_e = list(raw_pose) 
         
-        # 格式化工具端位姿: (x,y,z,Rx,Ry,Rz)
-        if pose and len(pose) == 6:
-            # 姿态字符串格式: (x,y,z,Rx,Ry,Rz)，与旋转捕获命名格式一致
-            pose_str = "(" + ",".join([f"{p:.2f}" for p in pose]) + ")"
+        # 格式化转换后的工具端位姿: (x,y,z,Rx,Ry,Rz)
+        if pose_e and len(pose_e) == 6:
+            pose_str = "(" + ",".join([f"{p:.2f}" for p in pose_e]) + ")"
         else:
             pose_str = "POSE_NA"
             print("Warning: Cannot get valid tool pose data.")
 
-        # 序列号格式化，作为文件名开头的前缀，例如 0000, 0001, ... (使用 4 位格式)
-        # 实时保存使用序列号作为“旋转度数”的位置
+        # 序列号格式化 (4位前缀)
         rotation_step_str = f"{self.save_sequence_number:04d}"
         
-        # 构造新的文件名: (序列号/步数) + (机器臂末端位姿) + .png
+        # 构造新文件名并写入本地
         new_filename = f"{rotation_step_str}{pose_str}.png"
         image_path = os.path.join(self.real_time_save_folder, new_filename)
 
@@ -462,10 +512,7 @@ class UltrasoundTab(QWidget):
             self.save_sequence_number += 1
         else:
             print(f"Real-time image saving failed: {image_path}")
-            self._stop_real_time_save() # 保存失败则停止
-            # 移除原始的 QMessageBox.critical 调用，防止在定时器线程中阻塞 UI
-            
-    # --- [修改/新增] 实时保存逻辑 END ---
+            self._stop_real_time_save()
 
 
     def save_image(self):

@@ -1547,6 +1547,43 @@ class LeftPanel(QWidget):
         p_homo = np.append(point_p, 1.0)
         p_u = np.dot(T_u_p, p_homo)
         return p_u[:3].tolist()
+    
+    def transform_point_in_tcp_e_to_tcp_u(self, point_e):
+        """
+        [新增] 将 TCP_E 坐标系下的点转换到 TCP_U 坐标系。
+        公式: P_u = inv(T_e_u) * P_e
+        """
+        if self.tcp_u_definition_pose is None:
+            return point_e
+
+        # 获取 T_e_u 并求逆
+        T_e_u = self.pose_to_matrix(self.tcp_u_definition_pose)
+        T_u_e = np.linalg.inv(T_e_u)
+
+        p_homo = np.append(point_e, 1.0)
+        p_u = np.dot(T_u_e, p_homo)
+        return p_u[:3].tolist()
+
+    def transform_point_in_tcp_o_to_tcp_u(self, point_o):
+        """
+        [新增] 将 TCP_O 坐标系下的点转换到 TCP_U 坐标系。
+        公式: P_u = inv(T_base_u) * T_base_o * P_o
+        """
+        tcp_u_pose = getattr(self.main_window, 'tcp_e_in_ultrasound_zero_deg', None)  # T_base_u
+        latest_pose = self.latest_tool_pose                                         # 当前激活的 TCP_O (T_base_o)
+        
+        if any(x is None for x in [tcp_u_pose, latest_pose]):
+            return point_o
+
+        # 计算逆矩阵和变换链
+        T_u_base = np.linalg.inv(self.pose_to_matrix(tcp_u_pose))
+        T_base_o = self.pose_to_matrix(latest_pose)
+        
+        T_u_o = T_u_base @ T_base_o
+        
+        p_homo = np.append(point_o, 1.0)
+        p_u = np.dot(T_u_o, p_homo)
+        return p_u[:3].tolist()
 
     def get_current_tcp_u_in_volume(self):
         """
