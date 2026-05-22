@@ -85,7 +85,7 @@ class UltrasoundTab(QWidget):
         self.right_2x_btn = QPushButton("Ultrasound Probe Rotate Right 2x Deg")
 
         # [新增] 穿刺针旋转范围输入框和按钮
-        self.needle_yaw_range_input = QLineEdit("5") # 默认值 5
+        self.needle_yaw_range_input = QLineEdit("10") # 默认值 10
         self.needle_left_x_btn = QPushButton("Needle Rotate Left x Deg")
         self.needle_right_2x_btn = QPushButton("Needle Rotate Right 2x Deg")
         self.needle_save_sequence_number = 0  # [新增] 用于针旋转图片的编号计数器
@@ -818,7 +818,7 @@ class UltrasoundTab(QWidget):
         try:
             # 获取当前显示的值
             current_yaw = float(needle_tab.yaw_display.text())
-            new_yaw = current_yaw - x
+            new_yaw = current_yaw + x
             
             # 假设 flexible_needle_tab 有设置接口或直接修改输入框
             # 如果是直接操作输入框，请确保对应控件名正确，这里以修改显示值并同步为例
@@ -831,7 +831,7 @@ class UltrasoundTab(QWidget):
             print(f"Needle control error: {e}")
 
     def rotate_needle_right_2x(self):
-        """针右转 2x 度：每 0.1 度步进，等待倍福 Ready"""
+        """针右转 2x 度：每 0.5 度步进，等待倍福 Ready"""
         x = self._get_needle_x_value()
         if x is None: return
         
@@ -840,7 +840,7 @@ class UltrasoundTab(QWidget):
         
         self.target_total_rotation = 2 * x
         self.current_rotated_amount = 0.0
-        self.needle_step = 0.1
+        self.needle_step = 0.5
         
         # 定时器循环
         self.needle_timer = QTimer(self)
@@ -855,10 +855,10 @@ class UltrasoundTab(QWidget):
         if beckhoff_tab.movement_status_label.text().strip().lower() != "ready":
             return 
 
-        if self.current_rotated_amount < self.target_total_rotation:
-            # 从 yaw_display 获取当前值并增加 0.1
+        if self.current_rotated_amount <= self.target_total_rotation:
+            # 从 yaw_display 获取当前值并增加 self.needle_step
             current_yaw = float(needle_tab.yaw_display.text())
-            new_yaw = current_yaw + self.needle_step
+            new_yaw = current_yaw - self.needle_step
             
             # 更新输入框并应用
             needle_tab.yaw_input.setText(f"{new_yaw:.2f}")
@@ -868,4 +868,30 @@ class UltrasoundTab(QWidget):
         else:
             self.needle_timer.stop()
             QMessageBox.information(self, "Finished", f"Needle right rotation {self.target_total_rotation} deg completed.")
+
+    def _get_needle_x_value(self):
+        """
+        从 needle_yaw_range_input 中安全获取针的单侧旋转角度 X (浮点数)。
+        如果输入非法或为空，将弹出警告并返回 None。
+        """
+        # 确保控件已经存在
+        if not hasattr(self, 'needle_yaw_range_input'):
+            QMessageBox.critical(self, "错误", "未找到 needle_yaw_range_input 控件。")
+            return None
+
+        text_val = self.needle_yaw_range_input.text().strip()
+        
+        if not text_val:
+            QMessageBox.warning(self, "提示", "针旋转角度 X 不能为空，请输入数值。")
+            return None
+            
+        try:
+            x_value = float(text_val)
+            if x_value <= 0:
+                QMessageBox.warning(self, "输入错误", "针旋转角度 X 必须大于 0。")
+                return None
+            return x_value
+        except ValueError:
+            QMessageBox.warning(self, "输入错误", "针旋转角度输入框内必须为有效的数字。")
+            return None
         
