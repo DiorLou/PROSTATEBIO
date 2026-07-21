@@ -89,8 +89,6 @@ class UltrasoundTab(QWidget):
         self.needle_yaw_range_input = QLineEdit("10") # 默认值 10
         self.needle_left_x_btn = QPushButton("Needle Rotate Left x Deg")
         self.needle_right_2x_btn = QPushButton("Needle Rotate Right 2x Deg")
-        self.needle_save_sequence_number = 0  # [新增] 用于针旋转图片的编号计数器
-
         self.init_ui()
         self.setup_connections()
 
@@ -381,8 +379,8 @@ class UltrasoundTab(QWidget):
             QMessageBox.warning(self, "Warning", "No image available for saving. Please start ultrasound probe first.")
             return
 
-        # 获取定时器间隔 (ms)
-        interval_ms = self.real_time_save_timer.interval()
+        # 实时保存间隔 (ms)
+        interval_ms = 300
 
         # 1. 构造新的文件夹名称
         # 名称格式: "实时保存图像_间隔300ms_20251107_HHMMSS"
@@ -416,7 +414,7 @@ class UltrasoundTab(QWidget):
         self.save_btn.setStyleSheet("background-color: salmon;") 
         
         # 4. 启动定时器 (默认 300ms)
-        self.real_time_save_timer.start(300) 
+        self.real_time_save_timer.start(interval_ms)
         self.main_window.status_bar.showMessage(f"Status: Started real-time image saving to: {self.real_time_save_folder}")
 
     def _stop_real_time_save(self):
@@ -436,12 +434,11 @@ class UltrasoundTab(QWidget):
             return
 
         robot_control_window = self.main_window
-        # 确保获取主窗口实例，并且它有 latest_tool_pose 属性
-        if not robot_control_window or not hasattr(robot_control_window, 'latest_tool_pose'):
-            pose_e = [0.0] * 6
-            print("Warning: Cannot get latest tool pose. Using default pose.")
+        raw_pose = getattr(robot_control_window, 'latest_tool_pose', None) if robot_control_window else None
+        if raw_pose is None or len(raw_pose) != 6:
+            print("Warning: Cannot get a valid TCP_E pose; frame not saved.")
+            return
         else:
-            raw_pose = robot_control_window.latest_tool_pose
             tcp_name = getattr(robot_control_window, 'current_tcp_name', 'UNKNOWN')
             
             # 初始化目标 TCP_E 位姿（作为默认降级保障）
@@ -498,14 +495,21 @@ class UltrasoundTab(QWidget):
         if pose_e and len(pose_e) == 6:
             pose_str = "(" + ",".join([f"{p:.2f}" for p in pose_e]) + ")"
         else:
-            pose_str = "POSE_NA"
-            print("Warning: Cannot get valid tool pose data.")
+            print("Warning: Cannot calculate a valid TCP_E pose; frame not saved.")
+            return
 
-        # 序列号格式化 (4位前缀)
-        rotation_step_str = f"{self.save_sequence_number:04d}"
-        
-        # 构造新文件名并写入本地
-        new_filename = f"{rotation_step_str}{pose_str}.png"
+        needle_kinematics = self._get_current_needle_kinematics_in_tcp_u()
+        if needle_kinematics is None:
+            print("Warning: Current J0-J3 or TCP definitions are not ready; frame not saved.")
+            return
+
+        tip_u, vector_u = needle_kinematics
+        tip_u_str = "(" + ",".join([f"{p:.2f}" for p in tip_u]) + ")"
+        vector_u_str = "(" + ",".join([f"{v:.6f}" for v in vector_u]) + ")"
+
+        # 文件名: 四位序号 + TCP_E位姿 + TCP_U针尖 + TCP_U针向量
+        sequence_str = f"{self.save_sequence_number:04d}"
+        new_filename = f"{sequence_str}_E{pose_str}_TipU{tip_u_str}_VecU{vector_u_str}.png"
         image_path = os.path.join(self.real_time_save_folder, new_filename)
 
         if cv2.imwrite(image_path, self.current_frame):
@@ -513,6 +517,48 @@ class UltrasoundTab(QWidget):
         else:
             print(f"Real-time image saving failed: {image_path}")
             self._stop_real_time_save()
+
+    def _get_current_needle_kinematics_in_tcp_u(self):
+        """Return the current needle tip and unit direction vector in TCP_U."""
+        try:
+            needle_tab = self.main_window.flexible_needle_tab
+            left_panel = self.main_window.left_panel
+
+            if left_panel.tcp_p_definition_pose is None or left_panel.tcp_u_definition_pose is None:
+                return None
+
+            current_values = []
+            for axis in ("J0", "J1", "J2", "J3"):
+                value_text = needle_tab.pos_labels[f"Cur{axis}"].text().strip()
+                if not value_text or value_text == "--":
+                    return None
+                current_values.append(float(value_text))
+
+            current_j0, current_j1, current_j2, current_j3 = current_values
+            delta_j0 = current_j0 - needle_tab.manager.RESET_J0
+            delta_j1 = current_j1 - needle_tab.manager.RESET_J1
+            delta_j2 = current_j2 - needle_tab.manager.RESET_J2
+            delta_j3 = current_j3 - needle_tab.manager.RESET_J3
+
+            # J2 电机值为累计量，运动学模型需要相对量。
+            joint_values = [delta_j0, delta_j1, delta_j2 - delta_j1, delta_j3]
+            tip_p = needle_tab.robot.get_tip_of_needle(joint_values.copy())
+            vector_p = needle_tab.robot.get_needle_vector(joint_values.copy())
+
+            T_e_u = left_panel.pose_to_matrix(left_panel.tcp_u_definition_pose)
+            T_e_p = left_panel.pose_to_matrix(left_panel.tcp_p_definition_pose)
+            T_u_p = np.linalg.inv(T_e_u) @ T_e_p
+
+            tip_u = (T_u_p @ np.append(tip_p, 1.0))[:3]
+            vector_u = T_u_p[:3, :3] @ vector_p
+            vector_norm = np.linalg.norm(vector_u)
+            if vector_norm < 1e-9:
+                return None
+            vector_u = vector_u / vector_norm
+            return tip_u, vector_u
+        except (AttributeError, KeyError, TypeError, ValueError, np.linalg.LinAlgError) as e:
+            print(f"Needle kinematics calculation error: {e}")
+            return None
 
 
     def save_image(self):
@@ -798,67 +844,10 @@ class UltrasoundTab(QWidget):
         delay_ms = 500
         QTimer.singleShot(delay_ms, self._continue_rotation_after_delay)
 
-    def _save_single_image_with_pose(self, base_folder_name="Needle_Rotation"):
-        """
-        保存图片：文件夹名加时间戳，文件名使用编号 + 针尖在 TCP_U 下的坐标
-        """
-        if self.current_frame is None:
-            return None
-
-        # 1. 文件夹管理：如果是本次任务的第一张图（编号为0），创建带时间戳的文件夹
-        if self.needle_save_sequence_number == 0:
-            timestamp_folder = datetime.now().strftime("%Y%m%d_%H%M%S")
-            self.needle_session_folder = os.path.join(os.getcwd(), "image", f"{base_folder_name}_{timestamp_folder}")
-            os.makedirs(self.needle_session_folder, exist_ok=True)
-
-        # 2. 调用 _get_needle_pose_str 获取针尖在超声系下的 [x, y, z] 坐标字符串
-        # 内部执行：关节值 -> robot.get_tip_of_needle -> transform_point_p_to_tcp_u
-        pose_str = self._get_needle_pose_str()
-        
-        # 3. 构造文件名：{4位编号}_{位姿字符串}.png
-        filename = f"{self.needle_save_sequence_number:04d}_{pose_str}.png"
-        filepath = os.path.join(self.needle_session_folder, filename)
-        
-        # 4. 执行写入并递增编号
-        if cv2.imwrite(filepath, self.current_frame):
-            self.needle_save_sequence_number += 1
-            return filepath
-        return None
-    
-    def _get_needle_pose_str(self):
-        """根据当前关节值计算针尖在 TCP_U 下的坐标字符串"""
-        try:
-            nt = self.main_window.flexible_needle_tab
-            lp = self.main_window.left_panel
-            
-            # 获取当前关节增量与理论值 (参考您的逻辑)
-            delta_j0 = float(nt.inc_j0_input.text()) if nt.inc_j0_input.text() else 0.0
-            delta_j1 = float(nt.inc_j1_input.text()) if nt.inc_j1_input.text() else 0.0
-            delta_j2 = float(nt.inc_j2_input.text()) if nt.inc_j2_input.text() else 0.0
-            delta_j3 = float(nt.inc_j3_input.text()) if nt.inc_j3_input.text() else 0.0
-            
-            theoretical_j1 = delta_j1
-            theoretical_j2 = delta_j2 - delta_j1
-            
-            # 1. 计算针尖在针座系 (TCP_P) 下的点坐标 [x, y, z]
-            tip_pos_p = nt.robot.get_tip_of_needle([delta_j0, theoretical_j1, theoretical_j2, delta_j3])
-            
-            # 2. 调用 transform_point_p_to_tcp_u 将点转换到超声坐标系 (TCP_U)
-            tip_pos_u = lp.transform_point_p_to_tcp_u(tip_pos_p[:3])
-            
-            return "(" + ",".join([f"{p:.2f}" for p in tip_pos_u]) + ")"
-        except Exception as e:
-            print(f"Pose calculation error: {e}")
-            return "(0.00,0.00,0.00)"
-
     def rotate_needle_left_x(self):
-        """针左转 x 度：保存图片 -> 修改 Yaw -> Apply All"""
+        """针左转 x 度：修改 Yaw -> Apply All"""
         x = self._get_needle_x_value()
         if x is None: return
-        
-        # 重置计数器，确保每次新任务创建新文件夹
-        self.needle_save_sequence_number = 0
-        self._save_needle_step_image()
 
         # 使用您指定的 flexible_needle_tab
         needle_tab = self.main_window.flexible_needle_tab 
@@ -880,9 +869,6 @@ class UltrasoundTab(QWidget):
         """针右转 2x 度：一次计算目标 Yaw 并发送运动指令。"""
         x = self._get_needle_x_value()
         if x is None: return
-
-        self.needle_save_sequence_number = 0
-        self._save_needle_step_image()
 
         needle_tab = self.main_window.flexible_needle_tab
         movement_status = needle_tab.movement_status_label.text().strip().lower()
