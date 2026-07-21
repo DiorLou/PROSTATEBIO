@@ -251,7 +251,7 @@ class FlexibleNeedleTab(BeckhoffTab):
         self.yaw_display = QLineEdit("0.0")
         self.yaw_display.setReadOnly(False); self.yaw_display.setFixedWidth(60)
         self.yaw_display.setStyleSheet("background-color: #ffffff; border: 1px solid #ced4da;") # [修改] 白色背景
-        self.yaw_display.editingFinished.connect(self.update_inputs_from_yaw_pitch) # [新增] 输入完成触发计算
+        self.yaw_display.returnPressed.connect(self.apply_yaw_pitch_on_enter)
         
         yaw_btn_layout = QHBoxLayout()
         self.yaw_minus_btn = QPushButton("-")
@@ -283,7 +283,7 @@ class FlexibleNeedleTab(BeckhoffTab):
         self.pitch_display = QLineEdit("0.0")
         self.pitch_display.setReadOnly(False); self.pitch_display.setFixedWidth(60)
         self.pitch_display.setStyleSheet("background-color: #ffffff; border: 1px solid #ced4da;") # [修改] 白色背景
-        self.pitch_display.editingFinished.connect(self.update_inputs_from_yaw_pitch) # [新增] 输入完成触发计算
+        self.pitch_display.returnPressed.connect(self.apply_yaw_pitch_on_enter)
         
         pitch_btn_layout = QHBoxLayout()
         self.pitch_minus_btn = QPushButton("-")

@@ -832,10 +832,10 @@ class UltrasoundTab(QWidget):
             lp = self.main_window.left_panel
             
             # 获取当前关节增量与理论值 (参考您的逻辑)
-            delta_j0 = float(nt.yaw_display.text())
+            delta_j0 = float(nt.inc_j0_input.text()) if nt.inc_j0_input.text() else 0.0
             delta_j1 = float(nt.inc_j1_input.text()) if nt.inc_j1_input.text() else 0.0
             delta_j2 = float(nt.inc_j2_input.text()) if nt.inc_j2_input.text() else 0.0
-            delta_j3 = float(nt.j3_display.text())
+            delta_j3 = float(nt.inc_j3_input.text()) if nt.inc_j3_input.text() else 0.0
             
             theoretical_j1 = delta_j1
             theoretical_j2 = delta_j2 - delta_j1
@@ -867,54 +867,45 @@ class UltrasoundTab(QWidget):
             current_yaw = float(needle_tab.yaw_display.text())
             new_yaw = current_yaw + x
             
-            # 假设 flexible_needle_tab 有设置接口或直接修改输入框
-            # 如果是直接操作输入框，请确保对应控件名正确，这里以修改显示值并同步为例
-            needle_tab.yaw_input.setText(f"{new_yaw:.2f}") 
-            
-            # 执行 apply_joint_increment
-            needle_tab.apply_joint_increment() 
+            # 程序设置文本不会触发 editingFinished，需显式同步关节增量。
+            needle_tab.yaw_display.setText(f"{new_yaw:.2f}")
+            if not needle_tab.update_inputs_from_yaw_pitch():
+                return
+            needle_tab.apply_joint_increment()
             self.main_window.status_bar.showMessage(f"Status: Needle Left {x} deg Applied.")
         except Exception as e:
             print(f"Needle control error: {e}")
 
     def rotate_needle_right_2x(self):
-        """针右转 2x 度：每 0.5 度步进，等待倍福 Ready"""
+        """针右转 2x 度：一次计算目标 Yaw 并发送运动指令。"""
         x = self._get_needle_x_value()
         if x is None: return
-        
+
         self.needle_save_sequence_number = 0
         self._save_needle_step_image()
-        
-        self.target_total_rotation = 2 * x
-        self.current_rotated_amount = 0.0
-        self.needle_step = 0.5
-        
-        # 定时器循环
-        self.needle_timer = QTimer(self)
-        self.needle_timer.timeout.connect(self._needle_step_logic)
-        self.needle_timer.start(400) 
 
-    def _needle_step_logic(self):
         needle_tab = self.main_window.flexible_needle_tab
-        beckhoff_tab = self.main_window.beckhoff_tab 
+        movement_status = needle_tab.movement_status_label.text().strip().lower()
+        if not movement_status.endswith("ready"):
+            self.main_window.status_bar.showMessage(
+                "Status: Needle rotation ignored because Beckhoff is not Ready."
+            )
+            return
 
-        # 检查运动状态是否为 Ready
-        if beckhoff_tab.movement_status_label.text().strip().lower() != "ready":
-            return 
-
-        if self.current_rotated_amount <= self.target_total_rotation:
-            # 从 yaw_display 获取当前值并增加 self.needle_step
+        try:
+            total_rotation = 2 * x
             current_yaw = float(needle_tab.yaw_display.text())
-            new_yaw = current_yaw - self.needle_step
-            
-            # 更新输入框并应用
-            needle_tab.yaw_input.setText(f"{new_yaw:.2f}")
+            new_yaw = current_yaw - total_rotation
+
+            needle_tab.yaw_display.setText(f"{new_yaw:.2f}")
+            if not needle_tab.update_inputs_from_yaw_pitch():
+                return
             needle_tab.apply_joint_increment()
-            
-            self.current_rotated_amount += self.needle_step
-        else:
-            self.needle_timer.stop()
-            QMessageBox.information(self, "Finished", f"Needle right rotation {self.target_total_rotation} deg completed.")
+            self.main_window.status_bar.showMessage(
+                f"Status: Needle Right {total_rotation:.2f} deg Applied."
+            )
+        except (TypeError, ValueError) as e:
+            print(f"Needle control error: {e}")
 
     def _get_needle_x_value(self):
         """
@@ -941,4 +932,3 @@ class UltrasoundTab(QWidget):
         except ValueError:
             QMessageBox.warning(self, "输入错误", "针旋转角度输入框内必须为有效的数字。")
             return None
-        

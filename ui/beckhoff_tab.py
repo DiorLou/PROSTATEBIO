@@ -471,7 +471,7 @@ class BeckhoffTab(QWidget):
         self.yaw_plus_btn.setFixedWidth(30)
         self.yaw_display.setReadOnly(False); self.yaw_display.setFixedWidth(60)
         self.yaw_display.setStyleSheet("background-color: #ffffff; border: 1px solid #ced4da;") # [修改] 白色背景
-        self.yaw_display.editingFinished.connect(self.update_inputs_from_yaw_pitch) # [新增] 输入完成触发计算
+        self.yaw_display.returnPressed.connect(self.apply_yaw_pitch_on_enter)
         yaw_l.addWidget(self.yaw_minus_btn); yaw_l.addWidget(self.yaw_display); yaw_l.addWidget(self.yaw_plus_btn); yaw_l.addStretch()
         result_layout.addLayout(yaw_l, 4, 1, 1, 2)
         
@@ -486,7 +486,7 @@ class BeckhoffTab(QWidget):
         self.pitch_plus_btn.setFixedWidth(30)
         self.pitch_display.setReadOnly(False); self.pitch_display.setFixedWidth(60)
         self.pitch_display.setStyleSheet("background-color: #ffffff; border: 1px solid #ced4da;") # [修改] 白色背景
-        self.pitch_display.editingFinished.connect(self.update_inputs_from_yaw_pitch) # [新增] 输入完成触发计算
+        self.pitch_display.returnPressed.connect(self.apply_yaw_pitch_on_enter)
         pitch_l.addWidget(self.pitch_minus_btn); pitch_l.addWidget(self.pitch_display); pitch_l.addWidget(self.pitch_plus_btn); pitch_l.addStretch()
         result_layout.addLayout(pitch_l, 5, 1, 1, 2)
         
@@ -674,10 +674,18 @@ class BeckhoffTab(QWidget):
             
             # 3. 计算电机增量 (j1, j2)
             # 内部调用 calculate_joint_values，它会读取 vector_inputs 并计算结果填入 inc_j1_input 等
-            self.calculate_joint_values()
-                
+            if not self.calculate_joint_values():
+                return False
+            return True
+
         except Exception as e:
             print(f"update_inputs_from_yaw_pitch error: {e}")
+            return False
+
+    def apply_yaw_pitch_on_enter(self):
+        """Recalculate joint increments and move when Enter is pressed."""
+        if self.update_inputs_from_yaw_pitch():
+            self.apply_joint_increment()
 
     def update_current_yaw_pitch(self, j0, j1, j2, j3):
         try:
@@ -696,8 +704,8 @@ class BeckhoffTab(QWidget):
             current_val = float(display.text())
             display.setText(f"{current_val + delta:.1f}")
             # 修改数值后，立即更新 Joint 电机输入框
-            self.update_inputs_from_yaw_pitch()
-            self.apply_joint_increment()
+            if self.update_inputs_from_yaw_pitch():
+                self.apply_joint_increment()
         except ValueError:
             pass
 
@@ -746,9 +754,9 @@ class BeckhoffTab(QWidget):
             self.pitch_display.setText(f"{target_pitch:.1f}")
             
             # 执行统一的更新逻辑
-            self.update_inputs_from_yaw_pitch()
-            # 应用计算出的增量到电机目标位置
-            self.apply_joint_increment()
+            if self.update_inputs_from_yaw_pitch():
+                # 应用计算出的增量到电机目标位置
+                self.apply_joint_increment()
             self.trocar_phase_1_state = 3 
         elif self.trocar_phase_1_state == 3 and "Movement Completed" in msg:
             self.trocar_phase_1_state = 0
@@ -765,16 +773,19 @@ class BeckhoffTab(QWidget):
                  needle_vector = needle_vector / norm
             elif norm < 1e-6:
                  QMessageBox.critical(self, "Input Error", "Vector magnitude is close to zero.")
-                 return
+                 return False
             joint_values = self.robot.get_joint23_value(needle_vector)
             actual_j1 = joint_values[0]
             actual_j2 = joint_values[1] + joint_values[0]
             self.inc_j1_input.setText(f"{actual_j1:.4f}")
             self.inc_j2_input.setText(f"{actual_j2:.4f}")
+            return True
         except ValueError:
             QMessageBox.critical(self, "Input Error", "Vector X, Y, Z must be valid numbers!")
+            return False
         except Exception as e:
             QMessageBox.critical(self, "Calculation Error", f"Inverse kinematics solution failed: {e}")
+            return False
 
     def trigger_move(self):
         try:
@@ -1021,10 +1032,9 @@ class BeckhoffTab(QWidget):
                 self.pitch_display.setText(f"{target_pitch - 2:.1f}")
                 
                 # 执行统一的更新逻辑（更新 vector_inputs 和电机增量框）
-                self.update_inputs_from_yaw_pitch()
-                
-                # 继续执行后续的电机移动指令
-                self.apply_joint_increment()
+                if self.update_inputs_from_yaw_pitch():
+                    # 继续执行后续的电机移动指令
+                    self.apply_joint_increment()
                 
             else:
                 # --- 5. 点击“否”：不执行移动，维持当前状态，等待再次点击 ---
