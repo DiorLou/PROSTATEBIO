@@ -30,6 +30,12 @@ class UltrasoundTab(QWidget):
     DEFAULT_RIGHT_CROP  = 564
     DEFAULT_TOP_CROP    = 131
     DEFAULT_BOTTOM_CROP = 551
+
+    # TCP_U -> default cropped ultrasound image calibration.
+    MM_PER_PIXEL = 66.0 / 420.0
+    TCP_U_ORIGIN_U_PX = 406.0
+    TCP_U_ORIGIN_V_PX = 420.0 + 10.0 / MM_PER_PIXEL
+    KINEMATIC_BOX_HALF_WIDTH_PX = 10.0
     
     def __init__(self, tcp_manager, parent=None):
         super().__init__(parent)
@@ -503,14 +509,24 @@ class UltrasoundTab(QWidget):
             print("Warning: Current J0-J3 or TCP definitions are not ready; saving with empty TipU/VecU.")
             tip_u_str = ""
             vector_u_str = ""
+            box_str = ""
         else:
             tip_u, vector_u = needle_kinematics
             tip_u_str = "(" + ",".join([f"{p:.2f}" for p in tip_u]) + ")"
             vector_u_str = "(" + ",".join([f"{v:.6f}" for v in vector_u]) + ")"
+            box_corners = self._get_kinematic_box_pixels(tip_u, vector_u)
+            if box_corners is None:
+                box_str = ""
+            else:
+                box_str = "(" + ",".join(
+                    [f"{coord:.2f}" for corner in box_corners for coord in corner]
+                ) + ")"
 
-        # 文件名: 四位序号 + TCP_E位姿 + TCP_U针尖 + TCP_U针向量
+        # 文件名: 四位序号 + TCP_E位姿 + TCP_U针尖/向量 + 运动学预测框
         sequence_str = f"{self.save_sequence_number:04d}"
-        new_filename = f"{sequence_str}_E{pose_str}_TipU{tip_u_str}_VecU{vector_u_str}.png"
+        new_filename = (
+            f"{sequence_str}_E{pose_str}_TipU{tip_u_str}_VecU{vector_u_str}_Box{box_str}.png"
+        )
         image_path = os.path.join(self.real_time_save_folder, new_filename)
 
         if cv2.imwrite(image_path, self.current_frame):
@@ -560,6 +576,78 @@ class UltrasoundTab(QWidget):
         except (AttributeError, KeyError, TypeError, ValueError, np.linalg.LinAlgError) as e:
             print(f"Needle kinematics calculation error: {e}")
             return None
+
+    def _get_kinematic_box_pixels(self, tip_u, vector_u):
+        """Project the kinematic needle ray to the cropped image and return four box corners."""
+        if self.current_frame is None:
+            return None
+
+        image_height, image_width = self.current_frame.shape[:2]
+        if image_width <= 0 or image_height <= 0:
+            return None
+
+        origin_u = self.TCP_U_ORIGIN_U_PX
+        origin_v = self.TCP_U_ORIGIN_V_PX
+
+        tip_px = np.array([
+            origin_u - float(tip_u[2]) / self.MM_PER_PIXEL,
+            origin_v - float(tip_u[0]) / self.MM_PER_PIXEL,
+        ], dtype=float)
+
+        # The prediction box is meaningful only when the projected needle tip
+        # itself is visible in the saved ultrasound image.  Do not let
+        # clipLine turn an out-of-frame tip into an artificial boundary point.
+        if not (
+            0.0 <= tip_px[0] <= image_width - 1
+            and 0.0 <= tip_px[1] <= image_height - 1
+        ):
+            return None
+
+        direction_px = np.array([
+            -float(vector_u[2]) / self.MM_PER_PIXEL,
+            -float(vector_u[0]) / self.MM_PER_PIXEL,
+        ], dtype=float)
+        direction_norm = np.linalg.norm(direction_px)
+        if direction_norm < 1e-9:
+            return None
+        direction_px /= direction_norm
+
+        # VecU points from the shaft towards the tip, so trace from the tip in
+        # the opposite direction until the shaft centreline reaches the image
+        # boundary.  The tip supplies two corners and that boundary point
+        # supplies the other two corners.
+        ray_length = 4.0 * np.hypot(image_width, image_height)
+        shaft_px = tip_px - direction_px * ray_length
+        clip_rect = (0, 0, image_width, image_height)
+        visible, clipped_shaft, clipped_tip = cv2.clipLine(
+            clip_rect,
+            tuple(np.rint(shaft_px).astype(int)),
+            tuple(np.rint(tip_px).astype(int)),
+        )
+        if not visible:
+            return None
+
+        start = np.asarray(clipped_shaft, dtype=float)
+        # tip_px has already been verified to be inside the image. Keep its
+        # floating-point projection so the two tip-side corners are determined
+        # by the actual projected tip rather than clipLine's rounded endpoint.
+        end = tip_px
+        segment = end - start
+        segment_norm = np.linalg.norm(segment)
+        if segment_norm < 1e-9:
+            return None
+
+        segment /= segment_norm
+        normal = np.array([-segment[1], segment[0]]) * self.KINEMATIC_BOX_HALF_WIDTH_PX
+        corners = np.array([
+            start + normal,
+            end + normal,
+            end - normal,
+            start - normal,
+        ])
+        corners[:, 0] = np.clip(corners[:, 0], 0, image_width - 1)
+        corners[:, 1] = np.clip(corners[:, 1], 0, image_height - 1)
+        return corners.tolist()
 
 
     def save_image(self):
