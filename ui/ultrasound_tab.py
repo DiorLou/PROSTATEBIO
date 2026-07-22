@@ -500,12 +500,13 @@ class UltrasoundTab(QWidget):
 
         needle_kinematics = self._get_current_needle_kinematics_in_tcp_u()
         if needle_kinematics is None:
-            print("Warning: Current J0-J3 or TCP definitions are not ready; frame not saved.")
-            return
-
-        tip_u, vector_u = needle_kinematics
-        tip_u_str = "(" + ",".join([f"{p:.2f}" for p in tip_u]) + ")"
-        vector_u_str = "(" + ",".join([f"{v:.6f}" for v in vector_u]) + ")"
+            print("Warning: Current J0-J3 or TCP definitions are not ready; saving with empty TipU/VecU.")
+            tip_u_str = ""
+            vector_u_str = ""
+        else:
+            tip_u, vector_u = needle_kinematics
+            tip_u_str = "(" + ",".join([f"{p:.2f}" for p in tip_u]) + ")"
+            vector_u_str = "(" + ",".join([f"{v:.6f}" for v in vector_u]) + ")"
 
         # 文件名: 四位序号 + TCP_E位姿 + TCP_U针尖 + TCP_U针向量
         sequence_str = f"{self.save_sequence_number:04d}"
