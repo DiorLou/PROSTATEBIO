@@ -20,6 +20,8 @@ class PitchFeedbackStatus(str, Enum):
     TERMINATED_OUT_OF_PLANE = "terminated_out_of_plane"
     TERMINATED_INVALID_MEASUREMENT = "terminated_invalid_measurement"
     TERMINATED_STEP_LIMIT = "terminated_step_limit"
+    INSERTION_PERMISSION_GRANTED = "insertion_permission_granted"
+    INSERTION_PERMISSION_CONSUMED = "insertion_permission_consumed"
 
 
 @dataclass(frozen=True)
@@ -113,6 +115,7 @@ class NeedlePitchFeedbackController:
         self.feedback_step = 0
         self.integral_deg = 0.0
         self.previous_error_deg: Optional[float] = None
+        self.insertion_permission_pending = False
         self.last_status = PitchFeedbackStatus.MODEL_NOT_READY
 
     def reset(self) -> None:
@@ -120,6 +123,7 @@ class NeedlePitchFeedbackController:
         self.feedback_step = 0
         self.integral_deg = 0.0
         self.previous_error_deg = None
+        self.insertion_permission_pending = False
 
     def begin(self, *, model_ready: bool) -> PitchFeedbackDecision:
         """Start a session only after a real model has explicitly been loaded."""
@@ -137,6 +141,36 @@ class NeedlePitchFeedbackController:
         self.reset()
         self.last_status = status
         return PitchFeedbackDecision(status=status, feedback_step=step)
+
+    def grant_single_insertion_permission(self) -> bool:
+        """Arm one insertion after a valid in-plane feedback update.
+
+        A boolean is used instead of a counter so repeated button presses can
+        never queue multiple future insertions.
+        """
+        if (
+            not self.active
+            or self.feedback_step >= self.config.max_feedback_steps
+            or self.last_status not in (
+                PitchFeedbackStatus.ADJUST_PITCH,
+                PitchFeedbackStatus.WITHIN_DEADBAND,
+            )
+        ):
+            return False
+
+        self.insertion_permission_pending = True
+        self.last_status = PitchFeedbackStatus.INSERTION_PERMISSION_GRANTED
+        return True
+
+    def consume_single_insertion_permission(self) -> bool:
+        """Consume one armed insertion; the caller may then move the needle."""
+        if not self.active or not self.insertion_permission_pending:
+            return False
+
+        self.insertion_permission_pending = False
+        self.feedback_step += 1
+        self.last_status = PitchFeedbackStatus.INSERTION_PERMISSION_CONSUMED
+        return True
 
     def update(
         self,
@@ -181,8 +215,6 @@ class NeedlePitchFeedbackController:
         pitch_error_deg = normalize_angle_deg(
             target_pitch_deg - measured_pitch_deg
         )
-        self.feedback_step += 1
-
         if abs(pitch_error_deg) <= self.config.deadband_deg:
             self.integral_deg = 0.0
             self.previous_error_deg = pitch_error_deg

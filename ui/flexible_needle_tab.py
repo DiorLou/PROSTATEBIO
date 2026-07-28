@@ -8,6 +8,10 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen, QColor, QFont
 from PyQt5.QtCore import Qt, pyqtSignal, QPoint, QTimer
+from core.needle_pitch_feedback import (
+    NeedlePitchFeedbackController,
+    PitchFeedbackStatus,
+)
 from ui.beckhoff_tab import BeckhoffManager, BeckhoffTab
 
 # =============================================================================
@@ -146,6 +150,9 @@ class FlexibleNeedleTab(BeckhoffTab):
         self.last_commanded_pitch = None # 上一次 adjust needle dir 计算出的理论 Pitch
         # [新增] 用于缓存计算出的总距离 d4
         self.cached_d4 = None
+        # The visual model is not trained/loaded yet. This controller only
+        # manages feedback decisions and one-shot insertion permission.
+        self.pitch_feedback_controller = NeedlePitchFeedbackController()
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -348,6 +355,17 @@ class FlexibleNeedleTab(BeckhoffTab):
         self.flow_needle_in_p3_btn = QPushButton("Needle Insertion\nPhase 2")
         
         self.flow_needle_out_btn = QPushButton("Needle\nRetraction")
+        self.feedback_insertion_btn = QPushButton(
+            "Permit One Feedback\nInsertion"
+        )
+        self.feedback_insertion_btn.setEnabled(False)
+        self.feedback_insertion_status = QLabel(
+            "Pitch feedback model: not loaded"
+        )
+        self.feedback_insertion_status.setAlignment(Qt.AlignCenter)
+        self.feedback_insertion_status.setStyleSheet(
+            "color: #8a5a00; font-weight: bold;"
+        )
 
         # 压缩宽度
         BTN_WIDTH = 115
@@ -437,6 +455,15 @@ class FlexibleNeedleTab(BeckhoffTab):
         biopsy_layout.addWidget(self._create_h_line_widget(), 8, 3)
         biopsy_layout.addWidget(self._create_h_line_widget(), 8, 4)
         biopsy_layout.addWidget(self._create_t_junction_widget(), 8, 5)
+
+        # The button only grants one non-stackable insertion permit. It is
+        # enabled by the future model adapter after a valid in-plane result.
+        feedback_permit_container = QWidget()
+        feedback_permit_layout = QHBoxLayout(feedback_permit_container)
+        feedback_permit_layout.setContentsMargins(0, 5, 0, 5)
+        feedback_permit_layout.addWidget(self.feedback_insertion_btn)
+        feedback_permit_layout.addWidget(self.feedback_insertion_status)
+        biopsy_layout.addWidget(feedback_permit_container, 9, 0, 1, 5)
 
         # Row 9+: Trocar Retraction Flow (原本是 Row 11+)
         biopsy_layout.addWidget(self._create_v_arrow_widget(), 9, 5, alignment=Qt.AlignCenter)
@@ -559,6 +586,9 @@ class FlexibleNeedleTab(BeckhoffTab):
         # self.flow_needle_in_p2_btn.clicked.connect(self.run_needle_insertion_phase_2)
         self.flow_needle_in_p3_btn.clicked.connect(self.run_needle_insertion_phase_3)
         self.flow_needle_out_btn.clicked.connect(self.run_needle_retraction)
+        self.feedback_insertion_btn.clicked.connect(
+            self.grant_one_feedback_insertion
+        )
 
         # [NEW] Yaw/Pitch Connections (+/- Buttons)
         self.yaw_minus_btn.clicked.connect(lambda: self.adjust_yaw_pitch_step("yaw", -1.0))
@@ -880,6 +910,63 @@ class FlexibleNeedleTab(BeckhoffTab):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to calc d4: {e}")
             self.cached_d4 = None
+
+    def set_pitch_feedback_model_ready(self, model_ready):
+        """Enable feedback only after a real model has been loaded."""
+        decision = self.pitch_feedback_controller.begin(
+            model_ready=bool(model_ready)
+        )
+        self.feedback_insertion_btn.setEnabled(False)
+        if decision.status == PitchFeedbackStatus.READY:
+            self.feedback_insertion_status.setText(
+                "Waiting for a valid in-plane measurement"
+            )
+        else:
+            self.feedback_insertion_status.setText(
+                "Pitch feedback model: not loaded"
+            )
+
+    def handle_pitch_feedback_decision(self, decision):
+        """Update the permit UI after a future model feedback decision."""
+        valid_statuses = (
+            PitchFeedbackStatus.ADJUST_PITCH,
+            PitchFeedbackStatus.WITHIN_DEADBAND,
+        )
+        is_valid = decision.status in valid_statuses
+        self.feedback_insertion_btn.setEnabled(is_valid)
+
+        if is_valid:
+            self.feedback_insertion_status.setText(
+                f"Step {decision.feedback_step + 1}: click to permit one insertion"
+            )
+        else:
+            self.feedback_insertion_status.setText(
+                f"Feedback stopped: {decision.status.value}"
+            )
+
+    def grant_one_feedback_insertion(self):
+        """Grant one permit; clicking repeatedly cannot queue more steps."""
+        if self.pitch_feedback_controller.grant_single_insertion_permission():
+            self.feedback_insertion_btn.setEnabled(False)
+            self.feedback_insertion_status.setText(
+                "One insertion permitted; waiting for execution"
+            )
+        else:
+            self.feedback_insertion_btn.setEnabled(False)
+            self.feedback_insertion_status.setText(
+                "No valid in-plane feedback result; insertion not permitted"
+            )
+
+    def consume_feedback_insertion_permission(self):
+        """Called by the future feedback executor immediately before motion."""
+        permitted = (
+            self.pitch_feedback_controller.consume_single_insertion_permission()
+        )
+        if permitted:
+            self.feedback_insertion_status.setText(
+                "Permit consumed; new click required for the next insertion"
+            )
+        return permitted
 
     def run_needle_insertion_phase_1(self):
         try:

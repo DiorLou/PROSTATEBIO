@@ -86,6 +86,56 @@ class NeedlePitchFeedbackTests(unittest.TestCase):
         self.assertEqual(decision.delta_pitch_deg, 0.2)
         self.assertNotIn("yaw", decision.__dataclass_fields__)
 
+    def test_each_insertion_requires_a_new_external_permission(self):
+        controller = NeedlePitchFeedbackController()
+        controller.begin(model_ready=True)
+        controller.update(
+            measured_vector_uv=[1.0, 0.0],
+            target_vector_p=[0.0, 1.0, 0.0],
+            rotation_u_from_p=ROTATION_U_FROM_P,
+            is_in_plane=True,
+            in_plane_confidence=0.99,
+        )
+
+        self.assertTrue(controller.grant_single_insertion_permission())
+        self.assertTrue(controller.consume_single_insertion_permission())
+        self.assertFalse(controller.consume_single_insertion_permission())
+        self.assertEqual(controller.feedback_step, 1)
+
+        # A new valid model result and a new button press are both required.
+        controller.update(
+            measured_vector_uv=[1.0, 0.0],
+            target_vector_p=[0.0, 1.0, 0.0],
+            rotation_u_from_p=ROTATION_U_FROM_P,
+            is_in_plane=True,
+            in_plane_confidence=0.99,
+        )
+        self.assertFalse(controller.consume_single_insertion_permission())
+        self.assertTrue(controller.grant_single_insertion_permission())
+        self.assertTrue(controller.consume_single_insertion_permission())
+        self.assertEqual(controller.feedback_step, 2)
+
+    def test_out_of_plane_result_clears_an_unused_permission(self):
+        controller = NeedlePitchFeedbackController()
+        controller.begin(model_ready=True)
+        controller.update(
+            measured_vector_uv=[1.0, 0.0],
+            target_vector_p=[0.0, 1.0, 0.0],
+            rotation_u_from_p=ROTATION_U_FROM_P,
+            is_in_plane=True,
+            in_plane_confidence=0.99,
+        )
+        self.assertTrue(controller.grant_single_insertion_permission())
+
+        controller.update(
+            measured_vector_uv=[1.0, 0.0],
+            target_vector_p=[0.0, 1.0, 0.0],
+            rotation_u_from_p=ROTATION_U_FROM_P,
+            is_in_plane=False,
+            in_plane_confidence=0.99,
+        )
+        self.assertFalse(controller.consume_single_insertion_permission())
+
 
 if __name__ == "__main__":
     unittest.main()
