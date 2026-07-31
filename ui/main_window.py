@@ -15,7 +15,7 @@ class RobotControlWindow(QMainWindow):
     VARIABLE_NAMES = ['x0', 'x1', 'x2', 'x3']
     A_PARAMS = [258.75, 0, 0, 0]
     ALPHA_PARAMS = [0, -65, -30, 34]
-    D_PARAMS = ['x0 - 206.717', 571.008, 0, 'x3 - 16']
+    D_PARAMS = ['x0 - 206.717', 571.008, 0, 'x3 - 36.318']
     THETA_PARAMS = [30, 'x1', 'x2 + 85.96', 0]
 
     def __init__(self):
