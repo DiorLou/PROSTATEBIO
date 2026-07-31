@@ -32,6 +32,8 @@ class UltrasoundTab(QWidget):
     DEFAULT_BOTTOM_CROP = 551
 
     # TCP_U -> default cropped ultrasound image calibration.
+    # Image u follows -TCP_U z; image v follows +TCP_U y for the current
+    # cropped ultrasound captures.
     MM_PER_PIXEL = 66.0 / 420.0
     TCP_U_ORIGIN_U_PX = 406.0
     TCP_U_ORIGIN_V_PX = 420.0 + 10.0 / MM_PER_PIXEL
@@ -591,7 +593,7 @@ class UltrasoundTab(QWidget):
 
         tip_px = np.array([
             origin_u - float(tip_u[2]) / self.MM_PER_PIXEL,
-            origin_v - float(tip_u[0]) / self.MM_PER_PIXEL,
+            origin_v + float(tip_u[1]) / self.MM_PER_PIXEL,
         ], dtype=float)
 
         # The prediction box is meaningful only when the projected needle tip
@@ -605,7 +607,7 @@ class UltrasoundTab(QWidget):
 
         direction_px = np.array([
             -float(vector_u[2]) / self.MM_PER_PIXEL,
-            -float(vector_u[0]) / self.MM_PER_PIXEL,
+            float(vector_u[1]) / self.MM_PER_PIXEL,
         ], dtype=float)
         direction_norm = np.linalg.norm(direction_px)
         if direction_norm < 1e-9:
