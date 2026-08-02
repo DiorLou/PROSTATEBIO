@@ -6,17 +6,20 @@ from core.needle_pitch_feedback import (
     NeedlePitchFeedbackController,
     PitchFeedbackConfig,
     PitchFeedbackStatus,
+    biopsy_center_from_unfired_tip_p,
     measured_pitch_from_uv_deg,
 )
 
 
 # This rotation maps TCP_P +y (zero-pitch needle direction) to image +u,
-# which is TCP_U -z. TCP_P +z maps to image +v, which is TCP_U -x.
+# which is TCP_U -z. TCP_P +z maps to image +v, which is TCP_U +y.
 ROTATION_U_FROM_P = np.array([
-    [0.0, 0.0, -1.0],
     [1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0],
     [0.0, -1.0, 0.0],
 ])
+TRANSFORM_U_FROM_P = np.eye(4)
+TRANSFORM_U_FROM_P[:3, :3] = ROTATION_U_FROM_P
 
 
 class NeedlePitchFeedbackTests(unittest.TestCase):
@@ -85,6 +88,54 @@ class NeedlePitchFeedbackTests(unittest.TestCase):
         self.assertAlmostEqual(decision.pitch_error_deg, 10.0)
         self.assertEqual(decision.delta_pitch_deg, 0.2)
         self.assertNotIn("yaw", decision.__dataclass_fields__)
+
+    def test_biopsy_center_is_ahead_of_unfired_tip(self):
+        center = biopsy_center_from_unfired_tip_p(
+            [1.0, 2.0, 3.0],
+            [0.0, 3.0, 4.0],
+            center_offset_mm=10.0,
+        )
+        np.testing.assert_allclose(center, [1.0, 8.0, 11.0])
+
+    def test_biopsy_center_target_drives_pitch_goal(self):
+        controller = NeedlePitchFeedbackController(
+            PitchFeedbackConfig(
+                kp=1.0,
+                max_pitch_step_deg=0.2,
+                biopsy_center_offset_mm=10.0,
+            )
+        )
+        controller.begin(model_ready=True)
+
+        target_pitch_deg = 12.0
+        target_biopsy_center_p = [
+            0.0,
+            10.0 * np.cos(np.radians(target_pitch_deg)),
+            10.0 * np.sin(np.radians(target_pitch_deg)),
+        ]
+        decision = controller.update_for_biopsy_center(
+            measured_tip_uv=[406.0, 420.0 + 10.0 / (66.0 / 420.0)],
+            measured_vector_uv=[1.0, 0.0],
+            target_biopsy_center_p=target_biopsy_center_p,
+            transform_u_from_p=TRANSFORM_U_FROM_P,
+            origin_u_px=406.0,
+            origin_v_px=420.0 + 10.0 / (66.0 / 420.0),
+            mm_per_pixel=66.0 / 420.0,
+            is_in_plane=True,
+            in_plane_confidence=0.99,
+        )
+
+        self.assertEqual(decision.status, PitchFeedbackStatus.ADJUST_PITCH)
+        self.assertAlmostEqual(decision.measured_pitch_deg, 0.0)
+        self.assertAlmostEqual(decision.target_pitch_deg, target_pitch_deg)
+        self.assertAlmostEqual(decision.pitch_error_deg, target_pitch_deg)
+        self.assertEqual(decision.delta_pitch_deg, 0.2)
+        np.testing.assert_allclose(
+            decision.measured_biopsy_center_p,
+            [0.0, 10.0, 0.0],
+            atol=1e-7,
+        )
+        self.assertGreater(decision.biopsy_center_error_mm, 0.0)
 
     def test_each_insertion_requires_a_new_external_permission(self):
         controller = NeedlePitchFeedbackController()
