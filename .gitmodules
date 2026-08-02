@@ -1,0 +1,3 @@
+[submodule "mini-book"]
+	path = mini-book
+	url = https://github.com/DiorLou/mini-book.git
