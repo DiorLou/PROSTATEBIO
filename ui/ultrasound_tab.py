@@ -37,7 +37,8 @@ class UltrasoundTab(QWidget):
     MM_PER_PIXEL = 66.0 / 420.0
     TCP_U_ORIGIN_U_PX = 406.0
     TCP_U_ORIGIN_V_PX = 420.0 + 10.0 / MM_PER_PIXEL
-    KINEMATIC_BOX_HALF_WIDTH_PX = 10.0
+    KINEMATIC_BOX_HALF_WIDTH_PX = 25.0
+    UNFIRED_NEEDLE_RETRACTION_MM = 26.0
     
     def __init__(self, tcp_manager, parent=None):
         super().__init__(parent)
@@ -561,7 +562,9 @@ class UltrasoundTab(QWidget):
 
             # J2 电机值为累计量，运动学模型需要相对量。
             joint_values = [delta_j0, delta_j1, delta_j2 - delta_j1, delta_j3]
-            tip_p = needle_tab.robot.get_tip_of_needle(joint_values.copy())
+            tip_joint_values = joint_values.copy()
+            tip_joint_values[3] -= self.UNFIRED_NEEDLE_RETRACTION_MM
+            tip_p = needle_tab.robot.get_tip_of_needle(tip_joint_values)
             vector_p = needle_tab.robot.get_needle_vector(joint_values.copy())
 
             T_e_u = left_panel.pose_to_matrix(left_panel.tcp_u_definition_pose)
