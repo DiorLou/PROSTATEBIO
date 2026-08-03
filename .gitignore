@@ -20,3 +20,9 @@ biopsy_entry_replan.txt
 .venv311/
 d2l-zh/
 image/
+phantom_manifest.csv
+phantom_in_plane_labels.csv
+phantom_prior_masks/
+phantom_prior_mask_check*/
+debug_box_projection*/
+__pycache__/
