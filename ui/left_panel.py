@@ -1110,57 +1110,35 @@ class LeftPanel(QWidget):
                 except:
                     b_id_target = None
 
-                if b_id_target is not None and self.rcm_vol_for_b is not None:
+                if b_id_target is not None:
                     # 计算差值向量 (rcm_vol - a_vol)
-                    diff_vec = np.array(self.rcm_vol_for_b) - a_vol
+                    rcm_vol_xyz, T_Vol_U = self._calculate_rcm_and_tcp_u_in_volume(t_base_e_override=T_Base_E_Final_Calc)
+                    self.rcm_vol_for_b = rcm_vol_xyz.tolist()
+                    diff_vec = rcm_vol_xyz - a_vol
                     
                     record_filename = f"B points in Volume for {a_id_str}.txt"
-                    fmt_coord = "(%.3f, %.3f, %.3f)"
-                    rcm_str = fmt_coord % tuple(self.rcm_vol_for_b)
-                    diff_str = fmt_coord % tuple(diff_vec)
+                    updated = self._update_b_point_volume_record(
+                        record_filename,
+                        b_id_target,
+                        self.rcm_vol_for_b,
+                        diff_vec,
+                        T_Vol_U,
+                    )
+                    if updated:
+                        print(f"System: Updated RCM, Diff and TCP_U for B{b_id_target}")
 
-                    if os.path.exists(record_filename):
-                        with open(record_filename, 'r', encoding='utf-8') as f:
-                            lines = f.readlines()
+                        if self.main_window and hasattr(self.main_window, 'ultrasound_tab'):
+                            ut = self.main_window.ultrasound_tab
+                            if hasattr(ut, 'session_folder') and ut.session_folder:
+                                if os.path.exists(ut.session_folder):
+                                    dest_path = os.path.join(ut.session_folder, record_filename)
+                                    shutil.copy2(record_filename, dest_path)
 
-                        new_lines = []
-                        updated = False
-                        target_id_label = f"B{b_id_target}"
+                                    if hasattr(self.main_window, 'right_panel'):
+                                        self.main_window.right_panel.log_message(
+                                            f"System: Updated file synced to session folder: {record_filename} (B{b_id_target} RCM/Diff/TCP_U updated)"
+                                        )
 
-                        for line in lines:
-                            if "|" in line:
-                                parts = line.split('|')
-                                if parts[0].strip() == target_id_label:
-                                    if len(parts) >= 8: # 现在总共有 8 列
-                                        # 替换第 6 列 (索引 5): RCM point
-                                        parts[5] = f" {rcm_str:<30} "
-                                        # 替换第 7 列 (索引 6): rcm_vol - a_vol
-                                        parts[6] = f" {diff_str:<30} "
-                                        line = "|".join(parts)
-                                        updated = True
-                            new_lines.append(line)
-
-                        if updated:
-                            # 1. 重新写回本地主目录文件
-                            with open(record_filename, 'w', encoding='utf-8') as f:
-                                f.writelines(new_lines)
-                            print(f"System: Updated RCM and Diff for B{b_id_target}")
-
-                            # 2. 【核心修改】将更新后的文件同步复制到上一份代码中的 session_folder 目录
-                            if self.main_window and hasattr(self.main_window, 'ultrasound_tab'):
-                                ut = self.main_window.ultrasound_tab
-                                # 检查 ultrasound_tab 中是否有定义好的 session_folder
-                                if hasattr(ut, 'session_folder') and ut.session_folder:
-                                    if os.path.exists(ut.session_folder):
-                                        dest_path = os.path.join(ut.session_folder, record_filename)
-                                        import shutil  # 确保头部引入了 shutil，或者在这里局部引入
-                                        shutil.copy2(record_filename, dest_path) # 使用 copy2 覆盖并保留元数据
-                                        
-                                        # 在右侧面板打印覆盖同步成功的日志
-                                        if hasattr(self.main_window, 'right_panel'):
-                                            self.main_window.right_panel.log_message(
-                                                f"System: Updated file synced to session folder: {record_filename} (B{b_id_target} RCM column updated)"
-                                            )
 
             except Exception as e:
                 print(f"Error updating RCM column or syncing to session folder: {e}")
@@ -1173,6 +1151,105 @@ class LeftPanel(QWidget):
             
             QMessageBox.information(self, "Done", "Rotation to B point completed.\nNavigation data sent.")
             
+    def _calculate_rcm_and_tcp_u_in_volume(self, t_base_e_override=None):
+        if not self.a_point_in_tcp_p:
+            raise ValueError("A point in TCP_P missing.")
+        if t_base_e_override is None and self.latest_tool_pose is None:
+            raise ValueError("Tool pose missing.")
+        if self.tcp_p_definition_pose is None or self.tcp_u_definition_pose is None or self.volume_in_base is None:
+            raise ValueError("TCP definitions or volume_in_base missing.")
+
+        a_z = self.a_point_in_tcp_p[2]
+        rcm0_z = self.robot_kinematics.get_rcm_point([0, 0, 0, 0])[2]
+        delta_j0 = a_z - rcm0_z
+        rcm_in_p = self.robot_kinematics.get_rcm_point([delta_j0, 0, 0, 0])
+
+        if t_base_e_override is not None:
+            T_Base_E = t_base_e_override
+        else:
+            T_Base_E = self.pose_to_matrix(self.latest_tool_pose)
+
+        T_E_P = self.pose_to_matrix(self.tcp_p_definition_pose)
+        T_Base_P = np.dot(T_Base_E, T_E_P)
+
+        T_Base_Vol = self.pose_to_matrix(self.volume_in_base)
+        T_Vol_Base = np.linalg.inv(T_Base_Vol)
+
+        rcm_p_homo = np.append(rcm_in_p, 1.0)
+        P_rcm_base = np.dot(T_Base_P, rcm_p_homo)
+        P_rcm_vol = np.dot(T_Vol_Base, P_rcm_base)
+
+        T_E_U = self.pose_to_matrix(self.tcp_u_definition_pose)
+        T_Base_U = np.dot(T_Base_E, T_E_U)
+        T_Vol_U = np.dot(T_Vol_Base, T_Base_U)
+
+        return P_rcm_vol[:3], T_Vol_U
+
+    def _format_matrix_4x4_for_record(self, matrix):
+        rows = []
+        for row in matrix:
+            rows.append("[" + ", ".join(f"{value:.6f}" for value in row) + "]")
+        return "[" + "; ".join(rows) + "]"
+
+    def _update_b_point_volume_record(self, record_filename, b_id_target, rcm_vol, diff_vec, tcp_u_vol_matrix):
+        if not os.path.exists(record_filename):
+            return False
+
+        fmt_coord = "(%.3f, %.3f, %.3f)"
+        rcm_str = fmt_coord % tuple(rcm_vol)
+        diff_str = fmt_coord % tuple(diff_vec)
+        tcp_u_str = self._format_matrix_4x4_for_record(tcp_u_vol_matrix)
+        tcp_u_width = 220
+
+        with open(record_filename, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+        new_lines = []
+        updated = False
+        target_id_label = f"B{b_id_target}"
+
+        for line in lines:
+            stripped = line.rstrip("\n")
+            line_ending = "\n" if line.endswith("\n") else ""
+
+            if stripped and set(stripped) == {"-"}:
+                new_lines.append("-" * 420 + line_ending)
+                continue
+
+            if "|" not in line:
+                new_lines.append(line)
+                continue
+
+            parts = stripped.split('|')
+            first_col = parts[0].strip()
+
+            if first_col == "B ID":
+                if len(parts) < 9:
+                    parts.append(f" {'TCP_U (Vol)':<{tcp_u_width}}")
+                else:
+                    parts[8] = f" {'TCP_U (Vol)':<{tcp_u_width}}"
+                new_lines.append("|".join(parts) + line_ending)
+                continue
+
+            if first_col.startswith("B"):
+                if len(parts) < 9:
+                    parts.append(f" {'None':<{tcp_u_width}}")
+                if first_col == target_id_label:
+                    parts[5] = f" {rcm_str:<30} "
+                    parts[6] = f" {diff_str:<30} "
+                    parts[8] = f" {tcp_u_str:<{tcp_u_width}}"
+                    updated = True
+                new_lines.append("|".join(parts) + line_ending)
+                continue
+
+            new_lines.append(line)
+
+        if updated:
+            with open(record_filename, 'w', encoding='utf-8') as f:
+                f.writelines(new_lines)
+
+        return updated
+
     def _calculate_and_send_rcm_and_tcp_u_to_nav(self, t_base_e_override=None):
         """
         [新增] 旋转结束后：
@@ -1776,14 +1853,14 @@ class LeftPanel(QWidget):
                 # 写入 A Point 信息
                 rf.write(f"A Point (Base)   [x,y,z]: {['%.3f' % x for x in a_base]}\n")
                 rf.write(f"A Point (Volume) [x,y,z]: {['%.3f' % x for x in a_vol]}\n")
-                rf.write("-" * 165 + "\n") # 增加分割线长度
+                rf.write("-" * 420 + "\n") # 增加分割线长度
                 
                 # 1. 修改表头：增加 "rcm_vol - a_vol" 到倒数第二列，OA Angle 变为最后一列
                 header = (f"{'B ID':<6} | {'B point (Vol)':<30} | {'B point (Base)':<30} | "
                         f"{'A point (Vol)':<30} | {'A point (Base)':<30} | {'RCM point (Vol)':<30} | "
-                        f"{'rcm_vol - a_vol':<30} | {'OA Angle':<10}\n")
+                        f"{'rcm_vol - a_vol':<30} | {'OA Angle':<10} | {'TCP_U (Vol)':<220}\n")
                 rf.write(header)
-                rf.write("-" * 200 + "\n") # 进一步加长分割线
+                rf.write("-" * 420 + "\n") # 进一步加长分割线
                 
                 fmt_coord = "(%.3f, %.3f, %.3f)"
                 
@@ -1796,7 +1873,8 @@ class LeftPanel(QWidget):
                             f"{fmt_coord % tuple(a_base):<30} | "
                             f"{'None':<30} | "  # RCM point (Vol) 占位
                             f"{'None':<30} | "  # rcm_vol - a_vol 占位
-                            f"{angle:.3f}\n")
+                            f"{angle:.3f} | "
+                            f"{'None':<220}\n")
                     rf.write(line)
             
             # 步骤 2: [新增] 拷贝文件到 session_folder
