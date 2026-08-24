@@ -1,931 +1,688 @@
-# 前列腺超声活检针识别与机器人反馈控制项目交接摘要
+# 前列腺 TRUS 活检针识别与机器人反馈控制项目交接摘要
 
-最后更新：2026-07-29  
-当前工作区：`C:\Users\Administrator\Desktop\robio`  
-主要机器人程序仓库：`C:\Users\Administrator\Desktop\robio\PROSTATEBIO`
+最后更新：2026-08-24  
+当前工作区：`C:\Users\hkclr_user\Desktop\PROSTATEBIO_LTH`  
+当前分支：`main`
 
-> 用途：把整个工作区复制到另一台电脑后，将本文件交给新的 Codex 对话读取，即可继续当前项目。不要依赖原电脑的绝对路径或直接复制虚拟环境。
-
----
-
-## 1. 项目总体目标
-
-项目研究前列腺超声图像中的活检针识别，以及基于视觉识别结果的早期方向反馈控制。
-
-当前研究分成两部分：
-
-1. 尸体超声数据：
-   - 用于证明针存在检测、针尖定位和针方向估计的可行性；
-   - 已训练 ResNet18 多任务 baseline；
-   - 可用于 RoBio preliminary / cadaveric feasibility paper。
-2. 前列腺体模实验：
-   - 新采集体模穿刺图像；
-   - 利用机器人运动学生成针尖、针向量和四角先验框；
-   - 训练一个专门用于体模实验的模型；
-   - 模型识别视觉针向量后，计算实测 Needle Pitch；
-   - 在针进入前列腺之前，通过离散、小步、人工许可的 Pitch 反馈进行方向调整。
-
-反馈控制目前只考虑：
-
-```text
-Pitch Error = Target Pitch - Measured Pitch
-```
-
-暂不把 `cross_track_error` 和 `along_error` 放入控制器。
-
-Yaw 在第一版视觉反馈中保持不变，只调整 Pitch。
+> 用途：换电脑或开启新 Codex 对话后，先读取本文件，即可接着当前研究和代码状态继续工作。不要依赖旧电脑上的虚拟环境；重新创建环境并安装依赖。
 
 ---
 
-## 2. 工作区和 Git 仓库
+## 1. 当前研究目标
 
-工作区根目录：
+项目目标是实现体模前列腺 TRUS 图像中的活检针识别，并把识别结果用于机器人活检反馈控制。
 
-```text
-C:\Users\Administrator\Desktop\robio
-```
+现在研究逻辑已经从“单一针识别模型”拆成两个模型：
 
-其中 `PROSTATEBIO` 是独立的嵌套 Git 仓库：
+1. **模型1：超声中心选择模型**
+   - 控制 yaw 做固定小范围搜索；
+   - 输入 7 张 TRUS 图像；
+   - 输出应该转到哪一个 yaw 姿态；
+   - 目标是让针位于超声束中心附近，保证后续图像可用于反馈。
 
-```text
-C:\Users\Administrator\Desktop\robio\PROSTATEBIO
-```
+2. **模型2：针几何识别模型**
+   - 只在模型1选出的可用图像上运行；
+   - 输入 `IN_CENTER` 图像和先验 mask；
+   - 输出未激发针尖 `tip` 和针轴方向 `shaft`；
+   - 由未激发针尖沿针轴前方约 10 mm 推算激发后的活检中心；
+   - 再用于 pitch 反馈控制。
 
-机器人代码修改和提交都在 `PROSTATEBIO` 仓库中进行，不是在外层仓库中进行。
-
-当前分支：
-
-```text
-main
-```
-
-截至 2026-07-29，工作区已确认干净。最近提交：
+整体控制思路：
 
 ```text
-d66c14e Require manual permit for feedback insertion
-dc42cd4 Add safe needle pitch feedback controller
-4df36ca Add kinematic prior boxes to ultrasound captures
-a781880 Save ultrasound frames without needle kinematics
-7e2632e Add needle kinematics to saved ultrasound images
-54721f0 Fix needle yaw and pitch control flow
-d5dfe56 revert: delta_j2 -2
-1be8f0c add: some change
+固定 yaw 搜索采集 7 帧
+→ 模型1选择位于超声中心的 yaw 姿态
+→ yaw 校正
+→ 模型2识别 tip / shaft
+→ 推算激发后活检中心
+→ pitch 反馈调整针方向
+→ 继续进针
+→ 激发活检枪
 ```
+
+当前论文实验只使用**体模数据**，不要写成临床数据。
+
+---
+
+## 2. 最近 Git 提交
+
+当前工作区在提交前已确认干净。最近关键提交：
+
+```text
+6b12a53 Add yaw center selector model
+2ba6dda Add TCP_U in volume
+858dcf8 Add phantom prior mask labeling tools
+570a738 Target biopsy center in pitch feedback
+ced8360 Use unfired needle tip for ultrasound prior box
+f91fae5 Add mini-book submodule
+f046c3b Fix ultrasound kinematic box projection axes
+```
+
+重要历史改动：
+
+- `f046c3b`：修正超声图像投影轴关系；
+- `ced8360`：保存和 prior box 使用未激发针尖，J3 减去 26 mm；
+- `570a738`：pitch feedback 改为控制激发后活检中心；
+- `858dcf8`：添加体模 manifest、prior mask、overlay 预览和人工 `IN_PLANE/OUT_OF_PLANE` 标注工具；
+- `6b12a53`：添加模型1的 7 帧 yaw 中心选择训练与预测代码。
 
 ---
 
 ## 3. Python 环境
 
-原电脑确认使用：
+仓库中存在：
 
 ```text
-Python 3.11.9
+.venv311/
+requirements.txt
+mini-book/requirements.txt
 ```
 
-外层工作区虚拟环境：
+不要直接复制旧虚拟环境到新电脑继续用。建议使用 Python 3.11 重新创建环境。
+
+主项目依赖中包含：
 
 ```text
-robio\.venv
+torch
+torchvision
+opencv-python
+pillow
+numpy
+pandas
+PyQt5
 ```
 
-曾安装：
-
-```text
-torch 2.13.0 CPU
-torchvision 0.28.0
-Pillow 12.3.0
-```
-
-`PROSTATEBIO` 目录内还存在：
-
-```text
-PROSTATEBIO\.venv311
-```
-
-换电脑时不要直接复制并继续使用 `.venv` 或 `.venv311`。虚拟环境通常包含旧电脑的绝对路径，跨电脑后可能失效。
-
-应先安装同一版本 Python 3.11.9，然后重新创建环境：
-
-```powershell
-py -3.11 -m venv .venv
-.venv\Scripts\python.exe -m pip install --upgrade pip
-.venv\Scripts\python.exe -m pip install -r requirements_baseline.txt
-```
-
-机器人程序依赖应根据：
-
-```text
-PROSTATEBIO\requirements.txt
-```
-
-重新安装。不要改变 Python 大版本。
+当前默认 `python` 环境曾出现 `ModuleNotFoundError: No module named 'torch'`。训练模型1时需要先激活安装了 `torch/torchvision` 的虚拟环境。
 
 ---
 
-## 4. 数据目录
+## 4. 数据和生成文件
 
-### 4.1 尸体数据
+### 4.1 原始体模图像
+
+原始图片目录：
+
+```text
+image/
+```
+
+当前图像主要来自实时采集文件夹，例如：
+
+```text
+image/Realtime_Capture_Interval_300ms_YYYYMMDD_HHMMSS/
+```
+
+实时保存图像文件名中包含：
+
+```text
+E(...)
+TipU(...)
+VecU(...)
+Box(...)
+```
+
+### 4.2 Manifest 和 prior masks
+
+已生成：
+
+```text
+phantom_manifest.csv
+phantom_prior_masks/
+phantom_in_plane_labels.csv
+phantom_prior_mask_check_tip_extend_6mm/
+```
+
+`phantom_manifest.csv` 中记录：
+
+- 图像路径；
+- sequence/frame；
+- 原始文件名中的 fired tip；
+- 重新计算的 unfired tip；
+- needle vector；
+- biopsy center；
+- prior mask 路径；
+- prior box 四角；
+- 投影点是否在图像内。
+
+`prior mask` 中文建议写作：
+
+```text
+先验掩膜 / 运动学先验掩膜
+```
+
+含义：模型看图像之前，根据机器人运动学预先知道“针理论上可能出现的区域”。它不是人工真值。
+
+### 4.3 prior mask 当前参数
+
+关键脚本：
+
+```text
+build_phantom_manifest.py
+```
+
+关键常量：
+
+```python
+MM_PER_PIXEL = 66.0 / 420.0
+TCP_U_ORIGIN_U_PX = 406.0
+TCP_U_ORIGIN_V_PX = 420.0 + 10.0 / MM_PER_PIXEL
+UNFIRED_NEEDLE_RETRACTION_MM = 26.0
+BIOPSY_CENTER_OFFSET_MM = 10.0
+KINEMATIC_BOX_HALF_WIDTH_PX = 25.0
+KINEMATIC_BOX_TIP_EXTENSION_MM = 6.0
+```
+
+当前确认使用 **6 mm tip-side extension**。之前试过 16 mm，太长；6 mm 用户确认可以。
+
+最新检查图：
+
+```text
+phantom_prior_mask_check_tip_extend_6mm/prior_mask_check_tip_extend_6mm_montage.png
+```
+
+---
+
+## 5. 超声投影关系
+
+当前已确认图像投影关系：
+
+```text
+u = u0 - TCP_U.z / mm_per_pixel
+v = v0 + TCP_U.y / mm_per_pixel
+```
+
+二维向量投影：
+
+```text
+du = -VecU.z / mm_per_pixel
+dv = +VecU.y / mm_per_pixel
+```
+
+重要背景：
+
+- 旧关系曾使用 `v = v0 - TipU.x/mm`，导致投影点大多不在图像内；
+- 后来通过调试叠加图确认替代投影关系正确；
+- prior box 半宽从 ±10 px 改到 ±18 px，再改到 ±25 px；
+- 当前使用 ±25 px。
+
+注意：用户后来讨论探头几何时指出，实际 yaw 参考向量 `(0, 1, 0)` 属于 `TCP_P`，不是 `TCP_U`。不要在论文示意图中乱画 TCP_U 坐标系方向。
+
+---
+
+## 6. 未激发针尖与活检中心
+
+关键事实：
+
+- 识别出来的实际针尖是**未激发状态下的针尖**；
+- 机器人运动学中 `robot.get_tip_of_needle([...])` 原本对应激发后针尖；
+- 未激发针比激发后短约 26 mm；
+- 所以计算未激发针尖时使用：
+
+```python
+tip_joint_values = joint_values.copy()
+tip_joint_values[3] -= 26.0
+tip_p = robot.get_tip_of_needle(tip_joint_values)
+```
+
+控制目标不是让未激发针尖到病灶，而是让激发后活检中心到病灶。
+
+当前定义：
+
+```text
+活检中心 = 未激发针尖 + 10 mm * 针方向
+```
+
+对应代码在：
+
+```text
+core/needle_pitch_feedback.py
+```
+
+并已有测试：
+
+```text
+tests/test_needle_pitch_feedback.py
+```
+
+测试曾通过：
+
+```text
+python -m unittest tests.test_needle_pitch_feedback -v
+```
+
+---
+
+## 7. 人工标注流程
+
+当前推荐流程：
+
+```text
+原始图片
+→ 自动生成 manifest + prior_mask + overlay preview
+→ 人工看 overlay preview，挑需要标的图
+→ 单独 CSV 标 IN_PLANE / OUT_OF_PLANE
+→ LabelMe 只对 IN_PLANE 图像标 tip / shaft
+→ 汇总成训练集
+```
+
+原因：
+
+- `NO_NEEDLE` 不需要模型专门识别，可由运动学投影是否在图像区域内初筛；
+- 基本只要 `IN_PLANE`，就属于可用于反馈；
+- 只有 `IN_PLANE / IN_CENTER` 图像才值得标注针尖和针轴。
+
+已有人工浏览工具：
+
+```text
+review_in_plane_labels.py
+```
+
+运行：
+
+```powershell
+python review_in_plane_labels.py
+```
+
+按键：
+
+```text
+右箭头 / 空格：下一张
+左箭头：上一张
+i：标 IN_PLANE 并下一张
+o：标 OUT_OF_PLANE 并下一张
+u：清除当前标签
+q：退出
+```
+
+实时写入：
+
+```text
+phantom_in_plane_labels.csv
+```
+
+overlay 颜色含义：
+
+```text
+红点：未激发针尖
+蓝点：激发后活检中心
+绿线：针轴中心线
+黄色框/透明区域：prior mask
+```
+
+---
+
+## 8. 模型1：超声中心选择模型
+
+最新决定：模型1不是单帧二分类，而是**7 帧序列输入、8 类输出**。
+
+### 8.1 采集动作
+
+以当前 yaw 为 0 度：
+
+```text
+先 needle rotate left 3 deg
+然后每次 right 1 deg
+一共采 7 张图
+```
+
+对应 yaw offset：
+
+```text
+-3, -2, -1, 0, +1, +2, +3
+```
+
+### 8.2 人工标注
+
+每张图先人工标注：
+
+```text
+IN_CENTER
+OFF_CENTER
+```
+
+`IN_CENTER` 表示：
+
+- 针处于超声束中心附近；
+- 针影足够可见；
+- 图像可进入模型2做 tip / shaft 识别。
+
+`OFF_CENTER` 表示：
+
+- 针偏离超声中心；
+- 或针影不够稳定/不适合后续反馈。
+
+### 8.3 序列标签生成规则
+
+模型输出不是每张图的标签，而是在 7 张图中选择目标 yaw。
+
+若有多个 `IN_CENTER`：
+
+```text
+选择离 0 度最近的一张
+若正负距离相同，优先选择负方向
+```
+
+优先级：
+
+```text
+0 → -1 → +1 → -2 → +2 → -3 → +3 → NO_VALID
+```
+
+输出 8 类：
+
+```text
+YAW_M3
+YAW_M2
+YAW_M1
+YAW_0
+YAW_P1
+YAW_P2
+YAW_P3
+NO_VALID
+```
+
+如果 7 张都不是 `IN_CENTER`，输出：
+
+```text
+NO_VALID
+```
+
+### 8.4 已实现代码
 
 目录：
 
 ```text
-needle_detection
+model1_center_selector/
 ```
 
-数据情况：
-
-- PNG：593 张；
-- LabelMe JSON：593 个；
-- 有针图像：404 张；
-- 无针图像：189 张；
-- 图像尺寸：406×420；
-- 比例：`66 mm / 420 px = 0.1571 mm/px`。
-
-人工标注：
-
-- 无针：`shapes` 为空；
-- 有针：
-  - `tip`：针尖；
-  - `axis`：针轴后方一点。
-
-方向统一为：
+文件：
 
 ```text
-针尾/axis → 针尖/tip
+model1_center_selector/README.md
+model1_center_selector/label_rules.py
+model1_center_selector/build_sequences.py
+model1_center_selector/dataset.py
+model1_center_selector/model.py
+model1_center_selector/train.py
+model1_center_selector/predict.py
 ```
 
-关键文件：
+模型结构：
 
 ```text
-needle_detection/labels.csv
-needle_detection/sequences_by_mtime.csv
-needle_detection/splits/train.txt
-needle_detection/splits/val.txt
-needle_detection/splits/test.txt
-needle_detection/splits/sequence_level_summary.csv
+7 张 TRUS 图像
+→ 共享 ResNet18 encoder
+→ 拼接 7 帧特征
+→ MLP
+→ 8 类输出
 ```
 
-数据按扫描序列划分，不能把同一次扫描中的连续帧随机拆到 train/val/test。
-
-### 4.2 体模数据
-
-原始体模图片目录：
+支持两种输入：
 
 ```text
-image
+仅 TRUS 灰度图
+TRUS 灰度图 + prior mask
 ```
 
-曾将其中 5539 张图批量裁剪为保留顶部 270 像素：
+### 8.5 逐帧标注 CSV
 
-```text
-image_cropped_top270
+输入格式：
+
+```csv
+sequence_id,yaw_offset_deg,image_path,mask_path,center_label
+seq_0001,-3,image/seq_0001/m3.png,mask/seq_0001/m3.png,OFF_CENTER
+seq_0001,-2,image/seq_0001/m2.png,mask/seq_0001/m2.png,OFF_CENTER
+seq_0001,-1,image/seq_0001/m1.png,mask/seq_0001/m1.png,IN_CENTER
+seq_0001,0,image/seq_0001/0.png,mask/seq_0001/0.png,OFF_CENTER
+seq_0001,1,image/seq_0001/p1.png,mask/seq_0001/p1.png,IN_CENTER
+seq_0001,2,image/seq_0001/p2.png,mask/seq_0001/p2.png,OFF_CENTER
+seq_0001,3,image/seq_0001/p3.png,mask/seq_0001/p3.png,OFF_CENTER
 ```
 
-注意：旧体模图与当前机器人实时保存图的尺寸、裁剪方式可能不一致。训练前必须确定最终运行时使用的固定尺寸，不要直接混合不一致的数据。
-
----
-
-## 5. 尸体数据 baseline
-
-训练脚本：
-
-```text
-train_multitask_baseline.py
-```
-
-模型：
-
-- ResNet18 backbone；
-- `cls_head`：是否有针；
-- `tip_head`：针尖归一化坐标；
-- `angle_head`：`sin_theta, cos_theta`。
-
-训练命令示例：
+生成序列训练 CSV：
 
 ```powershell
-.venv\Scripts\python.exe train_multitask_baseline.py --data needle_detection --epochs 100 --batch-size 16 --lr 1e-4 --image-size 224 --output runs/sequence_resnet18_baseline
+python -m model1_center_selector.build_sequences `
+  --frame-csv model1_center_frame_labels.csv `
+  --output-csv model1_center_sequences.csv
 ```
 
-主要测试结果：
+上面例子中，`-1` 和 `+1` 都是 `IN_CENTER`，会自动选择 `-1`。
 
-### From-scratch ResNet18
+### 8.6 训练
+
+不使用 prior mask：
+
+```powershell
+python -m model1_center_selector.train `
+  --train-csv model1_center_sequences.csv `
+  --root-dir . `
+  --output runs/model1_center_selector/best.pt
+```
+
+使用 prior mask：
+
+```powershell
+python -m model1_center_selector.train `
+  --train-csv model1_center_sequences.csv `
+  --root-dir . `
+  --use-masks `
+  --output runs/model1_center_selector/best.pt
+```
+
+训练输出目录：
 
 ```text
-Accuracy       88.5%
-Precision      94.3%
-Recall         87.7%
-Specificity    90.0%
-Tip error      30.58 px / 4.80 mm
-Angle error    1.47 deg
+runs/
 ```
 
-### ImageNet-pretrained ResNet18
+已加入 `.gitignore`。
+
+### 8.7 预测
+
+预测时也按 yaw 顺序输入 7 张图：
 
 ```text
-Accuracy       88.5%
-Precision      96.1%
-Recall         86.0%
-Specificity    93.3%
-Tip error      30.65 px / 4.82 mm
-Angle error    1.82 deg
+-3, -2, -1, 0, +1, +2, +3
 ```
 
-关键结果文件：
+命令示例：
+
+```powershell
+python -m model1_center_selector.predict `
+  --checkpoint runs/model1_center_selector/best.pt `
+  --images m3.png m2.png m1.png zero.png p1.png p2.png p3.png
+```
+
+输出：
 
 ```text
-runs/sequence_resnet18_baseline/best.pt
-runs/sequence_resnet18_baseline/log.csv
-runs/sequence_resnet18_pretrained/best.pt
-runs/sequence_resnet18_pretrained/log.csv
+pred_class
+pred_name
+pred_yaw_offset_deg
+probabilities
 ```
 
-可视化脚本：
-
-```text
-visualize_predictions.py
-```
-
-论文草稿：
-
-```text
-robio_needle_perception_draft.docx
-```
-
-生成脚本：
-
-```text
-build_robio_paper_docx.py
-```
+如果输出 `NO_VALID`，则应扩大 yaw 搜索范围或终止本次反馈。
 
 ---
 
-## 6. PROSTATEBIO 中已完成的关键代码修改
+## 9. 模型2：针几何识别模型
 
-### 6.1 TCP_P 到 TCP_U 的变换
+模型2尚未完整实现训练代码。当前设计：
 
-`transform_point_p_to_tcp_u` 已修正，不再使用：
-
-```text
-tcp_e_in_ultrasound_zero_deg
-```
-
-而是使用两个相对于 TCP_E 定义的固定 TCP：
-
-```python
-T_e_u = pose_to_matrix(tcp_u_definition_pose)
-T_e_p = pose_to_matrix(tcp_p_definition_pose)
-T_u_p = np.linalg.inv(T_e_u) @ T_e_p
-```
-
-点变换：
-
-```python
-point_u = T_u_p @ point_p_homogeneous
-```
-
-向量变换只使用旋转：
-
-```python
-vector_u = T_u_p[:3, :3] @ vector_p
-```
-
-### 6.2 Yaw/Pitch 控制
-
-- Yaw/Pitch 输入框只连接 `returnPressed`；
-- 按 Enter 后重新计算并执行 `Apply Increment (All)`；
-- 不再同时使用 `editingFinished`；
-- `+/-` 按钮修改目标角度后会重新计算并立即执行；
-- Needle Right 2x 已改为一次性目标运动，不再拆成 0.5° 定时小步；
-- 逆运动学失败时不会继续使用旧的 delta J0-J3；
-- `Adjust Needle Dir` 中硬编码 `Yaw=1° / Pitch-2°` 的实验补偿按用户要求保留。
-
-### 6.3 图像保存
-
-`Start Image Saving`：
-
-- 每 300 ms 保存一张；
-- 保存目录：
+输入：
 
 ```text
-PROSTATEBIO/image/Realtime_Capture_Interval_300ms_YYYYMMDD_HHMMSS
+IN_CENTER 图像 + prior mask
 ```
 
-- 文件名：
+输出：
 
 ```text
-0000_E(...)_TipU(...)_VecU(...)_Box(...).png
+未激发针尖 tip 点
+针轴 shaft 方向
 ```
 
-其中：
-
-- `E`：TCP_E 位姿；
-- `TipU`：运动学针尖在 TCP_U 下的位置；
-- `VecU`：运动学针向量在 TCP_U 下的单位向量；
-- `Box`：运动学四角先验框。
-
-如果针运动学数据无效：
+后处理：
 
 ```text
-TipU、VecU、Box 字符留空，但图像仍保存
+活检中心 = 未激发针尖 + 10 mm * 针轴方向
 ```
 
-注意：
+用于 pitch feedback。
 
-- `Save Single Image` 当前只是普通文件对话框保存，不带这些运动学元数据；
-- 连续保存需要有效 TCP_E 位姿，否则该帧会跳过；
-- 文件名很长，正式实验前应测试 Windows 是否能正常保存，避免路径长度问题；
-- 当前没有自动生成 LabelMe JSON 或训练真值。
-
-### 6.4 运动学 TipU 和 VecU
-
-当前 J0-J3 计算：
-
-```python
-delta_j0 = current_j0 - RESET_J0
-delta_j1 = current_j1 - RESET_J1
-delta_j2 = current_j2 - RESET_J2
-delta_j3 = current_j3 - RESET_J3
-
-joint_values = [
-    delta_j0,
-    delta_j1,
-    delta_j2 - delta_j1,
-    delta_j3,
-]
-```
-
-变量名按用户要求保持：
+训练标签需要 LabelMe 人工标注：
 
 ```text
-delta_j2
-```
-
-不要改成 `delta_j2_motor`。
-
-针尖和针向量：
-
-```python
-tip_p = robot.get_tip_of_needle(joint_values.copy())
-vector_p = robot.get_needle_vector(joint_values.copy())
-```
-
-然后变换到 TCP_U。
-
----
-
-## 7. 超声图像与 TCP_U 坐标关系
-
-用户给定的标定关系：
-
-```text
-图像 u 正方向 = TCP_U 的 -z 方向
-图像 v 正方向 = TCP_U 的 -x 方向
-TCP_U y 垂直于超声成像平面
-```
-
-比例：
-
-```python
-MM_PER_PIXEL = 66.0 / 420.0
-```
-
-固定投影原点：
-
-```python
-TCP_U_ORIGIN_U_PX = 406.0
-TCP_U_ORIGIN_V_PX = 420.0 + 10.0 / MM_PER_PIXEL
-```
-
-用户明确要求：
-
-> 裁剪滑块改变后，不要根据 left crop / top crop 自动修正投影原点；用户会重新调整标定。
-
-针尖投影：
-
-```python
-u = u0 - tip_u_z / MM_PER_PIXEL
-v = v0 - tip_u_x / MM_PER_PIXEL
-```
-
-针向量投影：
-
-```python
-du = -vector_u_z / MM_PER_PIXEL
-dv = -vector_u_x / MM_PER_PIXEL
-```
-
-向量投影不需要加图像原点。
-
----
-
-## 8. 四角运动学先验框
-
-代码：
-
-```text
-PROSTATEBIO/ui/ultrasound_tab.py
-```
-
-逻辑：
-
-1. 将 `TipU` 投影为图像针尖；
-2. 将 `VecU` 投影为图像二维方向；
-3. 只有投影针尖在图像内才生成 Box；
-4. `VecU` 定义为针尾指向针尖，因此从针尖沿 `-VecU` 找针尾侧；
-5. 从针尖沿针尾方向延伸到图像边界；
-6. 在针尖和边界中心点处沿法向各扩展 10 px；
-7. 得到四角；
-8. 越界角使用 `np.clip` 截到图像边界；
-9. 针尖不在图像内、向量退化或中心线不与图像相交时，Box为空。
-
-四角框不是人工真值，它表示：
-
-```text
-根据机器人运动学，针理论上可能出现的区域
-```
-
-训练时应将四角框生成二值 mask，作为模型第二输入通道。
-
-不要把四角框当作真实针标签。
-
----
-
-## 9. 自动标注的实际状态
-
-当前只完成了“自动运动学预标注”：
-
-```text
-TipU
-VecU
-Box
-```
-
-尚未自动生成：
-
-```text
-视觉真实针尖
-视觉真实针轴
-IN_PLANE / OUT_OF_PLANE / NO_NEEDLE
-feedback_valid
-LabelMe JSON
-针分割 mask
-病灶点编号
-```
-
-这些仍需人工标注。
-
-推荐人工标签：
-
-```text
-tip：真实针尖
+tip：未激发针尖
 shaft：针轴后方一点
 方向：shaft → tip
-class：IN_PLANE / OUT_OF_PLANE / NO_NEEDLE / PARTIAL_NEEDLE
-feedback_valid：只有可靠平面内针为 true
 ```
 
-针尖不可见时不要根据运动学框猜针尖。
+模型2评估指标建议：
+
+```text
+针尖误差
+针轴角度误差
+活检中心估计误差
+```
+
+不要把最终 `靶点命中率` 写成模型2本身指标，因为模型2只处理未激发视觉几何；最终命中率属于完整机器人控制实验。
 
 ---
 
-## 10. 体模模型训练方案
+## 10. 论文流程图
 
-推荐输入：
-
-```text
-通道0：超声灰度图
-通道1：运动学四角先验 mask
-```
-
-即：
+已生成中文 SVG：
 
 ```text
-[Batch, 2, Height, Width]
+docs/figures/two_model_biopsy_workflow.svg
 ```
 
-推荐多任务输出：
+当前图中应表达：
 
-1. 针分割 mask；
-2. 针尖 heatmap；
-3. `VALID_FOR_FEEDBACK / INVALID_FOR_FEEDBACK`；
-4. 可选直接输出 `VecUV`。
+- 原始 TRUS 图像只写“体模数据”；
+- 模型1输入 7 帧 yaw 搜索图像，输出 yaw 选择；
+- 模型2输入 `IN_CENTER` 图像和 prior mask，输出 tip 点和 shaft 方向；
+- 评估指标不写 `yaw定位误差` 和 `靶点命中率`；
+- 模型1评价可写“中心判别准确率”；
+- 模型2评价写“针尖误差、针轴角度误差、活检中心估计误差”。
 
-建议第一版使用轻量 U-Net、ResNet18 encoder 或 MobileNetV3，不要先上很大的模型。
-
-训练时：
-
-- 几何增强必须同步作用于图像、先验 mask、针尖、针轴；
-- 亮度、Gamma、噪声等只作用于超声图像；
-- 随机扰动运动学框；
-- 一部分样本使用全零先验 mask，防止模型过度依赖运动学；
-- train/val/test 必须按整次穿刺序列划分；
-- 同一停止位置的连续短帧不能拆到不同集合。
-
-反馈安全指标重点关注：
+用户曾问能否人工编辑 SVG。建议使用：
 
 ```text
-模型预测可以反馈，但实际上针已经离面
+Inkscape
+Adobe Illustrator
+VS Code / PyCharm 直接编辑文本
 ```
 
-也就是要优先降低“假有效率”，不能只看总 Accuracy。
+Inkscape 官方下载：
+
+```text
+https://inkscape.org/download/
+```
 
 ---
 
-## 11. 从视觉 VecUV 计算实测 Needle Pitch
+## 11. mini-book 状态
 
-项目 Yaw/Pitch 定义：
-
-```python
-vx = -sin(yaw) * cos(pitch)
-vy =  cos(yaw) * cos(pitch)
-vz =  sin(pitch)
-```
-
-当：
+目录：
 
 ```text
-Yaw = 0
-Pitch = 0
-Roll = 0
+mini-book/
 ```
 
-针向量在 TCP_P 下是：
-
-```text
-[0, 1, 0]
-```
-
-模型输出二维向量：
-
-```text
-VecUV = [du, dv]
-```
-
-转换为 TCP_U 超声平面向量：
-
-```python
-vector_u = [-dv, 0, -du]
-```
-
-再从 TCP_U 转回 TCP_P：
-
-```python
-R_u_p = T_u_p[:3, :3]
-vector_p = R_u_p.T @ vector_u
-```
-
-实测 Pitch：
-
-```python
-measured_pitch = atan2(
-    vector_p_z,
-    sqrt(vector_p_x**2 + vector_p_y**2)
-)
-```
-
-目标 Pitch 由目标 TCP_P 向量使用同样物理定义计算：
-
-```python
-target_pitch = atan2(
-    target_vector_p_z,
-    sqrt(target_vector_p_x**2 + target_vector_p_y**2)
-)
-```
-
-误差：
-
-```python
-pitch_error = target_pitch - measured_pitch
-```
-
-模型针向量必须统一为针尾到针尖。若模型输出反向，需要翻转。
-
-成立前提：
-
-```text
-针位于超声成像平面内
-```
-
-如果模型判断针离面，反馈必须终止，不能继续用二维投影计算 Pitch。
-
----
-
-## 12. Pitch Feedback Controller
-
-核心代码：
-
-```text
-PROSTATEBIO/core/needle_pitch_feedback.py
-```
-
-测试：
-
-```text
-PROSTATEBIO/tests/test_needle_pitch_feedback.py
-```
-
-已实现：
-
-- UV → TCP_U → TCP_P → Measured Pitch；
-- 目标向量 → Target Pitch；
-- `Target Pitch - Measured Pitch`；
-- 离散 PID；
-- 默认参数：
-
-```python
-kp = 0.3
-ki = 0.0
-kd = 0.0
-deadband_deg = 1.0
-max_pitch_step_deg = 0.2
-max_feedback_steps = 10
-min_in_plane_confidence = 0.8
-```
-
-- 第一版实际相当于离散 P 控制；
-- 只输出 `delta_pitch_deg`，没有 Yaw 输出；
-- 模型未就绪时拒绝启动；
-- 离面、置信度不足、无效向量或超过步数时终止；
-- 终止时清空 PID 状态和未用进针许可；
-- 控制器目前不加载模型，也不直接发送电机命令。
-
-测试命令：
+预览命令：
 
 ```powershell
-..\.venv\Scripts\python.exe -m unittest tests.test_needle_pitch_feedback -v
+.\scripts\preview.cmd
 ```
 
-截至提交 `d66c14e`，6 项测试通过。
-
----
-
-## 13. 单次人工进针许可
-
-界面：
+会构建并预览 mini-book，通常访问：
 
 ```text
-Flexible needle steering
+http://localhost:8000/
 ```
 
-新增按钮：
+常见问题：
 
-```text
-Permit One Feedback Insertion
-```
-
-设计原则：
-
-```text
-每点击一次，只允许进针一次
-```
-
-具体行为：
-
-1. 模型未加载时按钮禁用；
-2. 必须先有有效、平面内的模型反馈结果；
-3. 点击一次只发放一个布尔许可；
-4. 许可不能累计；
-5. 执行器运动前必须消费许可；
-6. 消费后下一次必须重新识别并重新点击；
-7. 离面后即使已有未使用许可，也立即清除；
-8. 超过最大反馈步数后拒绝新许可。
-
-目前模型尚未训练完成，因此：
-
-- 按钮默认禁用；
-- 尚未接入自动模型推理；
-- 尚未把许可消费动作接到真实固定步长 J3 进针；
-- 不会自动驱动电机。
-
-未来完整流程应为：
-
-```text
-模型识别平面内针
-→ 计算 Measured Pitch
-→ 计算 Pitch Error
-→ 执行受限 ΔPitch
-→ 重新识别确认有效
-→ 人工点击 Permit One Feedback Insertion
-→ 执行器消费许可
-→ J3 固定进针一步
-→ 再次采图
-```
-
----
-
-## 14. 反馈控制的临床/实验约束
-
-反馈控制只应发生在穿刺早期：
-
-```text
-针开始出现在超声平面内
-→ 可能尚未进入前列腺
-→ 进行有限次数 Pitch 调整
-```
-
-一旦可能进入前列腺：
-
-```text
-锁定 Yaw/Pitch
-```
-
-之后不再横向改变方向，只允许：
-
-```text
-沿针轴进针
-停止
-人工处理
-```
-
-原因：针进入前列腺后继续改变 Yaw/Pitch 可能造成组织横向扫动和损伤。
-
-未来需要设置：
-
-```text
-固定每步进针量
-最大反馈步数
-最大累计反馈进针距离
-方向锁定深度
-离面/低置信度终止
-人工停止
-```
-
-这些实际参数尚未通过体模实验确定。
-
----
-
-## 15. 12个病灶点体模采集建议
-
-计划：机器人穿刺体模的 12 个病灶点并采集针图像。
-
-建议每个病灶点单独开始和停止保存：
-
-```text
-lesion_01 → Start Image Saving → 完成 → Stop
-lesion_02 → Start Image Saving → 完成 → Stop
-...
-lesion_12
-```
-
-必须记录：
-
-```text
-时间戳文件夹 ↔ lesion编号 ↔ puncture编号
-```
-
-正式实验前短测试：
-
-1. 启动超声；
-2. 确认 TCP_E 位姿有效；
-3. 确认 Current J0-J3 正常更新；
-4. 确认 TCP_P/TCP_U definition 已加载；
-5. 点击 `Start Image Saving`；
-6. 保存 3～5 秒后停止；
-7. 确认图片实际写入；
-8. 检查文件名中的 `TipU/VecU/Box`；
-9. 随机打开图片检查裁剪和画面；
-10. 观察是否有 `Real-time image saving failed`。
-
-需要有意识采集：
-
-- 无针；
-- 针刚出现；
-- 清晰平面内针；
-- 轻微离面；
-- 明显离面；
-- 短针段；
-- 针尖不可见；
-- 针靠近图像边缘；
-- 运动学框准确与偏移；
-- 强反射伪影；
-- 多个初始 Pitch；
-- 多个进针深度；
-- 多次独立穿刺，而不是只积累相邻重复帧。
-
----
-
-## 16. 论文定位
-
-目前可写：
-
-```text
-RoBio preliminary / cadaveric feasibility paper
-```
-
-不应声称：
-
-```text
-clinical deployment-ready
-```
-
-尸体 baseline 能证明：
-
-- 多任务针感知可行；
-- sequence-level split 降低数据泄漏；
-- 分类和方向估计表现较好；
-- 针尖定位仍需提升。
-
-主要限制：
-
-- 单尸体；
-- 数据量有限；
-- 无真实患者数据；
-- 针尖误差约 4.8 mm；
-- 尚无已验证的实时闭环；
-- 体模模型尚未训练；
-- 离面判断尚需专门数据。
-
----
-
-## 17. 关键文件索引
-
-外层训练与论文：
-
-```text
-HANDOFF_SUMMARY_CN.md
-train_multitask_baseline.py
-visualize_predictions.py
-build_robio_paper_docx.py
-requirements_baseline.txt
-robio_needle_perception_draft.docx
-needle_detection/
-runs/
-image/
-image_cropped_top270/
-```
-
-机器人程序：
-
-```text
-PROSTATEBIO/ui/ultrasound_tab.py
-PROSTATEBIO/ui/flexible_needle_tab.py
-PROSTATEBIO/ui/beckhoff_tab.py
-PROSTATEBIO/ui/left_panel.py
-PROSTATEBIO/core/needle_pitch_feedback.py
-PROSTATEBIO/tests/test_needle_pitch_feedback.py
-PROSTATEBIO/kinematics/prostate_biopsy_robot_kinematics.py
-```
-
----
-
-## 18. 换电脑后的恢复步骤
-
-1. 完整复制 `robio` 工作区，包括隐藏的 `.git` 目录；
-2. 不要依赖复制过来的 `.venv`；
-3. 安装 Python 3.11.9；
-4. 重新创建虚拟环境并安装依赖；
-5. 在 `PROSTATEBIO` 中检查：
+1. MyST 自动安装 Node.js 失败或 `node -v` 返回错误；
+   - 建议安装官方 Node.js LTS；
+2. PDF 构建缺 Typst：
+   - 错误：`The typst CLI must be installed to build PDFs with typst`
+   - 可用：
 
 ```powershell
-git status
-git log --oneline -8
-```
-
-6. 确认最新提交至少包含：
-
-```text
-d66c14e
-dc42cd4
-4df36ca
-```
-
-7. 运行反馈控制测试；
-8. 启动程序前确认 TCP/ADS/超声采集依赖；
-9. 先做离线和无电机测试；
-10. 将本文件交给新对话读取。
-
-建议给新 Codex 的第一句话：
-
-```text
-请完整读取 HANDOFF_SUMMARY_CN.md。PROSTATEBIO 是独立 Git 仓库。
-先检查当前工作区和最近提交，不要重做已经完成的修改。
-继续处理体模超声针识别、自动先验框和离散 Pitch 反馈控制。
+winget install Typst.Typst
 ```
 
 ---
 
-## 19. 当前下一步
+## 12. 已讨论但不要再沿用的旧想法
 
-短期优先级：
+以下内容已被用户修正或废弃：
 
-1. 完成 12 个病灶点的体模图像采集；
-2. 整理病灶点、穿刺序列和文件夹映射；
-3. 将长文件名中的运动学信息整理为 manifest/JSONL；
-4. 人工标注视觉 `tip/shaft/class/feedback_valid`；
-5. 按序列划分 train/val/test；
-6. 训练两通道多任务体模模型；
-7. 先离线验证 VecUV 和离面状态；
-8. 再把模型接到 `NeedlePitchFeedbackController`；
-9. 最后连接固定步长、人工单次许可的 J3 进针。
+- 不要把模型1设计成单帧 `中心置信度` 输出；
+- 不要写“从序列中找最亮最清晰的一张”；
+- 不要把模型1评价写成 `yaw定位误差`，因为人工没有真实最佳 yaw 角；
+- 不要把模型评价写成 `靶点命中率`，那是完整控制实验指标；
+- 不要在探头示意图里乱画 `TCP_U` 坐标系；
+- 不要把论文数据写成“体模/临床数据”，本文只用体模。
 
-任何自动闭环上线前，都必须先验证：
+---
+
+## 13. 下一步建议
+
+短期最重要的是采集和标注模型1数据：
+
+1. 实现或手动执行固定 yaw sweep：
 
 ```text
-VecUV方向
-TCP_U/TCP_P变换
-Measured Pitch符号
-Pitch Error符号
-ΔPitch执行方向
-离面终止
-单次许可不可重复消费
+-3, -2, -1, 0, +1, +2, +3 deg
+```
+
+2. 每组保存 7 张图，并记录：
+
+```text
+sequence_id
+yaw_offset_deg
+image_path
+mask_path
+```
+
+3. 人工逐帧标注：
+
+```text
+IN_CENTER / OFF_CENTER
+```
+
+4. 用 `build_sequences.py` 生成序列级训练 CSV；
+5. 用 `train.py` 训练模型1；
+6. 离线验证模型1是否能正确输出目标 yaw；
+7. 再开始模型2的 `tip / shaft` 标注和训练。
+
+后续接入控制前必须验证：
+
+```text
+yaw 正负方向
+模型1输出类别到机器人 yaw 动作的映射
+模型2针轴方向 shaft → tip
+未激发针尖 + 10 mm 的活检中心推算
+pitch error 符号
+机器人实际执行方向
+NO_VALID 时的安全终止逻辑
+```
+
+---
+
+## 14. 给新对话的建议开场
+
+可以直接对新 Codex 说：
+
+```text
+请完整读取 HANDOFF_SUMMARY_CN.md。
+当前项目在 C:\Users\hkclr_user\Desktop\PROSTATEBIO_LTH。
+不要重做已有提交，先检查 git status 和最近提交。
+接下来继续模型1的 7 帧 yaw 中心选择数据采集、标注、训练和预测接入。
 ```
