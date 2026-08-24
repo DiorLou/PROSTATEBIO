@@ -1,0 +1,188 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1050" viewBox="0 0 1800 1050">
+  <defs>
+    <style>
+      .bg { fill: #ffffff; }
+      .title { font-family: Arial, "Microsoft YaHei", sans-serif; font-size: 34px; font-weight: 700; fill: #172033; }
+      .subtitle { font-family: Arial, "Microsoft YaHei", sans-serif; font-size: 20px; fill: #465264; }
+      .section-title { font-family: Arial, "Microsoft YaHei", sans-serif; font-size: 22px; font-weight: 700; fill: #172033; }
+      .label { font-family: Arial, "Microsoft YaHei", sans-serif; font-size: 21px; font-weight: 700; fill: #172033; }
+      .small { font-family: Arial, "Microsoft YaHei", sans-serif; font-size: 17px; fill: #3f4b5d; }
+      .tiny { font-family: Arial, "Microsoft YaHei", sans-serif; font-size: 15px; fill: #596579; }
+      .box { stroke: #1f456e; stroke-width: 2.2; rx: 8; ry: 8; }
+      .box-blue { fill: #e9f3ff; }
+      .box-green { fill: #eaf6e4; }
+      .box-orange { fill: #fff0df; }
+      .box-purple { fill: #f2edff; }
+      .box-gray { fill: #f7f8fa; }
+      .lane { fill: none; stroke: #8aa0b6; stroke-width: 2.2; stroke-dasharray: 8 7; rx: 14; ry: 14; }
+      .arrow { stroke: #2f72c4; stroke-width: 3; fill: none; marker-end: url(#arrowhead); }
+      .arrow-gray { stroke: #7d8794; stroke-width: 2.5; fill: none; marker-end: url(#arrowhead-gray); }
+      .arrow-orange { stroke: #df7a28; stroke-width: 3; fill: none; marker-end: url(#arrowhead-orange); }
+      .feedback { stroke: #df7a28; stroke-width: 2.8; fill: none; stroke-dasharray: 8 6; marker-end: url(#arrowhead-orange); }
+      .divider { stroke: #d3dae4; stroke-width: 2; }
+      .metric { fill: #fbfcfe; stroke: #b9c4d1; stroke-width: 1.8; rx: 7; ry: 7; }
+      .us-dark { fill: #23384f; opacity: 0.9; }
+      .us-mid { fill: #64788f; opacity: 0.75; }
+      .us-light { fill: #cbd5df; opacity: 0.7; }
+      .needle { stroke: #e2b126; stroke-width: 6; stroke-linecap: round; }
+      .needle-tip { fill: #d22b2b; }
+      .lesion { fill: #d93030; opacity: 0.2; stroke: #d93030; stroke-width: 2; }
+    </style>
+    <marker id="arrowhead" markerWidth="12" markerHeight="8" refX="11" refY="4" orient="auto">
+      <polygon points="0 0, 12 4, 0 8" fill="#2f72c4"/>
+    </marker>
+    <marker id="arrowhead-gray" markerWidth="12" markerHeight="8" refX="11" refY="4" orient="auto">
+      <polygon points="0 0, 12 4, 0 8" fill="#7d8794"/>
+    </marker>
+    <marker id="arrowhead-orange" markerWidth="12" markerHeight="8" refX="11" refY="4" orient="auto">
+      <polygon points="0 0, 12 4, 0 8" fill="#df7a28"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1800" height="1050"/>
+
+  <text class="title" x="70" y="64">TRUS引导机器人前列腺活检的双模型控制流程</text>
+  <text class="subtitle" x="70" y="98">模型1对单帧TRUS图像判断针是否接近超声束中心；模型2识别针尖与针轴，用于后续反馈控制。</text>
+
+  <rect class="lane" x="55" y="130" width="520" height="825"/>
+  <text class="section-title" x="80" y="168">数据准备与模型训练</text>
+
+  <rect class="box box-blue" x="95" y="205" width="185" height="92"/>
+  <text class="label" x="126" y="238">原始TRUS图像</text>
+  <text class="small" x="126" y="266">体模数据</text>
+
+  <rect class="box box-blue" x="350" y="205" width="185" height="92"/>
+  <text class="label" x="397" y="238">机器人日志</text>
+  <text class="small" x="384" y="266">位姿、关节、yaw</text>
+
+  <path class="arrow" d="M 280 251 L 350 251"/>
+
+  <rect class="box box-gray" x="145" y="355" width="340" height="92"/>
+  <text class="label" x="220" y="388">Manifest + 先验掩膜</text>
+  <text class="small" x="185" y="416">运动学投影与 ROI overlay 预览</text>
+
+  <path class="arrow" d="M 188 297 L 257 355"/>
+  <path class="arrow" d="M 443 297 L 373 355"/>
+
+  <rect class="box box-orange" x="95" y="505" width="185" height="105"/>
+  <text class="label" x="126" y="538">Yaw正弦搜索</text>
+  <text class="small" x="128" y="566">TRUS序列图像</text>
+  <text class="tiny" x="124" y="592">覆盖不同yaw状态</text>
+
+  <rect class="box box-orange" x="350" y="505" width="185" height="105"/>
+  <text class="label" x="408" y="538">人工标注</text>
+  <text class="small" x="376" y="566">IN / OUT plane</text>
+  <text class="tiny" x="374" y="592">IN图像标注 tip / shaft</text>
+
+  <path class="arrow" d="M 260 447 L 190 505"/>
+  <path class="arrow" d="M 370 447 L 443 505"/>
+
+  <rect class="box box-green" x="95" y="675" width="185" height="115"/>
+  <text class="label" x="125" y="710">模型1</text>
+  <text class="small" x="116" y="738">输入：单帧TRUS图像</text>
+  <text class="small" x="116" y="766">输出：是否在超声中心</text>
+
+  <rect class="box box-green" x="350" y="675" width="185" height="115"/>
+  <text class="label" x="392" y="710">模型2</text>
+  <text class="small" x="371" y="738">输入：IN图像+先验mask</text>
+  <text class="small" x="371" y="766">输出：tip点+shaft方向</text>
+
+  <path class="arrow" d="M 188 610 L 188 675"/>
+  <path class="arrow" d="M 443 610 L 443 675"/>
+
+  <rect class="metric" x="95" y="840" width="440" height="80"/>
+  <text class="small" x="123" y="872">评估指标：模型1中心判别准确率；模型2针尖误差、</text>
+  <text class="small" x="123" y="899">针轴角度误差、活检中心估计误差</text>
+
+  <path class="arrow-gray" d="M 188 790 L 220 840"/>
+  <path class="arrow-gray" d="M 443 790 L 410 840"/>
+
+  <rect class="lane" x="635" y="130" width="1095" height="825"/>
+  <text class="section-title" x="660" y="168">闭环活检控制流程</text>
+
+  <rect class="box box-blue" x="675" y="220" width="205" height="95"/>
+  <text class="label" x="704" y="253">套管置入</text>
+  <text class="small" x="704" y="281">人工完成</text>
+
+  <rect class="box box-blue" x="955" y="220" width="205" height="95"/>
+  <text class="label" x="990" y="253">针方向初调</text>
+  <text class="small" x="992" y="281">对准靶点方向</text>
+
+  <rect class="box box-blue" x="1235" y="220" width="205" height="95"/>
+  <text class="label" x="1269" y="253">半程进针</text>
+  <text class="small" x="1264" y="281">未激发针尖位置</text>
+
+  <path class="arrow" d="M 880 267 L 955 267"/>
+  <path class="arrow" d="M 1160 267 L 1235 267"/>
+
+  <rect class="box box-orange" x="775" y="410" width="270" height="116"/>
+  <text class="label" x="818" y="445">Yaw正弦搜索</text>
+  <text class="small" x="816" y="475">采集TRUS图像序列</text>
+  <text class="tiny" x="812" y="502">针扫过 ultrasound beam width</text>
+
+  <rect class="box box-green" x="1125" y="410" width="260" height="116"/>
+  <text class="label" x="1190" y="445">模型1</text>
+  <text class="small" x="1158" y="475">输出IN_CENTER / OFF_CENTER</text>
+  <text class="small" x="1174" y="502">确定对应yaw姿态</text>
+
+  <rect class="box box-purple" x="1460" y="380" width="210" height="176"/>
+  <text class="label" x="1496" y="413">Yaw校正</text>
+  <text class="small" x="1497" y="443">将针移动到</text>
+  <text class="small" x="1489" y="470">估计的超声层厚</text>
+  <text class="small" x="1529" y="497">中心</text>
+  <path class="needle" d="M 1500 528 L 1628 528"/>
+  <circle class="needle-tip" cx="1500" cy="528" r="7"/>
+
+  <path class="arrow" d="M 1338 315 L 910 410"/>
+  <path class="arrow" d="M 1045 468 L 1125 468"/>
+  <path class="arrow" d="M 1385 468 L 1460 468"/>
+
+  <rect class="box box-green" x="1125" y="660" width="260" height="120"/>
+  <text class="label" x="1190" y="696">模型2</text>
+  <text class="small" x="1162" y="727">输出tip点和shaft方向</text>
+  <text class="small" x="1156" y="755">推算激发后活检中心</text>
+
+  <rect class="box box-purple" x="775" y="660" width="270" height="120"/>
+  <text class="label" x="819" y="696">Pitch反馈控制</text>
+  <text class="small" x="808" y="727">调整针方向</text>
+  <text class="small" x="806" y="755">指向病灶靶点</text>
+
+  <rect class="box box-blue" x="675" y="835" width="205" height="95"/>
+  <text class="label" x="716" y="869">继续进针</text>
+  <text class="small" x="708" y="897">至激发位置</text>
+
+  <rect class="box box-blue" x="955" y="835" width="205" height="95"/>
+  <text class="label" x="1004" y="869">激发</text>
+  <text class="small" x="989" y="897">活检枪</text>
+
+  <path class="arrow" d="M 1565 556 L 1565 720 L 1385 720"/>
+  <path class="arrow" d="M 1125 720 L 1045 720"/>
+  <path class="arrow" d="M 910 660 L 910 600 L 1510 600 L 1510 556"/>
+  <path class="arrow" d="M 775 720 L 775 835"/>
+  <path class="arrow" d="M 880 883 L 955 883"/>
+
+  <path class="feedback" d="M 1045 690 C 1110 625 1135 595 1235 526"/>
+  <text class="tiny" x="1059" y="614">中心帧</text>
+
+  <rect class="box box-gray" x="1460" y="675" width="210" height="190"/>
+  <text class="label" x="1500" y="708">TRUS图像</text>
+  <rect x="1492" y="730" width="145" height="105" fill="#dde3ea" stroke="#94a3b8" stroke-width="1.8"/>
+  <ellipse class="lesion" cx="1538" cy="785" rx="32" ry="24"/>
+  <path class="needle" d="M 1505 805 L 1625 755"/>
+  <circle class="needle-tip" cx="1505" cy="805" r="6"/>
+  <circle cx="1538" cy="785" r="5" fill="#d93030"/>
+  <text class="tiny" x="1478" y="852">病灶 + 针 overlay</text>
+
+  <path class="arrow-gray" d="M 1460 770 L 1385 735"/>
+
+  <line class="divider" x1="1210" y1="585" x2="1210" y2="620"/>
+  <text class="tiny" x="1219" y="607">先yaw，后pitch</text>
+
+  <rect class="metric" x="1260" y="835" width="410" height="95"/>
+  <text class="small" x="1288" y="868">实验分组：无针控制、仅yaw控制、</text>
+  <text class="small" x="1288" y="896">yaw + pitch反馈控制</text>
+
+  <path class="arrow-gray" d="M 1160 883 L 1260 883"/>
+
+  <text class="tiny" x="70" y="1010">建议图注：所提出的双模型控制框架。模型1判断单帧TRUS图像中针是否位于超声中心；模型2识别针尖和针轴，用于活检中心反馈控制。</text>
+</svg>

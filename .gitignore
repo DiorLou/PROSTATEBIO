@@ -26,3 +26,4 @@ phantom_prior_masks/
 phantom_prior_mask_check*/
 debug_box_projection*/
 __pycache__/
+runs/
