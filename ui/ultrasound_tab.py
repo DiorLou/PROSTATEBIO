@@ -1,5 +1,6 @@
 # ui/ultrasound_tab.py
 import cv2
+import csv
 import os
 import numpy as np
 import time
@@ -38,6 +39,7 @@ class UltrasoundTab(QWidget):
     TCP_U_ORIGIN_U_PX = 406.0
     TCP_U_ORIGIN_V_PX = 420.0 + 10.0 / MM_PER_PIXEL
     KINEMATIC_BOX_HALF_WIDTH_PX = 25.0
+    KINEMATIC_BOX_TIP_EXTENSION_MM = 6.0
     UNFIRED_NEEDLE_RETRACTION_MM = 26.0
     
     def __init__(self, tcp_manager, parent=None):
@@ -90,14 +92,21 @@ class UltrasoundTab(QWidget):
         self.session_folder = None  # [新增] 用于存储 "时间戳_experimental results" 根目录
 
         # 新增: 旋转范围输入框和按钮
-        self.rotation_range_input = QLineEdit("50") # 默认值 50
+        self.rotation_range_input = QLineEdit("45") # 默认值 45
         self.left_x_btn = QPushButton("Ultrasound Probe Rotate Left x Deg")
         self.right_2x_btn = QPushButton("Ultrasound Probe Rotate Right 2x Deg")
 
         # [新增] 穿刺针旋转范围输入框和按钮
-        self.needle_yaw_range_input = QLineEdit("10") # 默认值 10
+        self.needle_yaw_range_input = QLineEdit("3") # 默认值 3
         self.needle_left_x_btn = QPushButton("Needle Rotate Left x Deg")
         self.needle_right_2x_btn = QPushButton("Needle Rotate Right 2x Deg")
+        self.is_needle_yaw_capturing = False
+        self.needle_capture_waiting_for_ready = False
+        self.needle_capture_movement_completed = False
+        self.needle_capture_offset = 0
+        self.needle_capture_sequence_id = ""
+        self.needle_capture_folder = ""
+        self.needle_capture_rows = []
         self.init_ui()
         self.setup_connections()
 
@@ -224,6 +233,9 @@ class UltrasoundTab(QWidget):
         # [新增] 穿刺针旋转按钮连接
         self.needle_left_x_btn.clicked.connect(self.rotate_needle_left_x)
         self.needle_right_2x_btn.clicked.connect(self.rotate_needle_right_2x)
+        self.main_window.beckhoff_manager.movement_status_update.connect(
+            self._handle_needle_capture_movement_status
+        )
         
         # 监听 TCP 消息，用于处理旋转反馈
         self.tcp_manager.message_received.connect(self.handle_incoming_message)
@@ -960,9 +972,17 @@ class UltrasoundTab(QWidget):
             print(f"Needle control error: {e}")
 
     def rotate_needle_right_2x(self):
-        """针右转 2x 度：一次计算目标 Yaw 并发送运动指令。"""
+        """按 1 度步进右转针，并在每次 Beckhoff Ready 后采集模型1数据。"""
         x = self._get_needle_x_value()
         if x is None: return
+
+        if not float(x).is_integer() or int(x) != 3:
+            QMessageBox.warning(
+                self,
+                "Input Error",
+                "Model 1 requires Needle Range x = 3 to collect yaw offsets -3 to +3.",
+            )
+            return
 
         needle_tab = self.main_window.flexible_needle_tab
         movement_status = needle_tab.movement_status_label.text().strip().lower()
@@ -973,19 +993,172 @@ class UltrasoundTab(QWidget):
             return
 
         try:
-            total_rotation = 2 * x
-            current_yaw = float(needle_tab.yaw_display.text())
-            new_yaw = current_yaw - total_rotation
-
-            needle_tab.yaw_display.setText(f"{new_yaw:.2f}")
-            if not needle_tab.update_inputs_from_yaw_pitch():
+            if self.current_frame is None:
+                QMessageBox.warning(self, "Capture Error", "No ultrasound image is available.")
                 return
-            needle_tab.apply_joint_increment()
-            self.main_window.status_bar.showMessage(
-                f"Status: Needle Right {total_rotation:.2f} deg Applied."
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            self.needle_capture_sequence_id = f"seq_{timestamp}"
+            self.needle_capture_folder = os.path.join(
+                os.getcwd(), "image", "model1_center_capture", self.needle_capture_sequence_id
             )
-        except (TypeError, ValueError) as e:
+            os.makedirs(os.path.join(self.needle_capture_folder, "images"), exist_ok=False)
+            os.makedirs(os.path.join(self.needle_capture_folder, "masks"), exist_ok=False)
+            self.needle_capture_rows = []
+            self.needle_capture_offset = -int(x)
+            self.is_needle_yaw_capturing = True
+            self.needle_capture_waiting_for_ready = False
+            self.needle_capture_movement_completed = False
+            self.needle_left_x_btn.setEnabled(False)
+            self.needle_right_2x_btn.setEnabled(False)
+
+            # The left-x button has already placed the needle at yaw offset -x.
+            # Save that stationary start pose before issuing the first 1-degree move.
+            if not self._save_model1_needle_frame(self.needle_capture_offset):
+                self._finish_model1_needle_capture(False)
+                return
+
+            self._move_needle_capture_one_degree_right()
+            self.main_window.status_bar.showMessage(
+                f"Status: Collecting {self.needle_capture_sequence_id}; saved yaw -3 deg."
+            )
+        except (OSError, TypeError, ValueError) as e:
             print(f"Needle control error: {e}")
+            self._finish_model1_needle_capture(False)
+
+    @staticmethod
+    def _model1_yaw_name(yaw_offset):
+        if yaw_offset < 0:
+            return f"m{abs(yaw_offset)}"
+        if yaw_offset > 0:
+            return f"p{yaw_offset}"
+        return "0"
+
+    def _save_model1_needle_frame(self, yaw_offset):
+        """Save one cropped TRUS frame and its kinematic prior mask."""
+        if self.current_frame is None:
+            QMessageBox.critical(self, "Capture Error", "Ultrasound frame is not available.")
+            return False
+
+        needle_kinematics = self._get_current_needle_kinematics_in_tcp_u()
+        if needle_kinematics is None:
+            QMessageBox.critical(
+                self,
+                "Prior Mask Error",
+                "Cannot calculate the needle prior mask. Check J0-J3, TCP_P and TCP_U.",
+            )
+            return False
+
+        tip_u, vector_u = needle_kinematics
+        corners = self._get_kinematic_box_pixels(tip_u, vector_u)
+        if corners is None:
+            QMessageBox.critical(
+                self,
+                "Prior Mask Error",
+                "The projected needle tip is outside the ultrasound image.",
+            )
+            return False
+
+        corners = np.asarray(corners, dtype=float)
+        tip_direction = (corners[1] + corners[2]) - (corners[0] + corners[3])
+        direction_norm = np.linalg.norm(tip_direction)
+        if direction_norm < 1e-9:
+            return False
+        tip_extension_px = self.KINEMATIC_BOX_TIP_EXTENSION_MM / self.MM_PER_PIXEL
+        corners[1:3] += tip_direction / direction_norm * tip_extension_px
+
+        height, width = self.current_frame.shape[:2]
+        corners[:, 0] = np.clip(corners[:, 0], 0, width - 1)
+        corners[:, 1] = np.clip(corners[:, 1], 0, height - 1)
+        prior_mask = np.zeros((height, width), dtype=np.uint8)
+        cv2.fillPoly(prior_mask, [np.rint(corners).astype(np.int32)], 255)
+
+        yaw_name = self._model1_yaw_name(yaw_offset)
+        image_rel = os.path.join(
+            "image", "model1_center_capture", self.needle_capture_sequence_id,
+            "images", f"{yaw_name}.png"
+        )
+        mask_rel = os.path.join(
+            "image", "model1_center_capture", self.needle_capture_sequence_id,
+            "masks", f"{yaw_name}.png"
+        )
+        image_path = os.path.join(os.getcwd(), image_rel)
+        mask_path = os.path.join(os.getcwd(), mask_rel)
+        frame = self.current_frame.copy()
+        if not cv2.imwrite(image_path, frame) or not cv2.imwrite(mask_path, prior_mask):
+            QMessageBox.critical(self, "Save Error", f"Failed to save yaw {yaw_offset:+d} data.")
+            return False
+
+        self.needle_capture_rows.append({
+            "sequence_id": self.needle_capture_sequence_id,
+            "yaw_offset_deg": str(yaw_offset),
+            "image_path": image_rel.replace("\\", "/"),
+            "mask_path": mask_rel.replace("\\", "/"),
+            "center_label": "",
+        })
+        self._write_model1_frame_csv()
+        return True
+
+    def _write_model1_frame_csv(self):
+        csv_path = os.path.join(self.needle_capture_folder, "frame_labels.csv")
+        with open(csv_path, "w", newline="", encoding="utf-8-sig") as csv_file:
+            writer = csv.DictWriter(csv_file, fieldnames=(
+                "sequence_id", "yaw_offset_deg", "image_path", "mask_path", "center_label"
+            ))
+            writer.writeheader()
+            writer.writerows(self.needle_capture_rows)
+
+    def _move_needle_capture_one_degree_right(self):
+        needle_tab = self.main_window.flexible_needle_tab
+        current_yaw = float(needle_tab.yaw_display.text())
+        needle_tab.yaw_display.setText(f"{current_yaw - 1.0:.2f}")
+        if not needle_tab.update_inputs_from_yaw_pitch():
+            self._finish_model1_needle_capture(False)
+            return
+        self.needle_capture_movement_completed = False
+        self.needle_capture_waiting_for_ready = True
+        needle_tab.apply_joint_increment()
+
+    def _handle_needle_capture_movement_status(self, status):
+        if not self.is_needle_yaw_capturing or not self.needle_capture_waiting_for_ready:
+            return
+        normalized_status = status.strip().lower()
+        if normalized_status == "movement completed":
+            self.needle_capture_movement_completed = True
+            return
+        if normalized_status != "ready" or not self.needle_capture_movement_completed:
+            return
+
+        self.needle_capture_waiting_for_ready = False
+        self.needle_capture_movement_completed = False
+        self.needle_capture_offset += 1
+        if not self._save_model1_needle_frame(self.needle_capture_offset):
+            self._finish_model1_needle_capture(False)
+            return
+
+        if self.needle_capture_offset >= 3:
+            self._finish_model1_needle_capture(True)
+        else:
+            self._move_needle_capture_one_degree_right()
+
+    def _finish_model1_needle_capture(self, success):
+        was_active = self.is_needle_yaw_capturing
+        self.is_needle_yaw_capturing = False
+        self.needle_capture_waiting_for_ready = False
+        self.needle_capture_movement_completed = False
+        self.needle_left_x_btn.setEnabled(True)
+        self.needle_right_2x_btn.setEnabled(True)
+        if not was_active:
+            return
+        if success:
+            QMessageBox.information(
+                self,
+                "Model 1 Capture Completed",
+                f"Saved 7 TRUS images, 7 prior masks and frame_labels.csv to:\n"
+                f"{self.needle_capture_folder}",
+            )
+        else:
+            self.main_window.status_bar.showMessage("Status: Model 1 needle capture stopped.")
 
     def _get_needle_x_value(self):
         """
