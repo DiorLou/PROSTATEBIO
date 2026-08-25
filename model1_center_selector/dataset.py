@@ -33,10 +33,24 @@ class CenterSequenceDataset(Dataset):
 
         with self.csv_path.open("r", encoding="utf-8-sig", newline="") as f:
             reader = csv.DictReader(f)
+            required = {"sequence_id", "target_class"}
+            required.update(f"image_{name}" for name in YAW_COLUMN_NAMES)
+            if self.use_masks:
+                required.update(f"mask_{name}" for name in YAW_COLUMN_NAMES)
+            missing = required.difference(reader.fieldnames or [])
+            if missing:
+                raise ValueError(f"{self.csv_path} is missing columns: {sorted(missing)}")
             self.rows = list(reader)
 
         if not self.rows:
             raise ValueError(f"No rows found in {self.csv_path}")
+        for row_number, row in enumerate(self.rows, start=2):
+            try:
+                target_class = int(row["target_class"])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Invalid target_class at {self.csv_path}:{row_number}") from exc
+            if not 0 <= target_class < 8:
+                raise ValueError(f"target_class must be 0..7 at {self.csv_path}:{row_number}")
 
     def __len__(self) -> int:
         return len(self.rows)
@@ -63,10 +77,15 @@ class CenterSequenceDataset(Dataset):
         return x, y
 
     def _load_grayscale(self, path_value: str) -> Image.Image:
+        if not path_value:
+            raise ValueError("Empty image path in sequence CSV")
         path = Path(path_value)
         if not path.is_absolute():
             path = self.root_dir / path
-        return Image.open(path).convert("L")
+        if not path.is_file():
+            raise FileNotFoundError(f"Model 1 input file not found: {path}")
+        with Image.open(path) as image:
+            return image.convert("L")
 
     @staticmethod
     def _to_tensor(image: Image.Image, transform: ImageTransform | None) -> torch.Tensor:

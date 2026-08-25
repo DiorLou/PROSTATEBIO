@@ -46,10 +46,19 @@ Allowed labels:
 IN_CENTER, OFF_CENTER
 ```
 
+The acquisition UI creates one `frame_labels.csv` inside every `seq_*` folder.
+After labeling those files, merge them with:
+
+```powershell
+.\.venv311\Scripts\python.exe -m model1_center_selector.merge_frame_labels `
+  --capture-root image/model1_center_capture `
+  --output-csv model1_center_frame_labels.csv
+```
+
 ## Build sequence-level labels
 
 ```powershell
-python -m model1_center_selector.build_sequences `
+.\.venv311\Scripts\python.exe -m model1_center_selector.build_sequences `
   --frame-csv model1_center_frame_labels.csv `
   --output-csv model1_center_sequences.csv
 ```
@@ -59,7 +68,7 @@ python -m model1_center_selector.build_sequences `
 Without prior masks:
 
 ```powershell
-python -m model1_center_selector.train `
+.\.venv311\Scripts\python.exe -m model1_center_selector.train `
   --train-csv model1_center_sequences.csv `
   --root-dir . `
   --output runs/model1_center_selector/best.pt
@@ -68,12 +77,17 @@ python -m model1_center_selector.train `
 With prior masks:
 
 ```powershell
-python -m model1_center_selector.train `
+.\.venv311\Scripts\python.exe -m model1_center_selector.train `
   --train-csv model1_center_sequences.csv `
   --root-dir . `
   --use-masks `
   --output runs/model1_center_selector/best.pt
 ```
+
+For imbalanced classes, add `--class-balanced-loss`. For a trustworthy
+experiment, provide `--val-csv` built from separate capture sessions instead
+of relying on the automatic split. ImageNet pretraining is enabled by default;
+use `--no-pretrained` only for offline smoke tests or ablation experiments.
 
 ## Predict
 
@@ -84,8 +98,9 @@ Images must be passed in yaw order:
 ```
 
 ```powershell
-python -m model1_center_selector.predict `
+.\.venv311\Scripts\python.exe -m model1_center_selector.predict `
   --checkpoint runs/model1_center_selector/best.pt `
-  --images m3.png m2.png m1.png zero.png p1.png p2.png p3.png
+  --images m3.png m2.png m1.png zero.png p1.png p2.png p3.png `
+  --masks m3_mask.png m2_mask.png m1_mask.png zero_mask.png p1_mask.png p2_mask.png p3_mask.png
 ```
 

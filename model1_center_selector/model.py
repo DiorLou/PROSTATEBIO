@@ -23,14 +23,22 @@ class SevenFrameCenterSelector(nn.Module):
         weights = models.ResNet18_Weights.DEFAULT if pretrained else None
         resnet = models.resnet18(weights=weights)
         if input_channels != 3:
-            resnet.conv1 = nn.Conv2d(
+            original_conv = resnet.conv1
+            adapted_conv = nn.Conv2d(
                 input_channels,
-                resnet.conv1.out_channels,
-                kernel_size=resnet.conv1.kernel_size,
-                stride=resnet.conv1.stride,
-                padding=resnet.conv1.padding,
+                original_conv.out_channels,
+                kernel_size=original_conv.kernel_size,
+                stride=original_conv.stride,
+                padding=original_conv.padding,
                 bias=False,
             )
+            if pretrained:
+                # Preserve the useful ImageNet edge/texture filters when adapting
+                # RGB input to grayscale or grayscale+prior-mask input.
+                with torch.no_grad():
+                    grayscale_weight = original_conv.weight.mean(dim=1, keepdim=True)
+                    adapted_conv.weight.copy_(grayscale_weight.repeat(1, input_channels, 1, 1))
+            resnet.conv1 = adapted_conv
         feature_dim = resnet.fc.in_features
         resnet.fc = nn.Identity()
         self.encoder = resnet
