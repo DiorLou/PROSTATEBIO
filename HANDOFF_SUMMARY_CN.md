@@ -1,7 +1,7 @@
 # 前列腺 TRUS 活检针识别与机器人反馈控制项目交接摘要
 
-最后更新：2026-08-24  
-当前工作区：`C:\Users\hkclr_user\Desktop\PROSTATEBIO_LTH`  
+最后更新：2026-08-25
+当前工作区：`C:\Users\Administrator\Desktop\PROSTATEBIO`
 当前分支：`main`
 
 > 用途：换电脑或开启新 Codex 对话后，先读取本文件，即可接着当前研究和代码状态继续工作。不要依赖旧电脑上的虚拟环境；重新创建环境并安装依赖。
@@ -49,6 +49,9 @@
 当前工作区在提交前已确认干净。最近关键提交：
 
 ```text
+bf44e06 Harden model1 training pipeline
+a0a7921 Add model1 yaw sweep capture
+be5cb94 Update Chinese handoff summary
 6b12a53 Add yaw center selector model
 2ba6dda Add TCP_U in volume
 858dcf8 Add phantom prior mask labeling tools
@@ -65,6 +68,8 @@ f046c3b Fix ultrasound kinematic box projection axes
 - `570a738`：pitch feedback 改为控制激发后活检中心；
 - `858dcf8`：添加体模 manifest、prior mask、overlay 预览和人工 `IN_PLANE/OUT_OF_PLANE` 标注工具；
 - `6b12a53`：添加模型1的 7 帧 yaw 中心选择训练与预测代码。
+- `a0a7921`：添加模型1的针 yaw 逐度采集、Beckhoff Ready 同步保存、prior mask 和逐帧 CSV。
+- `bf44e06`：修复并强化模型1训练/预测流水线，添加 CSV 汇总、类别评估和自动测试。
 
 ---
 
@@ -92,7 +97,13 @@ pandas
 PyQt5
 ```
 
-当前默认 `python` 环境曾出现 `ModuleNotFoundError: No module named 'torch'`。训练模型1时需要先激活安装了 `torch/torchvision` 的虚拟环境。
+当前默认 `python` 环境仍会出现 `ModuleNotFoundError: No module named 'torch'`。仓库中的 `.venv311` 已确认包含 CPU 版 `torch 2.9.1` 和 `torchvision 0.24.1`，模型1命令应使用：
+
+```powershell
+.\.venv311\Scripts\python.exe
+```
+
+当前 `torch.cuda.is_available()` 为 `False`，可以训练，但正式大数据训练会比 GPU 慢。
 
 ---
 
@@ -442,7 +453,11 @@ seq_0001,3,image/seq_0001/p3.png,mask/seq_0001/p3.png,OFF_CENTER
 生成序列训练 CSV：
 
 ```powershell
-python -m model1_center_selector.build_sequences `
+.\.venv311\Scripts\python.exe -m model1_center_selector.merge_frame_labels `
+  --capture-root image/model1_center_capture `
+  --output-csv model1_center_frame_labels.csv
+
+.\.venv311\Scripts\python.exe -m model1_center_selector.build_sequences `
   --frame-csv model1_center_frame_labels.csv `
   --output-csv model1_center_sequences.csv
 ```
@@ -454,7 +469,7 @@ python -m model1_center_selector.build_sequences `
 不使用 prior mask：
 
 ```powershell
-python -m model1_center_selector.train `
+.\.venv311\Scripts\python.exe -m model1_center_selector.train `
   --train-csv model1_center_sequences.csv `
   --root-dir . `
   --output runs/model1_center_selector/best.pt
@@ -463,12 +478,15 @@ python -m model1_center_selector.train `
 使用 prior mask：
 
 ```powershell
-python -m model1_center_selector.train `
+.\.venv311\Scripts\python.exe -m model1_center_selector.train `
   --train-csv model1_center_sequences.csv `
   --root-dir . `
   --use-masks `
+  --class-balanced-loss `
   --output runs/model1_center_selector/best.pt
 ```
+
+训练默认启用 ImageNet 预训练 ResNet18。正式实验推荐使用来自独立采集批次的 `--val-csv`，避免相似序列随机分到训练和验证两侧。训练会记录总体准确率、宏平均 F1、各类召回率和混淆矩阵，最佳模型按验证集宏平均 F1 保存。
 
 训练输出目录：
 
@@ -489,9 +507,11 @@ runs/
 命令示例：
 
 ```powershell
-python -m model1_center_selector.predict `
+.\.venv311\Scripts\python.exe -m model1_center_selector.predict `
   --checkpoint runs/model1_center_selector/best.pt `
-  --images m3.png m2.png m1.png zero.png p1.png p2.png p3.png
+  --images m3.png m2.png m1.png zero.png p1.png p2.png p3.png `
+  --masks m3_mask.png m2_mask.png m1_mask.png zero_mask.png p1_mask.png p2_mask.png p3_mask.png `
+  --output-json prediction.json
 ```
 
 输出：
@@ -504,6 +524,54 @@ probabilities
 ```
 
 如果输出 `NO_VALID`，则应扩大 yaw 搜索范围或终止本次反馈。
+
+### 8.8 模型1自动采集（2026-08-25）
+
+界面默认值已改为：
+
+```text
+Probe Range x = 45
+Needle Range x = 3
+```
+
+模型1采集操作：先点击 `Needle Rotate Left x Deg` 到达 `-3°`，待 Beckhoff Ready 后点击 `Needle Rotate Right 2x Deg`。右转按钮现在执行：
+
+```text
+先保存 -3° 静止帧
+→ 每次右转 1°
+→ 必须先收到 Movement Completed，再收到 Ready
+→ 保存当前位置图像和 prior mask
+→ 直到 +3°
+```
+
+旧的“直接一次右转 2x 度”逻辑已替换。程序强制 `Needle Range x = 3`，避免生成不符合模型1输入定义的序列。
+
+每组输出：
+
+```text
+image/model1_center_capture/seq_时间戳/
+├── images/m3.png ... p3.png
+├── masks/m3.png ... p3.png
+└── frame_labels.csv
+```
+
+每张 prior mask 根据当前 J0-J3、TCP_P、TCP_U 和未激发针尖运动学在线生成，使用 ±25 px 半宽及针尖侧 6 mm 延伸。若运动学无效、针尖投影在图像外或写入失败，本次采集会停止，不保存缺少有效 mask 的训练帧。
+
+### 8.9 模型1代码验证状态（2026-08-25）
+
+已修复的关键问题：
+
+- `train.py` 中 `Subset` 未正确导入；
+- 自动划分改为类别分层；
+- 适配灰度/双通道时保留预训练首层卷积信息；
+- 增加 CSV 字段、类别、图片和 mask 路径检查；
+- 支持类别平衡损失；
+- 增加宏平均 F1、各类召回率和混淆矩阵；
+- 预测端检查 checkpoint 与 mask 输入是否匹配，并可输出 JSON；
+- 添加 `merge_frame_labels.py` 汇总各序列 CSV；
+- 添加 `tests/test_model1_center_selector.py`。
+
+验证结果：现有 13 项自动测试全部通过，并用合成的 7 帧图像和 7 张 mask 完成过“训练一轮 → 保存 checkpoint → 加载 → 预测”的闭环测试。临时合成数据已清理。硬件侧仍需连接 Beckhoff 后实测完整 7 帧采集时序。
 
 ---
 
@@ -634,33 +702,27 @@ winget install Typst.Typst
 
 ## 13. 下一步建议
 
-短期最重要的是采集和标注模型1数据：
+短期最重要的是在真实 Beckhoff 和超声设备上验证并开始采集模型1数据：
 
-1. 实现或手动执行固定 yaw sweep：
+1. 实机验证自动 yaw sweep：
 
 ```text
 -3, -2, -1, 0, +1, +2, +3 deg
 ```
 
-2. 每组保存 7 张图，并记录：
-
-```text
-sequence_id
-yaw_offset_deg
-image_path
-mask_path
-```
-
+2. 检查每组是否正确保存 7 张图、7 张 prior mask 和 `frame_labels.csv`；
 3. 人工逐帧标注：
 
 ```text
 IN_CENTER / OFF_CENTER
 ```
 
-4. 用 `build_sequences.py` 生成序列级训练 CSV；
-5. 用 `train.py` 训练模型1；
-6. 离线验证模型1是否能正确输出目标 yaw；
-7. 再开始模型2的 `tip / shaft` 标注和训练。
+4. 用 `merge_frame_labels.py` 汇总逐帧 CSV；
+5. 用 `build_sequences.py` 生成序列级训练 CSV；
+6. 先采约 100 组检查采集和类别分布，约 300 组训练原型，正式目标约 1000 组完整序列；
+7. 用独立采集批次制作验证集和测试集；
+8. 训练模型1并检查宏平均 F1、混淆矩阵及 `NO_VALID` 召回率；
+9. 离线验证模型1输出到机器人 yaw 动作的映射。
 
 后续接入控制前必须验证：
 
@@ -682,7 +744,7 @@ NO_VALID 时的安全终止逻辑
 
 ```text
 请完整读取 HANDOFF_SUMMARY_CN.md。
-当前项目在 C:\Users\hkclr_user\Desktop\PROSTATEBIO_LTH。
+当前项目在 C:\Users\Administrator\Desktop\PROSTATEBIO。
 不要重做已有提交，先检查 git status 和最近提交。
-接下来继续模型1的 7 帧 yaw 中心选择数据采集、标注、训练和预测接入。
+当前只优先处理模型1。接下来先实机验证 7 帧 yaw 自动采集、prior mask 和 Beckhoff Ready 时序，再开始批量标注、训练和预测接入。
 ```
